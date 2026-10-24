@@ -15,7 +15,7 @@ from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, RedirectResponse, Response
-from starlette.routing import Route
+from starlette.routing import BaseRoute, Route
 from starlette.templating import Jinja2Templates
 
 from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
@@ -180,6 +180,11 @@ def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) 
     Locally: the dashboard, open on 127.0.0.1. Hosted: the hook API plus the dashboard for
     admin keys only (decision 0018).
     """
+    return Starlette(routes=web_routes(connection, hosted=hosted))
+
+
+def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute]:
+    """Return the dashboard routes, plus the hook API when hosted (reused by `commons.hosted`)."""
     pages = Dashboard(connection, hosted=hosted)
     endpoints: list[tuple[str, Endpoint, list[str]]] = [
         ("/", pages.overview, ["GET"]),
@@ -194,7 +199,7 @@ def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) 
         Route(path, admin_only(endpoint, connection) if hosted else endpoint, methods=methods)
         for path, endpoint, methods in endpoints
     ]
-    return Starlette(routes=[*hook_routes(connection), *routes] if hosted else routes)
+    return [*hook_routes(connection), *routes] if hosted else list(routes)
 
 
 def _back(request: Request, params: dict[str, str]) -> Response:

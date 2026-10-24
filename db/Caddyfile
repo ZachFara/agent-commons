@@ -1,10 +1,5 @@
 # HTTPS in front of Agent Commons (db/compose.hosted.yml). Caddy gets certificates for $DOMAIN.
 {$DOMAIN} {
 	encode gzip
-	handle /mcp* {
-		reverse_proxy mcp:8000
-	}
-	handle {
-		reverse_proxy web:8765
-	}
+	reverse_proxy server:8080
 }

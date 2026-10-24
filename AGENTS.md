@@ -25,6 +25,7 @@ Decisions about how to build it are in `docs/decisions/`.
 Layers inside `server/src/commons/` (enforced by import-linter; higher imports lower only):
 
 ```
+hosted                                  composes mcp + web into one server (decision 0019)
 mcp | cli | web                         entrypoints, thin; independent of each other
 service                                 use cases: search, propose, report, approve, status
 store | ranking | privacy | adapters    independent of each other
@@ -64,8 +65,7 @@ uv run pytest server/tests/test_smoke.py   # run one test file
 uv run commons-dashboard                   # admin dashboard on http://127.0.0.1:8765
 uv run python tools/demo_data.py           # separate commons_demo DB with fake activity
 uv run commons doctor                      # check this machine's setup
-uv run commons-mcp --http --port 8000     # hosted mode; keys via `commons admin create-key`
-uv run commons-dashboard --hosted          # hosted hook API (and admin dashboard, T27d)
+uv run commons-server --migrate            # hosted mode: MCP, hooks API, dashboard on $PORT
 ```
 
 `make check` is exactly what pre-commit and CI run. If it passes locally it passes in CI.

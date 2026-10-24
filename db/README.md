@@ -24,6 +24,6 @@ built the same way. Data lives in the `agent-commons_pgdata` volume;
 
 ## Hosted mode
 
-`compose.hosted.yml` runs a group server: Postgres, `commons migrate`, `commons-mcp --http`,
-`commons-dashboard --hosted`, and Caddy (`Caddyfile`) for HTTPS on `$DOMAIN`. The image is built
+`compose.hosted.yml` runs a group server: Postgres, `commons-server --migrate` (MCP, hook API,
+and dashboard in one process), and Caddy (`Caddyfile`) for HTTPS on `$DOMAIN`. The image is built
 from `server/Dockerfile`. See INSTALL.md, "Hosting".

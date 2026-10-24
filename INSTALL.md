@@ -144,7 +144,7 @@ at it (ports 80 and 443 open).
    COMMONS_DB_PASSWORD=<a long random password>
    ```
 
-2. Start everything (Postgres, migrations, the MCP server, the web app, and Caddy for HTTPS):
+2. Start everything (Postgres, the server, which migrates on start, and Caddy for HTTPS):
 
    ```
    docker compose -f db/compose.hosted.yml --env-file db/.env up -d --build --wait
@@ -153,7 +153,7 @@ at it (ports 80 and 443 open).
 3. Mint keys. Each command prints a key once; send it to the person privately.
 
    ```
-   docker compose -f db/compose.hosted.yml --env-file db/.env exec web commons admin create-key <pseudonym> [--admin]
+   docker compose -f db/compose.hosted.yml --env-file db/.env exec server commons admin create-key <pseudonym> [--admin]
    ```
 
    Minting again for the same pseudonym replaces the old key.

@@ -3,15 +3,6 @@
 # db/.env (gitignored) must set DOMAIN and COMMONS_DB_PASSWORD. See INSTALL.md, "Hosting".
 name: agent-commons-hosted
 
-x-server: &server
-  image: agent-commons-server  # built once, by the migrate service
-  restart: unless-stopped
-  environment:
-    COMMONS_DATABASE_URL: postgresql://commons:${COMMONS_DB_PASSWORD:?set COMMONS_DB_PASSWORD}@postgres:5432/commons
-  depends_on:
-    migrate:
-      condition: service_completed_successfully
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -28,24 +19,19 @@ services:
       timeout: 3s
       retries: 15
 
-  migrate:
-    <<: *server
+  # MCP, hook API, and admin dashboard in one process (decision 0019); migrates on start.
+  server:
     build:
       context: ..
       dockerfile: server/Dockerfile
-    restart: "no"
-    command: ["commons", "migrate"]
+    image: agent-commons-server
+    restart: unless-stopped
+    environment:
+      COMMONS_DATABASE_URL: postgresql://commons:${COMMONS_DB_PASSWORD:?set COMMONS_DB_PASSWORD}@postgres:5432/commons
+      PORT: "8080"
     depends_on:
       postgres:
         condition: service_healthy
-
-  mcp:
-    <<: *server
-    command: ["commons-mcp", "--http", "--host", "0.0.0.0", "--port", "8000"]
-
-  web:
-    <<: *server
-    command: ["commons-dashboard", "--hosted", "--host", "0.0.0.0", "--port", "8765"]
 
   caddy:
     image: caddy:2.10
@@ -59,8 +45,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
     depends_on:
-      - mcp
-      - web
+      - server
 
 volumes:
   pgdata:

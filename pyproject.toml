@@ -94,6 +94,7 @@ include_external_packages = true
 name = "Layered architecture: entrypoints > service > components > domain"
 type = "layers"
 layers = [
+    "commons.hosted",
     "commons.mcp | commons.cli | commons.web",
     "commons.service",
     "commons.store | commons.ranking | commons.privacy | commons.adapters",
@@ -110,14 +111,14 @@ allow_indirect_imports = true
 [[tool.importlinter.contracts]]
 name = "Only the mcp layer imports FastMCP"
 type = "forbidden"
-source_modules = ["commons.domain", "commons.ranking", "commons.privacy", "commons.adapters", "commons.store", "commons.service", "commons.cli", "commons.web"]
+source_modules = ["commons.domain", "commons.ranking", "commons.privacy", "commons.adapters", "commons.store", "commons.service", "commons.cli", "commons.web", "commons.hosted"]
 forbidden_modules = ["fastmcp"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Only the store layer imports the database driver"
 type = "forbidden"
-source_modules = ["commons.domain", "commons.ranking", "commons.privacy", "commons.adapters", "commons.service", "commons.mcp", "commons.cli", "commons.web"]
+source_modules = ["commons.domain", "commons.ranking", "commons.privacy", "commons.adapters", "commons.service", "commons.mcp", "commons.cli", "commons.web", "commons.hosted"]
 forbidden_modules = ["psycopg"]
 allow_indirect_imports = true
 

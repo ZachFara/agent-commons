@@ -26,3 +26,4 @@ packages = ["src/commons"]
 commons = "commons.cli.main:main"
 commons-mcp = "commons.mcp.server:main"
 commons-dashboard = "commons.web.app:main"
+commons-server = "commons.hosted.app:main"
