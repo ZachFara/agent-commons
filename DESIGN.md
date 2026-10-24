@@ -42,7 +42,8 @@ entries
 - fix: text. What to change. Include a diff or command where possible.
 - repro: text, nullable. A minimal failing case that passes with the fix.
 - tags: text[].
-- status: enum pending, approved, rejected, retired.
+- status: enum pending, approved, rejected, retired. Follows the latest human review if any, else the latest agent review.
+- human_reviewed: boolean. False until at least one human review exists.
 - proposed_by: reporter id.
 - proposed_by_model: model id.
 - privacy_mode: enum entry, full_trace. Local-only entries never leave the machine and are not rows in a hosted store.
@@ -69,6 +70,13 @@ reporters
 - reliability: float. Fraction of this reporter's past outcomes whose agent_assessment matched the observed outcome, recomputed nightly.
 - privacy_default: enum local, entry, full_trace.
 - api_key_hash: text, hosted mode only.
+
+reviews
+- entry_id, reviewer_id (reporter).
+- decision: enum approve, reject.
+- reason: text, nullable.
+- source: enum agent, human.
+- Any number per entry, so multiple reviewers can weigh in and disagreements stay visible.
 
 models
 - name, version, provider. One row per distinct model string seen.
@@ -104,10 +112,10 @@ report(task_id, entry_id, agent_assessment, outcome?, evidence?)
 Files an outcome. If hooks already wrote observed evidence for this task, the server merges and the observed fields win. The agent's assessment is stored but never overwrites an observed outcome.
 
 approve(entry_id) and reject(entry_id, reason)
-Human-only. Exposed as MCP tools for convenience but gated behind a confirmation the agent cannot bypass: in local mode the CLI prompts; in hosted mode only admin keys can call them.
+Writes a reviews row. When an agent calls them, the review is provisional (source agent): it sets the entry's status but leaves human_reviewed false, and search provenance says "unreviewed". Human reviews come from `commons review` in local mode, the admin dashboard, or admin keys in hosted mode; the agent cannot mark its own review as human.
 
 pending()
-Lists entries awaiting review.
+Lists entries awaiting review: status pending, or not yet human-reviewed.
 
 status()
 Store statistics: entry counts by status, retrievals and outcomes in the last 30 days, top entries by success rate, entries flagged as decaying.
@@ -127,7 +135,7 @@ Observed outcomes come from hooks, not from the agent:
 - Stop: compute `used` by matching entry fix text against the session diff, assemble the evidence, and write the outcome. Prompt the agent to file its assessment if it hasn't.
 - SessionStart: mint task_id, set privacy mode from the reporter's default.
 
-Hooks are Claude Code's hook system (settings.json). Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
+Hooks are Claude Code's hook system (settings.json). `client/hooks.json` only calls `commons hook <event>`; the logic lives in the server package so it is typed and tested. Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
 
 ## 6. Privacy
 
@@ -163,6 +171,8 @@ A `commons export` CLI command produces a dataset containing entries (approved o
 
 A `commons report` command renders the status page: top entries, decaying entries, per-model failure map, self-report accuracy, and cost savings.
 
+An admin dashboard, a small read-only-first web page served by the server, shows incoming proposals, the review queue, recent retrievals and outcomes, and lets an admin file human reviews.
+
 ## 9. Installation
 
 Target: one message to Claude Code. The README's first section is:
@@ -187,7 +197,7 @@ Hosted mode for a group: one person runs `docker compose -f compose.hosted.yml u
 
 ## 10. Build phases
 
-Phase 1, one day: Postgres schema, FastMCP server with search, propose, report, approve, pending, status. Full-text search. CLI for migrate, init, status. INSTALL.md and the CLAUDE.md snippet. Seed with ten entries from the builder's own recent work.
+Phase 1, one day: Postgres schema, FastMCP server with search, propose, report, approve, pending, status. Full-text search. CLI for migrate, init, status. INSTALL.md and the CLAUDE.md snippet. Ship a few seed entries for install verification; real entries come from use. Admin dashboard (read-only, then reviews).
 
 Phase 2, one week of use: Claude Code hooks for observed outcomes and the `used` computation from diffs. Secret scanning. Nightly ranking snapshots. Hosted mode with API keys.
 
