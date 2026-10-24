@@ -22,8 +22,17 @@ def search(server: FastMCP, query: str = LONG_ERROR, **arguments: object) -> dic
     )
 
 
-def ids(result: dict[str, Any]) -> list[str]:
-    return [hit["entry_id"] for hit in result["data"]]
+def ids(result: dict[str, Any], *ours: uuid.UUID) -> list[str]:
+    """Result ids in order, keeping only entries this test created.
+
+    Other tests commit entries (e.g. seeds from `commons init`) to the shared database.
+    """
+    return [hit["entry_id"] for hit in hits(result, *ours)]
+
+
+def hits(result: dict[str, Any], *ours: uuid.UUID) -> list[dict[str, Any]]:
+    wanted = {str(entry_id) for entry_id in ours}
+    return [hit for hit in result["data"] if hit["entry_id"] in wanted]
 
 
 def test_long_error_message_finds_the_matching_entry_first(
@@ -37,19 +46,19 @@ def test_long_error_message_finds_the_matching_entry_first(
         fix="Pin versions.",
     )
     strong = factories.entry(db, reporter)
-    factories.entry(
+    unrelated = factories.entry(
         db, reporter, symptom="Segfault in numpy", cause="ABI mismatch", fix="Rebuild wheels"
     )
 
-    assert ids(search(server))[:2] == [str(strong), str(weak)]
+    assert ids(search(server), weak, strong, unrelated) == [str(strong), str(weak)]
 
 
 @pytest.mark.parametrize("status", ["pending", "rejected", "retired"])
 def test_only_approved_entries_are_returned(
     server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID, status: str
 ) -> None:
-    factories.entry(db, reporter, status=status)
-    assert search(server)["data"] == []
+    entry_id = factories.entry(db, reporter, status=status)
+    assert ids(search(server), entry_id) == []
 
 
 def test_result_shape_note_and_provenance(
@@ -59,7 +68,7 @@ def test_result_shape_note_and_provenance(
     result = search(server)
 
     assert "untrusted" in result["note"]
-    (hit,) = result["data"]
+    (hit,) = hits(result, entry_id)
     assert hit["entry_id"] == str(entry_id)
     assert hit["environment"] == {"language": "python 3.12"}
     assert hit["repro"] == "python -c 'import jinja2'"
@@ -80,7 +89,7 @@ def test_provenance_reports_used_outcomes(
         "INSERT INTO outcomes (retrieval_id, used, outcome) VALUES (%s, 'yes', 'tests_passed')",
         (retrieval_id,),
     )
-    (hit,) = search(server)["data"]
+    (hit,) = hits(search(server), entry_id)
     assert hit["provenance"].startswith(
         "proposed by claude-opus-5-5; success 1/1 when used; last confirmed 20"
     )
@@ -102,8 +111,9 @@ def test_each_result_logs_a_retrieval(
         "ORDER BY r.rank_position",
         (task_id,),
     ).fetchall()
-    assert [(row[0], row[1]) for row in rows] == [(e, i) for i, e in enumerate(ids(result), 1)]
-    assert {row[0] for row in rows} == {str(first), str(second)}
+    every_hit = [hit["entry_id"] for hit in result["data"]]
+    assert [(row[0], row[1]) for row in rows] == [(e, i) for i, e in enumerate(every_hit, 1)]
+    assert {str(first), str(second)} <= {row[0] for row in rows}
     assert [row[2] for row in rows] == [hit["score"] for hit in result["data"]]
     assert {row[3:] for row in rows} == {
         ("soft_unicode markupsafe", task_id, reporter, "claude-opus-5-5")
@@ -114,24 +124,24 @@ def test_language_filter_excludes_other_languages_only(
     server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
 ) -> None:
     python = factories.entry(db, reporter)
-    factories.entry(db, reporter, environment={"language": "JavaScript ES2023"})
+    javascript = factories.entry(db, reporter, environment={"language": "JavaScript ES2023"})
     no_language = factories.entry(db, reporter, environment={"tool": "pip 24.0"})
 
     result = search(server, environment={"language": "Python 3.11"})
-    assert set(ids(result)) == {str(python), str(no_language)}
+    assert set(ids(result, python, javascript, no_language)) == {str(python), str(no_language)}
 
 
 def test_snapshot_score_lifts_an_entry(
     server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
 ) -> None:
     older = factories.entry(db, reporter)
-    factories.entry(db, reporter)
+    newer = factories.entry(db, reporter)
     db.execute(
         "INSERT INTO ranking_snapshots (entry_id, computed_at, score, retrieval_count_30d) "
         "VALUES (%s, now(), 0.9, 0)",
         (older,),
     )
-    assert ids(search(server))[0] == str(older)
+    assert ids(search(server), older, newer) == [str(older), str(newer)]
 
 
 def test_limit_and_empty_results(
@@ -139,9 +149,11 @@ def test_limit_and_empty_results(
 ) -> None:
     for _ in range(3):
         factories.entry(db, reporter)
-    assert len(search(server, limit=2)["data"]) == 2
-    assert search(server, "the and of")["data"] == []
-    assert db.execute("SELECT count(*) FROM retrievals").fetchone() == (2,)
+    task_id = str(uuid.uuid4())
+    assert len(search(server, limit=2, task_id=task_id)["data"]) == 2
+    assert search(server, "the and of", task_id=task_id)["data"] == []
+    logged = db.execute("SELECT count(*) FROM retrievals WHERE task_id = %s", (task_id,))
+    assert logged.fetchone() == (2,)
 
 
 @pytest.mark.parametrize(

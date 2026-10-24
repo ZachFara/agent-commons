@@ -10,7 +10,7 @@ from uuid import UUID
 from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
-from commons.service import reviews
+from commons.service import reviews, seeds
 from commons.service import status as status_service
 from commons.service.identity import init_reporter
 from commons.store.connection import connect
@@ -42,10 +42,13 @@ def _init(args: argparse.Namespace) -> int:
     privacy = cast("PrivacyDefault", args.privacy)
     with connect() as conn:
         result = init_reporter(conn, pseudonym, privacy)
+        added = seeds.load_seeds(conn)
     sys.stdout.write(
         f"reporter {pseudonym} ready (privacy default: {privacy}); "
         f"identity written to {result.config_path}\n"
     )
+    if added:
+        sys.stdout.write(f"added {added} seed entries\n")
     return 0
 
 

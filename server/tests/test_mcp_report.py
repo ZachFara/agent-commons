@@ -17,7 +17,7 @@ def retrieved(server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID) -> t
     entry_id = factories.entry(db, reporter)
     task_id = str(uuid.uuid4())
     result = call(server, "search", {"query": "soft_unicode markupsafe", "task_id": task_id})
-    assert [hit["entry_id"] for hit in result["data"]] == [str(entry_id)]
+    assert str(entry_id) in [hit["entry_id"] for hit in result["data"]]
     return task_id, str(entry_id)
 
 
@@ -93,8 +93,8 @@ def test_observed_outcome_wins_over_the_agents(
     task_id, entry_id = retrieved
     db.execute(
         "INSERT INTO outcomes (retrieval_id, used, outcome, evidence) "
-        "SELECT id, 'yes', 'tests_failed', %s FROM retrievals WHERE task_id = %s",
-        (Jsonb({"outcome_source": "hook", "observed": {"exit_code": 1}}), task_id),
+        "SELECT id, 'yes', 'tests_failed', %s FROM retrievals WHERE task_id = %s AND entry_id = %s",
+        (Jsonb({"outcome_source": "hook", "observed": {"exit_code": 1}}), task_id, entry_id),
     )
     result = report(server, task_id, entry_id, outcome="tests_passed")
 
