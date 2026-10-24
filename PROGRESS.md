@@ -28,7 +28,7 @@ PROGRESS.md updated.
 | T03 | done | CI: Postgres service container + DB test fixture (per-test transaction or throwaway schema) | A test that runs `SELECT 1` through the fixture passes locally and in CI |
 | T04 | done | Migration runner in `store` + `commons migrate` CLI command + `commons` script entry | Applies numbered `.sql` files once, records them in `schema_migrations`; re-running is a no-op (tested) |
 | T05 | done | Check `cq-schema` field names and record the mapping in a decision record (prerequisite for T06) | `docs/decisions/` has the cq field mapping; any DESIGN.md field that collides with a cq name is listed as a proposed rename |
-| T06 | todo | Migration 0001: all tables and enums from DESIGN.md §3 (including `reviews` and `entries.human_reviewed`, decision 0005), generated `search_vector` + GIN index | Test introspects every table, column, and enum after `migrate` |
+| T06 | done | Migration 0001: all tables and enums from DESIGN.md §3 (including `reviews` and `entries.human_reviewed`, decision 0005), generated `search_vector` + GIN index | Test introspects every table, column, and enum after `migrate` |
 | T07 | todo | `domain`: enums and dataclasses for entries, retrievals, outcomes, reporters, models | Types mirror the schema; a test asserts Python enum values equal Postgres enum labels |
 | T08 | todo | `store` + `service`: propose. Creates a pending entry, upserts the model row, returns id + redaction report (empty until T21) | Service test: propose then read back; environment without versions is rejected with a structured error |
 | T09 | todo | Structured error type shared by service, MCP, and CLI | Every service error maps to `{"error": {"code", "message"}}`; test per code |
@@ -87,7 +87,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T06.
+1. Next session: T07.
 2. Owner, when convenient: open questions 1, 3, 5.
 
 ## Session log
@@ -104,3 +104,7 @@ being enough; whether anyone uses full_trace.
   `commons migrate`. Fixed the T03 `db` fixture: code calling `conn.transaction()` committed
   for real; tests now run inside a force-rollback outer transaction. Decision 0007 (argparse).
 - 2026-10-24: T05 read cq-schema 0.3.1; mapping and proposed renames in decision 0008.
+- 2026-10-24: T06 migration 0001 (all tables, enums, generated weighted `search_vector`, GIN
+  index, updated_at triggers). Test DB is migrated once per session in conftest. Notes for later
+  tasks: `outcomes.used` NULL means unknown; one outcome row per retrieval (unique); pgvector
+  extension deliberately not created until vectors are needed (DESIGN §2).
