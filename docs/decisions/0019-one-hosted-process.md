@@ -13,5 +13,8 @@ lock serializes concurrent instances), so no separate migration job is needed. I
 `$PORT`. The Docker image runs it by default; compose.hosted.yml is Postgres + server + Caddy.
 The two older entry points still work for local experiments.
 
+Amendment (2026-10-25): Cloud Run's front end reserves `/healthz`, so `/health` is also served
+and is what the deploy smoke tests use.
+
 Consequences: one URL for members (MCP and hooks share it), any instance can serve any
 request, and the same image runs on Cloud Run, Compose, or any container host.

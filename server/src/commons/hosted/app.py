@@ -24,10 +24,13 @@ DEFAULT_PORT = 8080
 
 
 def build_hosted_app(connection: ConnectionFactory = connect) -> Starlette:
-    """Compose the hosted app: health check, hook API and dashboard, then MCP at /mcp."""
+    """Compose the hosted app: health checks, hook API and dashboard, then MCP at /mcp."""
     mcp_app = build_server(connection, hosted=True).http_app(path="/mcp", stateless_http=True)
     return Starlette(
         routes=[
+            # Cloud Run's front end reserves /healthz (returns its own 404), so /health is the
+            # probe path there; /healthz stays for other hosts.
+            Route("/health", _health),
             Route("/healthz", _health),
             *web_routes(connection, hosted=True),
             Mount("/", app=mcp_app),

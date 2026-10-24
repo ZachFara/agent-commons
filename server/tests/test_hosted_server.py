@@ -67,6 +67,7 @@ def test_mcp_hooks_dashboard_and_health_share_one_app(
     assert "entries_by_status" in mcp_status(app, key)
 
     client = TestClient(app)
+    assert client.get("/health").text == "ok"
     assert client.get("/healthz").text == "ok"
     ping = client.post("/api/hooks/ping", json={}, headers={"authorization": f"Bearer {key}"})
     assert ping.status_code == 200

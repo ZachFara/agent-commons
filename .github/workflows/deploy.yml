@@ -54,7 +54,7 @@ jobs:
           gcloud run deploy agent-commons-staging --image "$IMAGE" --region "$REGION" --quiet
           echo "url=$(gcloud run services describe agent-commons-staging --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_OUTPUT"
       - name: Smoke test
-        run: test "$(curl -fsS --retry 5 --retry-delay 3 "${{ steps.deploy.outputs.url }}/healthz")" = ok
+        run: test "$(curl -fsS --retry 5 --retry-delay 3 "${{ steps.deploy.outputs.url }}/health")" = ok
 
   production:
     needs: staging
@@ -76,4 +76,4 @@ jobs:
           gcloud run deploy agent-commons --image "$IMAGE" --region "$REGION" --quiet
           echo "url=$(gcloud run services describe agent-commons --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_OUTPUT"
       - name: Smoke test
-        run: test "$(curl -fsS --retry 5 --retry-delay 3 "${{ steps.deploy.outputs.url }}/healthz")" = ok
+        run: test "$(curl -fsS --retry 5 --retry-delay 3 "${{ steps.deploy.outputs.url }}/health")" = ok
