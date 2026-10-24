@@ -10,9 +10,10 @@ from pydantic import Field
 
 from commons.domain.entries import Proposal
 from commons.domain.outcomes import OutcomeKind, Report
+from commons.domain.reviews import PendingEntry, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchHit, SearchRequest
 from commons.mcp.errors import StructuredValidationErrors, structured_errors
-from commons.service import proposals, reports
+from commons.service import proposals, reports, reviews
 from commons.service import search as search_service
 from commons.store.connection import Connection, connect
 
@@ -27,6 +28,7 @@ UNTRUSTED_NOTE = (
 )
 
 TaskIdArg = Annotated[uuid.UUID, Field(description="The current task id.")]
+EntryIdArg = Annotated[uuid.UUID, Field(description="The entry's id.")]
 ModelArg = Annotated[
     str | None,
     Field(description="Your exact model id, e.g. claude-opus-5-5. Omit if unknown."),
@@ -35,14 +37,7 @@ ModelArg = Annotated[
 
 def build_server(connection: ConnectionFactory = connect) -> FastMCP:
     """Build the server. `connection` opens a database connection per tool call."""
-    server = FastMCP(
-        "commons",
-        instructions=INSTRUCTIONS,
-        middleware=[StructuredValidationErrors()],
-        mask_error_details=True,
-    )
 
-    @server.tool
     def propose(  # keyword-only: tools are always called with named arguments
         *,
         symptom: Annotated[str, Field(description="The error message or observable problem.")],
@@ -84,7 +79,6 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
             "redaction_report": result.redaction_report,
         }
 
-    @server.tool
     def search(
         *,
         query: Annotated[str, Field(description="The error message or problem, as you saw it.")],
@@ -102,11 +96,10 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
             hits = search_service.search(conn, request, model)
         return {"note": UNTRUSTED_NOTE, "data": [_hit_json(hit) for hit in hits]}
 
-    @server.tool
     def report(
         *,
         task_id: TaskIdArg,
-        entry_id: Annotated[uuid.UUID, Field(description="An entry search returned this task.")],
+        entry_id: EntryIdArg,
         agent_assessment: Annotated[
             str, Field(description="Your honest judgement: did the entry help, and why?")
         ],
@@ -135,7 +128,67 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
             "outcome_source": result.record.outcome_source(),
         }
 
-    return server
+    def approve(
+        *,
+        entry_id: EntryIdArg,
+        reason: Annotated[str | None, Field(description="Optional note on why.")] = None,
+    ) -> dict[str, Any]:
+        """Provisionally approve an entry. Recorded as an agent review; a human confirms later."""
+        request = ReviewRequest(
+            entry_id=entry_id, decision="approve", reason=reason, source="agent"
+        )
+        with structured_errors(), connection() as conn:
+            result = reviews.review(conn, request)
+        return _review_json(entry_id, result)
+
+    def reject(
+        *,
+        entry_id: EntryIdArg,
+        reason: Annotated[str, Field(description="Why the entry is wrong or not useful.")],
+    ) -> dict[str, Any]:
+        """Provisionally reject an entry. Recorded as an agent review; a human confirms later."""
+        request = ReviewRequest(entry_id=entry_id, decision="reject", reason=reason, source="agent")
+        with structured_errors(), connection() as conn:
+            result = reviews.review(conn, request)
+        return _review_json(entry_id, result)
+
+    def pending() -> dict[str, Any]:
+        """List entries no human has reviewed yet, oldest first."""
+        with structured_errors(), connection() as conn:
+            entries = reviews.pending(conn)
+        return {"note": UNTRUSTED_NOTE, "data": [_pending_json(entry) for entry in entries]}
+
+    return FastMCP(
+        "commons",
+        instructions=INSTRUCTIONS,
+        middleware=[StructuredValidationErrors()],
+        mask_error_details=True,
+        tools=[propose, search, report, approve, reject, pending],
+    )
+
+
+def _review_json(entry_id: uuid.UUID, result: reviews.ReviewResult) -> dict[str, Any]:
+    return {
+        "entry_id": str(entry_id),
+        "status": result.status,
+        "human_reviewed": result.human_reviewed,
+    }
+
+
+def _pending_json(entry: PendingEntry) -> dict[str, Any]:
+    return {
+        "entry_id": str(entry.entry_id),
+        "created_at": entry.created_at.isoformat(),
+        "status": entry.status,
+        "symptom": entry.symptom,
+        "environment": entry.environment,
+        "cause": entry.cause,
+        "fix": entry.fix,
+        "repro": entry.repro,
+        "domains": entry.domains,
+        "proposed_by_model": entry.proposed_by_model,
+        "agent_reviews": entry.agent_reviews,
+    }
 
 
 def _hit_json(hit: SearchHit) -> dict[str, Any]:
