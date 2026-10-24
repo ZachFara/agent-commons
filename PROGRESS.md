@@ -10,10 +10,8 @@ what you learned, add open questions. Keep it short; history lives in git.
 - DESIGN.md §10 Phase 2 is done (2026-10-25): hooks and observed outcomes, secret scanning,
   ranking and reliability, hosted mode.
 - Current phase: collecting data before Phase 3 (DESIGN §10: after a month of use).
-- Remote: https://github.com/ZachFara/agent-commons (private). CI runs on every PR.
-- Branch protection is unavailable (private repo on a free plan). Until the owner upgrades or
-  makes the repo public, merge only with `gh pr merge --squash` after `gh pr checks --watch`
-  shows `check` passing. The local hook still blocks commits to main. Owner is fine with this.
+- Remote: https://github.com/ZachFara/agent-commons (public since 2026-10-25). Branch protection
+  on `main` requires the `check` workflow.
 
 ## Task list
 
@@ -66,6 +64,16 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | T27c | done | Hosted hook endpoints; `commons hook` posts to the server when the config has a server URL and key | Tests against the app with a test client; spool stays local |
 | T27d | done | Hosted dashboard behind admin key (HTTPS); `compose.hosted.yml` with Caddy; INSTALL hosted section | Tests: non-admin 403; compose config validates (`docker compose config`) |
 
+### Usability and hosting (owner request, 2026-10-25)
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T28 | todo | Dashboard redesign: navigation; overview with charts (activity over time, outcome mix, self-report accuracy); review queue; entries list with search/filter and an entry page (content, provenance, score history, retrievals, outcomes, reviews); tasks; reporters and models. Checked in a real browser | Page tests for every route; screenshots reviewed in light and dark |
+| T29 | todo | CLI utilities: `commons doctor` (config, DB, migrations, hooks, server), `commons search` (preview, no retrieval logged), `commons show <id>`, `commons-dashboard --open` | CLI tests per command |
+| T30 | todo | One hosted process: `/mcp`, hook API, dashboard in a single ASGI app with stateless HTTP (Cloud Run gives one URL per service) | In-process tests over the combined app; compose updated |
+| T31 | todo | Terraform in `infra/` for Neon + Cloud Run + Artifact Registry + Secret Manager (decision record), GitHub Actions deploy, cost estimate | `terraform validate` passes; docs give the exact apply steps |
+| T32 | todo | Friend onboarding: `uv tool install` from GitHub, hooks call the installed `commons` directly, `commons join`, `commons admin invite` prints a paste-ready message | Tests for join/invite; a fresh tool install joins a local hosted server |
+
 ### DESIGN Phase 3 (after a month of data)
 
 - cq adapter, counterfactual runner, decay/absorption flags, model attribution, `commons export`,
@@ -90,8 +98,8 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: DESIGN Phase 3 waits for a month of data (DESIGN §10). Until then: use it,
-   watch the dashboard, and tune the propose heuristic and `used` matching from real outcomes.
+1. Next session: T28.
+2. After T28-T32: DESIGN Phase 3 waits for a month of data (DESIGN §10).
 
 ## Session log
 
@@ -203,3 +211,5 @@ being enough; whether anyone uses full_trace.
   with DOMAIN=localhost: HTTPS, 401s without keys, dashboard with an admin key, MCP over HTTPS,
   CSRF check through the proxy. Found and fixed: parallel image builds collided on one tag.
   Phase 2 complete.
+- 2026-10-25: repo made public (history scanned: only test fixtures; owner OK with the one
+  commit showing their email); branch protection on. Planned T28-T32 (owner: Neon + Cloud Run).
