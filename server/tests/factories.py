@@ -24,8 +24,9 @@ def entry(
         "created_by_model": model_id(db, model),
     }
     values.update(fields)
-    if isinstance(values["environment"], dict):
-        values["environment"] = Jsonb(values["environment"])
+    for key in ("environment", "redaction_report"):
+        if isinstance(values.get(key), dict):
+            values[key] = Jsonb(values[key])
     query = sql.SQL("INSERT INTO entries ({}) VALUES ({}) RETURNING id").format(
         sql.SQL(", ").join(map(sql.Identifier, values)),
         sql.SQL(", ").join(sql.Placeholder() * len(values)),

@@ -146,3 +146,11 @@ def test_bad_decision_and_unknown_entry(
     assert post_review(client, entry_id, decision="maybe").status_code == 400
     missing = post_review(client, uuid.uuid4(), decision="approve")
     assert "No+entry" in missing.headers["location"]
+
+
+def test_queue_shows_what_was_redacted(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    report = {"scanned": True, "findings": [{"field": "fix", "kind": "github_token", "count": 2}]}
+    factories.entry(db, reporter, status="pending", redaction_report=report)
+    assert "2 github_token in fix" in client.get("/").text

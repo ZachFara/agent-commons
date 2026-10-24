@@ -60,3 +60,4 @@ class PendingEntry:
     domains: list[str]
     proposed_by_model: str
     agent_reviews: int
+    redaction_report: dict[str, object]

@@ -1,8 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from commons.domain.entries import EntryStatus
 from commons.domain.errors import InvalidInputError, NotFoundError
 from commons.domain.reviews import PendingEntry, ReviewRequest, review_state, validate_review
+from commons.privacy.redaction import scrub
 from commons.service.identity import current_reporter
 from commons.store.connection import Connection
 from commons.store.reviews import (
@@ -27,6 +28,8 @@ class ReviewResult:
 def review(conn: Connection, request: ReviewRequest) -> ReviewResult:
     """Record a review by this machine's reporter and update the entry (decision 0005)."""
     validate_review(request)
+    if request.reason is not None:
+        request = replace(request, reason=scrub(request.reason))
     with conn.transaction():
         reviewer = current_reporter(conn)
         current = locked_entry_status(conn, request.entry_id)
