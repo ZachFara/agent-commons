@@ -45,14 +45,29 @@ def init_reporter(conn: Connection, pseudonym: str, privacy_default: PrivacyDefa
     return InitResult(reporter_id=reporter_id, config_path=path)
 
 
-def current_reporter(conn: Connection) -> UUID:
-    """Return this machine's reporter id, from the config `init` wrote."""
+def read_config() -> dict[str, object]:
+    """Return the local config `init` wrote; NotInitializedError if there is none."""
     path = config_path()
     try:
-        pseudonym = json.loads(path.read_text(encoding="utf-8"))["pseudonym"]
-    except (FileNotFoundError, KeyError, json.JSONDecodeError) as error:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
         msg = f"No reporter identity at {path}. Run `commons init --pseudonym <handle>`."
         raise NotInitializedError(msg) from error
+    if not isinstance(config, dict) or not isinstance(config.get("pseudonym"), str):
+        msg = f"No reporter identity at {path}. Run `commons init --pseudonym <handle>`."
+        raise NotInitializedError(msg)
+    return config
+
+
+def configured_test_runners() -> list[str]:
+    """Extra test-runner regexes from the config's `test_runners` list (decision 0016)."""
+    runners = read_config().get("test_runners", [])
+    return [r for r in runners if isinstance(r, str)] if isinstance(runners, list) else []
+
+
+def current_reporter(conn: Connection) -> UUID:
+    """Return this machine's reporter id, from the config `init` wrote."""
+    pseudonym = str(read_config()["pseudonym"])
     reporter_id = find_reporter(conn, pseudonym)
     if reporter_id is None:
         msg = f"Reporter {pseudonym!r} is not in this database. Run `commons init` again."
