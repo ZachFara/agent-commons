@@ -56,7 +56,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | T21 | done | Secret scanning and redaction on every write | Tested; report stored and shown |
 | T22 | done | Hook plumbing: migration for `tasks` + `task_events`; `commons hook <event>` reading stdin, logging failures and exiting 0; SessionStart creates/reuses the task and prints the task id; server instructions use it; `client/hooks.json`; INSTALL step 4 merges it | Tests feed recorded payloads to `main(["hook", ...])`; start/resume reuse; malformed input exits 0 and logs |
 | T23 | done | Observation hooks: Bash `PostToolUse`/`PostToolUseFailure` test runs (exit code parsed from `error`) into `task_events`; Edit/Write/Bash into the local spool; file-change hashes | Tests for runner matching (built-in + config regex), exit codes, spool contents, no code in the store |
-| T24 | todo | Stop hook: observed model from the transcript; `used` per retrieved entry; observed outcome from the latest test run after the retrieval; block once asking for `report` | Tests: used yes/partial/no/unknown; pass/fail after retrieval; earlier test runs ignored; stop_hook_active respected; agent outcome never overrides hook |
+| T24 | done | Stop hook: observed model from the transcript; `used` per retrieved entry; observed outcome from the latest test run after the retrieval; block once asking for `report` | Tests: used yes/partial/no/unknown; pass/fail after retrieval; earlier test runs ignored; stop_hook_active respected; agent outcome never overrides hook |
 | T25 | todo | `commons rank`: v0 score into ranking_snapshots; `evidence.agent_outcome` kept by report; background trigger from SessionStart when stale | Tests of the formula (prior, weights, partial, decay), snapshot fields, search uses the new score |
 | T26 | todo | Reporter reliability in `commons rank` | Tests: matches/pairs, NULL under 5 pairs, used as self-report weight |
 | T27a | todo | Hosted identity: `reporters.is_admin`, `commons admin create-key`, key hashing, reporter from bearer key | Tests: key shown once, hash stored, lookup, admin flag |
@@ -88,7 +88,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T24.
+1. Next session: T25.
 
 ## Session log
 
@@ -168,3 +168,9 @@ being enough; whether anyone uses full_trace.
   hashes; scrubbed edit text and commands in the 0600 local spool. Runner matching ignores
   installs and non-command mentions (`cat pytest.ini`). Verified with real `claude -p`.
   TODO in T24: prune old spools.
+- 2026-10-25: T24 Stop hook: observed model from the transcript (replaces self-reported model on
+  the task's retrievals/entries), `used` per retrieved entry from the spool, observed outcome from
+  the latest test run after the retrieval, one block asking for missing reports. `report` now
+  keeps `evidence.agent_outcome`. Spools older than 30 days are pruned at SessionStart. pytest
+  now fails on warnings. Real `claude -p` run: Stop prompted, the agent reported both entries,
+  model observed; a test that ran in parallel with (before) the search correctly didn't count.

@@ -82,10 +82,26 @@ def _exit_code(payload: Payload, *, failed: bool) -> int | None:
     return exit_code_from_error(str(payload.get("error", "")))
 
 
+def _stop(payload: Payload) -> HookOutput:
+    transcript = payload.get("transcript_path")
+    with connect() as conn:
+        result = hooks.stop(conn, str(payload["session_id"]), transcript or None)
+    if result is None or not result.unreported or payload.get("stop_hook_active"):
+        return None
+    ids = ", ".join(str(entry_id) for entry_id in result.unreported)
+    reason = (
+        f"Before finishing, call the commons `report` tool with task_id {result.task_id} for "
+        f"each entry you retrieved this session but haven't reported on: {ids}. Say honestly "
+        "whether it helped."
+    )
+    return {"decision": "block", "reason": reason}
+
+
 HANDLERS: dict[str, Callable[[Payload], HookOutput]] = {
     "session-start": _session_start,
     "post-tool-use": _post_tool_use,
     "post-tool-use-failure": _post_tool_use_failure,
+    "stop": _stop,
 }
 
 
