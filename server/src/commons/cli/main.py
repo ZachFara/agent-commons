@@ -11,6 +11,7 @@ from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializ
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
 from commons.service import reviews
+from commons.service import status as status_service
 from commons.service.identity import init_reporter
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
@@ -80,6 +81,27 @@ def _pending(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _status(_args: argparse.Namespace) -> int:
+    with connect() as conn:
+        result = status_service.status(conn)
+    counts = ", ".join(f"{count} {status}" for status, count in result.entries_by_status.items())
+    lines = [
+        f"entries: {counts}",
+        f"awaiting human review: {result.awaiting_human_review}",
+        (
+            f"last 30 days: {result.retrievals_30d} retrievals in {result.tasks_30d} tasks, "
+            f"{result.outcomes_30d} outcomes"
+        ),
+        "top entries by success rate:" if result.top_entries else "top entries: none yet",
+    ]
+    lines += [
+        f"  {top.success_rate():.0%} of {top.used_outcomes}  {top.entry_id}  {top.symptom[:60]}"
+        for top in result.top_entries
+    ]
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
 def _no_arguments(_parser: argparse.ArgumentParser) -> None:
     pass
 
@@ -98,6 +120,7 @@ COMMANDS: dict[str, Command] = {
     "init": Command("Create or reuse your reporter identity.", _init, _init_arguments),
     "pending": Command("List entries awaiting human review.", _pending),
     "review": Command("Approve or reject an entry as a human.", _review, _review_arguments),
+    "status": Command("Show store statistics.", _status),
 }
 
 
