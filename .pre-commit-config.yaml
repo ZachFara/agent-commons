@@ -1,4 +1,6 @@
 # Install with: make setup
+# Hooks without an explicit `stages` run at pre-commit only, not again at commit-msg.
+default_stages: [pre-commit]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
