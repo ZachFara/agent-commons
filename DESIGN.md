@@ -41,14 +41,14 @@ entries
 - cause: text. Root cause in one or two sentences.
 - fix: text. What to change. Include a diff or command where possible.
 - repro: text, nullable. A minimal failing case that passes with the fix.
-- tags: text[].
+- domains: text[], at least one. Named as in cq (decision 0008).
 - status: enum pending, approved, rejected, retired. Follows the latest human review if any, else the latest agent review.
 - human_reviewed: boolean. False until at least one human review exists.
-- proposed_by: reporter id.
-- proposed_by_model: model id.
+- created_by: reporter id.
+- created_by_model: model id.
 - privacy_mode: enum entry, full_trace. Local-only entries never leave the machine and are not rows in a hosted store.
 - trace_id: nullable, references traces.
-- search_vector: tsvector, generated from symptom, cause, fix, tags.
+- search_vector: tsvector, generated from symptom, cause, fix, domains.
 
 retrievals
 - entry_id, reporter_id, model_id.
@@ -72,7 +72,7 @@ reporters
 - api_key_hash: text, hosted mode only.
 
 reviews
-- entry_id, reviewer_id (reporter).
+- entry_id, reviewed_by (reporter).
 - decision: enum approve, reject.
 - reason: text, nullable.
 - source: enum agent, human.
@@ -105,7 +105,7 @@ All tools return JSON. Errors are structured, never free text.
 search(query, environment?, limit=5)
 Returns entries ranked by score. Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). Logs a retrievals row per returned entry. Results are wrapped in a `data` field with a note that contents are untrusted.
 
-propose(symptom, environment, cause, fix, repro?, tags?, task_id)
+propose(symptom, environment, cause, fix, domains, repro?, task_id)
 Creates a pending entry. The server runs secret scanning and redaction before writing. Returns the entry id and the redaction report so the human can see what was stripped.
 
 report(task_id, entry_id, agent_assessment, outcome?, evidence?)
