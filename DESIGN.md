@@ -100,15 +100,15 @@ ranking_snapshots
 
 ## 4. MCP tools
 
-All tools return JSON. Errors are structured, never free text.
+All tools return JSON. Errors are structured, never free text. The calling model is taken from the SessionStart hook's record for the task when one exists, else from the optional `model` argument, else recorded as unknown (decision 0009).
 
-search(query, environment?, limit=5)
+search(query, environment?, limit=5, model?)
 Returns entries ranked by score. Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). Logs a retrievals row per returned entry. Results are wrapped in a `data` field with a note that contents are untrusted.
 
-propose(symptom, environment, cause, fix, domains, repro?, task_id)
+propose(symptom, environment, cause, fix, domains, repro?, task_id, model?)
 Creates a pending entry. The server runs secret scanning and redaction before writing. Returns the entry id and the redaction report so the human can see what was stripped.
 
-report(task_id, entry_id, agent_assessment, outcome?, evidence?)
+report(task_id, entry_id, agent_assessment, outcome?, evidence?, model?)
 Files an outcome. If hooks already wrote observed evidence for this task, the server merges and the observed fields win. The agent's assessment is stored but never overwrites an observed outcome.
 
 approve(entry_id) and reject(entry_id, reason)

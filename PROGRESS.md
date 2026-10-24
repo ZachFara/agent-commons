@@ -29,15 +29,17 @@ PROGRESS.md updated.
 | T04 | done | Migration runner in `store` + `commons migrate` CLI command + `commons` script entry | Applies numbered `.sql` files once, records them in `schema_migrations`; re-running is a no-op (tested) |
 | T05 | done | Check `cq-schema` field names and record the mapping in a decision record (prerequisite for T06) | `docs/decisions/` has the cq field mapping; any DESIGN.md field that collides with a cq name is listed as a proposed rename |
 | T06 | done | Migration 0001: all tables and enums from DESIGN.md §3 (including `reviews` and `entries.human_reviewed`, decision 0005), generated `search_vector` + GIN index | Test introspects every table, column, and enum after `migrate` |
-| T07 | todo | `domain`: enums and dataclasses for entries, retrievals, outcomes, reporters, models | Types mirror the schema; a test asserts Python enum values equal Postgres enum labels |
-| T08 | todo | `store` + `service`: propose. Creates a pending entry, upserts the model row, returns id + redaction report (empty until T21) | Service test: propose then read back; environment without versions is rejected with a structured error |
-| T09 | todo | Structured error type shared by service, MCP, and CLI | Every service error maps to `{"error": {"code", "message"}}`; test per code |
-| T10 | todo | `service`: search. Full-text over approved entries, rank by recency (no snapshots yet), log one retrievals row per result, wrap in `data` with untrusted note, provenance string | Tests: relevant entry ranks first; pending/rejected never returned; retrievals rows written with rank and score |
-| T11 | todo | `service`: report. Self-report path: store agent_assessment, outcome defaults to `unknown` | Test: report on a retrieved entry creates an outcome; report for an entry not retrieved in that task errors |
-| T12 | todo | `service`: pending, approve, reject per decision 0005: reviews rows with source agent/human, status follows latest human review else latest agent review | Tests: agent review sets status but not human_reviewed; a human review overrides an agent one; multiple reviewers kept; pending lists unreviewed |
-| T13 | todo | `service`: status. Counts by status, 30-day retrievals/outcomes, top entries by success rate | Test with seeded rows returns expected counts |
-| T14 | todo | `mcp`: FastMCP stdio server exposing all tools; `commons-mcp` script entry | In-process FastMCP client test lists all seven tools and round-trips propose → approve → search → report |
-| T15 | todo | `cli`: `commons init` (pseudonym, privacy default), `commons status`, `commons review <id> approve\|reject` (human source) | CLI tests via the entry point; `init` refuses a pseudonym that looks like an email |
+| T07 | todo | `commons init`: pseudonym (refuse email-like), privacy default; create or reuse the reporter row; write the local identity config the MCP server reads (record where in a decision) | CLI tests via `main`: init creates a reporter and config; re-running with the same pseudonym reuses it; email-like pseudonym exits non-zero with a clear message |
+| T08 | todo | MCP server + `propose`: FastMCP stdio, `commons-mcp` script, structured errors `{"error": {"code", "message"}}`, reporter from local config, model from optional `model` arg else `unknown` (decision 0009). Domain types and validation (environment needs versions, domains 1-16) come in with it. Redaction report empty until T21 | In-process FastMCP client test: propose returns entry id, status pending, redaction report; invalid input returns a structured error; row readable in DB |
+| T09 | todo | `search` tool: full-text over approved entries, rank by recency (no snapshots yet), one retrievals row per result with rank and score, results under `data` with the untrusted note, provenance string incl. "unreviewed" | Tests: relevant entry first; pending/rejected never returned; retrievals rows written; payload shape |
+| T10 | todo | `report` tool: self-report path, agent_assessment stored, outcome `unknown` unless given, merged into the retrieval's single outcome row | Tests: report after search creates an outcome; second report updates it; report for an entry not retrieved in that task is a structured error |
+| T11 | todo | Reviews (decision 0005): `approve`/`reject`/`pending` tools (source agent) and `commons review <id> approve\|reject [--reason]` (source human); status follows latest human review, else latest agent review | Tests: agent review sets status but not human_reviewed; human overrides agent; multiple reviewers kept; pending lists pending or unreviewed |
+| T12 | todo | `status` tool and `commons status`: counts by status, 30-day retrievals and outcomes, top entries by success rate | Tests with seeded rows return expected counts; CLI prints them |
+
+T13-T15 were folded into the slices above (2026-10-24): the dead-code check rejects types and
+service functions that no entry point calls yet, so each task now starts at an MCP tool or CLI
+command and goes down through the layers.
+
 | T16 | todo | `client/CLAUDE.snippet.md`: search-first, propose-on-surprise, post-hoc report, untrusted-data, full_trace downgrade rules | Snippet covers each rule in DESIGN.md §5-§6; under 60 lines |
 | T17 | todo | `INSTALL.md` (agent-facing, DESIGN.md §9 steps 1-7) and `README.md` | A fresh Claude Code session following INSTALL.md alone reaches a working `search` (owner verifies) |
 | T18 | todo | Ship a few seed entries (well-known public problems) loaded by `commons init`, so INSTALL step 7 has a known entry to find. Real entries come from use (owner, 2026-10-24) | `search` for a seed symptom returns it on a fresh install (tested) |
@@ -108,3 +110,5 @@ being enough; whether anyone uses full_trace.
   index, updated_at triggers). Test DB is migrated once per session in conftest. Notes for later
   tasks: `outcomes.used` NULL means unknown; one outcome row per retrieval (unique); pgvector
   extension deliberately not created until vectors are needed (DESIGN §2).
+- 2026-10-24: reordered T07-T15 into end-to-end slices (dead-code check); decision 0009 on
+  model identification.
