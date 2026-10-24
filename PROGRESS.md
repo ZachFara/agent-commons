@@ -24,7 +24,7 @@ PROGRESS.md updated.
 | ID | Status | Task | Done when |
 |---|---|---|---|
 | T01 | done (partial) | GitHub remote `agent-commons`, branch protection on `main` requiring the `check` workflow | Remote and CI done. Protection blocked by plan, see Open questions |
-| T02 | todo | `db/compose.yml`: Postgres 16 + pgvector, healthcheck, local volume; `.env` defaults documented | `docker compose -f db/compose.yml up -d` reports healthy; `CREATE EXTENSION vector` succeeds |
+| T02 | done | `db/compose.yml`: Postgres 16 + pgvector, healthcheck, local volume; `.env` defaults documented | `docker compose -f db/compose.yml up -d` reports healthy; `CREATE EXTENSION vector` succeeds |
 | T03 | todo | CI: Postgres service container + DB test fixture (per-test transaction or throwaway schema) | A test that runs `SELECT 1` through the fixture passes locally and in CI |
 | T04 | todo | Migration runner in `store` + `commons migrate` CLI command + `commons` script entry | Applies numbered `.sql` files once, records them in `schema_migrations`; re-running is a no-op (tested) |
 | T05 | todo | Check `cq-schema` field names and record the mapping in a decision record (prerequisite for T06) | `docs/decisions/` has the cq field mapping; any DESIGN.md field that collides with a cq name is listed as a proposed rename |
@@ -89,7 +89,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T02.
+1. Next session: T03.
 2. Owner, when convenient: open questions 1, 4, 6.
 
 ## Session log
@@ -98,3 +98,5 @@ being enough; whether anyone uses full_trace.
   `main` as the bootstrap exception in decision 0004.
 - 2026-10-24: created private remote and CI (T01, partial); recorded owner decisions 0005,
   0006; updated DESIGN.md §3-§5, §8, §10 to match; added dashboard tasks.
+- 2026-10-24: T02 `db/compose.yml` (pgvector/pgvector:pg16, healthcheck, 127.0.0.1 only).
+  Schema, including `CREATE EXTENSION vector`, belongs to migrations, not init scripts.
