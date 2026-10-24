@@ -9,9 +9,10 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 from commons.domain.entries import Proposal
+from commons.domain.outcomes import OutcomeKind, Report
 from commons.domain.search import MAX_LIMIT, SearchHit, SearchRequest
 from commons.mcp.errors import StructuredValidationErrors, structured_errors
-from commons.service import proposals
+from commons.service import proposals, reports
 from commons.service import search as search_service
 from commons.store.connection import Connection, connect
 
@@ -100,6 +101,39 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
         with structured_errors(), connection() as conn:
             hits = search_service.search(conn, request, model)
         return {"note": UNTRUSTED_NOTE, "data": [_hit_json(hit) for hit in hits]}
+
+    @server.tool
+    def report(
+        *,
+        task_id: TaskIdArg,
+        entry_id: Annotated[uuid.UUID, Field(description="An entry search returned this task.")],
+        agent_assessment: Annotated[
+            str, Field(description="Your honest judgement: did the entry help, and why?")
+        ],
+        outcome: Annotated[
+            OutcomeKind | None,
+            Field(description="What happened, if you know. Observed outcomes from hooks win."),
+        ] = None,
+        evidence: Annotated[
+            dict[str, Any] | None,
+            Field(description="Optional supporting facts, e.g. the test command and its result."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Report on an entry you retrieved, once the task ends. Call it for every entry."""
+        request = Report(
+            task_id=task_id,
+            entry_id=entry_id,
+            agent_assessment=agent_assessment,
+            outcome=outcome,
+            evidence=evidence,
+        )
+        with structured_errors(), connection() as conn:
+            result = reports.report(conn, request)
+        return {
+            "outcome_id": str(result.outcome_id),
+            "outcome": result.record.outcome,
+            "outcome_source": result.record.outcome_source(),
+        }
 
     return server
 

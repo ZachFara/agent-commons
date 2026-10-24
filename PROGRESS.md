@@ -32,7 +32,7 @@ PROGRESS.md updated.
 | T07 | done | `commons init`: pseudonym (refuse email-like), privacy default; create or reuse the reporter row; write the local identity config the MCP server reads (record where in a decision) | CLI tests via `main`: init creates a reporter and config; re-running with the same pseudonym reuses it; email-like pseudonym exits non-zero with a clear message |
 | T08 | done | MCP server + `propose`: FastMCP stdio, `commons-mcp` script, structured errors `{"error": {"code", "message"}}`, reporter from local config, model from optional `model` arg else `unknown` (decision 0009). Domain types and validation (environment needs versions, domains 1-16) come in with it. Redaction report empty until T21 | In-process FastMCP client test: propose returns entry id, status pending, redaction report; invalid input returns a structured error; row readable in DB |
 | T09 | done | `search` tool: full-text over approved entries, rank by recency (no snapshots yet), one retrievals row per result with rank and score, results under `data` with the untrusted note, provenance string incl. "unreviewed" | Tests: relevant entry first; pending/rejected never returned; retrievals rows written; payload shape |
-| T10 | todo | `report` tool: self-report path, agent_assessment stored, outcome `unknown` unless given, merged into the retrieval's single outcome row | Tests: report after search creates an outcome; second report updates it; report for an entry not retrieved in that task is a structured error |
+| T10 | done | `report` tool: self-report path, agent_assessment stored, outcome `unknown` unless given, merged into the retrieval's single outcome row | Tests: report after search creates an outcome; second report updates it; report for an entry not retrieved in that task is a structured error |
 | T11 | todo | Reviews (decision 0005): `approve`/`reject`/`pending` tools (source agent) and `commons review <id> approve\|reject [--reason]` (source human); status follows latest human review, else latest agent review | Tests: agent review sets status but not human_reviewed; human overrides agent; multiple reviewers kept; pending lists pending or unreviewed |
 | T12 | todo | `status` tool and `commons status`: counts by status, 30-day retrievals and outcomes, top entries by success rate | Tests with seeded rows return expected counts; CLI prints them |
 
@@ -89,7 +89,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T10.
+1. Next session: T11.
 2. Owner, when convenient: open questions 1, 3, 5.
 
 ## Session log
@@ -121,3 +121,7 @@ being enough; whether anyone uses full_trace.
 - 2026-10-24: T09 `search` (decision 0012, owner-approved: required task_id, OR-matching,
   relevance x score, language filter). Provenance stats are live SQL until snapshots (T25).
   Test helpers: `tests/factories.py` inserts entries directly.
+- 2026-10-24: T10 `report`. Outcome attaches to the earliest retrieval of the entry in the task;
+  `evidence.outcome_source` is `agent` or `hook`, agent evidence under `evidence.agent`. Hooks
+  (T22-T24) must set `outcome_source: "hook"` and put payloads under `evidence.observed`.
+  `report` takes no `model` (0009 amended).

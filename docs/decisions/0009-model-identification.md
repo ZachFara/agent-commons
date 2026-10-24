@@ -16,3 +16,6 @@ from a known format. DESIGN.md §4 updated.
 
 Consequences: works today for any MCP client; Claude Code sessions become observed once hooks
 land. Model-attribution analysis must treat self-reported model ids as lower confidence.
+
+Amendment (2026-10-24, T10): `report` takes no `model` argument. The outcome attaches to a
+retrieval, which already records the model that searched.
