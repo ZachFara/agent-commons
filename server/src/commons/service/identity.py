@@ -13,7 +13,10 @@ from uuid import UUID
 from commons.domain.errors import NotInitializedError
 from commons.domain.reporters import PrivacyDefault, validate_pseudonym
 from commons.store.connection import Connection
+from commons.store.models import model_id
 from commons.store.reporters import find_reporter, upsert_reporter
+
+UNKNOWN_MODEL = "unknown"
 
 
 @dataclass(frozen=True)
@@ -55,3 +58,8 @@ def current_reporter(conn: Connection) -> UUID:
         msg = f"Reporter {pseudonym!r} is not in this database. Run `commons init` again."
         raise NotInitializedError(msg)
     return reporter_id
+
+
+def current_model(conn: Connection, model: str | None) -> UUID:
+    """Return the model row for the calling model (decision 0009), or `unknown`."""
+    return model_id(conn, (model or "").strip() or UNKNOWN_MODEL)

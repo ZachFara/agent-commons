@@ -2,12 +2,9 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from commons.domain.entries import EntryStatus, Proposal, validate_proposal
-from commons.service.identity import current_reporter
+from commons.service.identity import current_model, current_reporter
 from commons.store.connection import Connection
 from commons.store.entries import insert_entry
-from commons.store.models import model_id
-
-UNKNOWN_MODEL = "unknown"
 
 
 @dataclass(frozen=True)
@@ -27,6 +24,6 @@ def propose(conn: Connection, proposal: Proposal, model: str | None) -> ProposeR
     validate_proposal(proposal)
     with conn.transaction():
         reporter = current_reporter(conn)
-        model_row = model_id(conn, (model or "").strip() or UNKNOWN_MODEL)
+        model_row = current_model(conn, model)
         entry_id = insert_entry(conn, proposal, created_by=reporter, created_by_model=model_row)
     return ProposeResult(entry_id=entry_id, status="pending")

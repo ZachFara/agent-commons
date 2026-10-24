@@ -103,7 +103,7 @@ ranking_snapshots
 
 All tools return JSON. Errors are structured, never free text. The calling model is taken from the SessionStart hook's record for the task when one exists, else from the optional `model` argument, else recorded as unknown (decision 0009).
 
-search(query, environment?, limit=5, model?)
+search(query, task_id, environment?, limit=5, model?)
 Returns entries ranked by score. Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). Logs a retrievals row per returned entry. Results are wrapped in a `data` field with a note that contents are untrusted.
 
 propose(symptom, environment, cause, fix, domains, repro?, task_id, model?)
@@ -155,7 +155,7 @@ Rules that apply in every mode:
 
 ## 7. Ranking and attribution
 
-v0: score = Bayesian success rate over outcomes where `used` is yes or partial, weighted by reporter reliability, with a prior of 0.5 and a decay factor on outcomes older than 90 days. Entries with zero outcomes rank by recency. Computed nightly into ranking_snapshots; `search` reads the latest snapshot.
+v0: score = Bayesian success rate over outcomes where `used` is yes or partial, weighted by reporter reliability, with a prior of 0.5 and a decay factor on outcomes older than 90 days. Search orders by full-text relevance times this score, with 0.5 for entries without outcomes and recency as the tiebreak; `environment.language` filters by language name (decision 0012). Computed nightly into ranking_snapshots; `search` reads the latest snapshot.
 
 v1, after a month of data:
 
