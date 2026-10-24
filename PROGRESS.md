@@ -68,7 +68,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 
 | ID | Status | Task | Done when |
 |---|---|---|---|
-| T28 | todo | Dashboard redesign: navigation; overview with charts (activity over time, outcome mix, self-report accuracy); review queue; entries list with search/filter and an entry page (content, provenance, score history, retrievals, outcomes, reviews); tasks; reporters and models. Checked in a real browser | Page tests for every route; screenshots reviewed in light and dark |
+| T28 | done | Dashboard redesign: navigation; overview with charts (activity over time, outcome mix, self-report accuracy); review queue; entries list with search/filter and an entry page (content, provenance, score history, retrievals, outcomes, reviews); tasks; reporters and models. Checked in a real browser | Page tests for every route; screenshots reviewed in light and dark |
 | T29 | todo | CLI utilities: `commons doctor` (config, DB, migrations, hooks, server), `commons search` (preview, no retrieval logged), `commons show <id>`, `commons-dashboard --open` | CLI tests per command |
 | T30 | todo | One hosted process: `/mcp`, hook API, dashboard in a single ASGI app with stateless HTTP (Cloud Run gives one URL per service) | In-process tests over the combined app; compose updated |
 | T31 | todo | Terraform in `infra/` for Neon + Cloud Run + Artifact Registry + Secret Manager (decision record), GitHub Actions deploy, cost estimate | `terraform validate` passes; docs give the exact apply steps |
@@ -98,7 +98,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T28.
+1. Next session: T29.
 2. After T28-T32: DESIGN Phase 3 waits for a month of data (DESIGN §10).
 
 ## Session log
@@ -213,3 +213,9 @@ being enough; whether anyone uses full_trace.
   Phase 2 complete.
 - 2026-10-25: repo made public (history scanned: only test fixtures; owner OK with the one
   commit showing their email); branch protection on. Planned T28-T32 (owner: Neon + Cloud Run).
+- 2026-10-25: T28 dashboard redesign: sidebar navigation; Overview (KPIs, daily retrievals,
+  outcomes per day, outcome mix observed vs self-reported, top entries); Review queue; Entries
+  (search, status filter, ordering) with entry pages (score history, reviews, retrievals);
+  Activity (sessions with tests); People & models (reliability, model attribution). Server-
+  rendered SVG charts, reference dataviz palette, light/dark. Checked in Chrome on demo data
+  (`tools/demo_data.py` builds a separate `commons_demo` database).

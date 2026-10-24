@@ -57,7 +57,8 @@ def test_admin_sees_the_queue_and_reviews_as_themselves(
     entry_id = factories.entry(db, admin, status="pending", symptom="hosted-queue-check")
 
     client = browser(app, key)
-    assert "hosted-queue-check" in client.get("/").text
+    assert "hosted-queue-check" in client.get("/queue").text
+    assert client.get("/").status_code == 200
 
     response = client.post(
         f"/entries/{entry_id}/review", data={"decision": "approve"}, headers={"origin": ORIGIN}

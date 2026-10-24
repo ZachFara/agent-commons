@@ -8,6 +8,7 @@ import pytest
 from starlette.testclient import TestClient
 
 import factories
+from commons.service.ranking import rank
 from commons.store.connection import Connection
 from commons.web import app as web
 
@@ -23,7 +24,7 @@ def client(db: psycopg.Connection) -> TestClient:
     return TestClient(web.build_app(test_connection), base_url=BASE, follow_redirects=False)
 
 
-def test_overview_shows_queue_proposals_and_outcomes(
+def test_every_page_renders_with_data(
     client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
 ) -> None:
     waiting = factories.entry(
@@ -36,28 +37,46 @@ def test_overview_shows_queue_proposals_and_outcomes(
         "WHERE retrieval_id IN (SELECT id FROM retrievals WHERE entry_id = %s)",
         (used,),
     )
+    rank(db)
 
-    page = client.get("/")
-    assert page.status_code == 200
-    html = page.text
-    assert "Awaiting human review" in html
-    assert "KeyError: &#39;dashboard-waiting&#39;" in html
-    assert str(waiting) in html
-    assert "TypeError: dashboard-used" in html
-    assert "error_resolved" in html
-    assert "Exactly the fix I needed." in html
+    overview = client.get("/").text
+    assert "Retrievals per day" in overview
+    assert "Did it work?" in overview
+    queue = client.get("/queue").text
+    assert "KeyError: &#39;dashboard-waiting&#39;" in queue
+    assert str(waiting) in queue
+    entries = client.get("/entries?q=dashboard-used").text
+    assert "TypeError: dashboard-used" in entries
+    assert "dashboard-waiting" not in entries
+    entry = client.get(f"/entries/{used}").text
+    assert "Exactly the fix I needed." in entry
+    assert "error resolved" in entry
+    for path in ("/activity", "/people"):
+        assert client.get(path).status_code == 200
+
+
+def test_entries_filter_by_status_and_unknown_entry_is_404(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    word = f"filtercheck{uuid.uuid4().hex[:6]}"
+    factories.entry(db, reporter, status="pending", symptom=f"{word} pending one")
+    factories.entry(db, reporter, symptom=f"{word} approved one")
+    html = client.get(f"/entries?q={word}&status=pending&order=newest").text
+    assert "pending one" in html
+    assert "approved one" not in html
+    assert client.get(f"/entries/{uuid.uuid4()}").status_code == 404
 
 
 def test_agent_written_text_is_escaped(
     client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
 ) -> None:
-    factories.entry(
+    entry_id = factories.entry(
         db, reporter, status="pending", symptom="<script>alert('x')</script>", cause="<b>bold</b>"
     )
-    html = client.get("/").text
-    assert "<script>alert" not in html
-    assert "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;" in html
-    assert "&lt;b&gt;bold&lt;/b&gt;" in html
+    for path in ("/queue", f"/entries/{entry_id}", "/entries"):
+        html = client.get(path).text
+        assert "<script>alert" not in html, path
+        assert "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;" in html, path
 
 
 def test_dashboard_only_binds_to_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,7 +108,7 @@ def test_approving_from_the_dashboard_is_a_human_review(
     response = post_review(client, entry_id, decision="approve", reason="")
 
     assert response.status_code == 303
-    assert response.headers["location"] == f"/?reviewed={entry_id}"
+    assert response.headers["location"] == f"/queue?reviewed={entry_id}"
     assert human_reviews(db, entry_id) == [("approve", None, reporter)]
     state = db.execute("SELECT status, human_reviewed FROM entries WHERE id = %s", (entry_id,))
     assert state.fetchone() == ("approved", True)
@@ -153,4 +172,23 @@ def test_queue_shows_what_was_redacted(
 ) -> None:
     report = {"scanned": True, "findings": [{"field": "fix", "kind": "github_token", "count": 2}]}
     factories.entry(db, reporter, status="pending", redaction_report=report)
-    assert "2 github_token in fix" in client.get("/").text
+    assert "2 github token in fix" in client.get("/queue").text
+
+
+def test_after_a_review_you_return_to_the_page_you_were_on(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    entry_id = factories.entry(db, reporter, status="pending")
+    page = f"{BASE}/entries/{entry_id}"
+    response = client.post(
+        f"/entries/{entry_id}/review",
+        data={"decision": "approve"},
+        headers={"origin": BASE, "referer": page},
+    )
+    assert response.headers["location"] == f"/entries/{entry_id}?reviewed={entry_id}"
+    elsewhere = client.post(
+        f"/entries/{entry_id}/review",
+        data={"decision": "approve"},
+        headers={"origin": BASE, "referer": "https://evil.example/phish"},
+    )
+    assert elsewhere.headers["location"].startswith("/queue?")

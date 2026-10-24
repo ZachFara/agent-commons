@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, pct, meter, line, outcome %}
+{% block title %}Entry{% endblock %}
+{% block content %}
+<header class="page"><div><div class="muted"><a href="/entries">Entries</a> / <span class="mono">{{ e.id | string | truncate(8, true, "") }}</span></div>
+  <h1 style="overflow-wrap: anywhere">{{ e.symptom }}</h1>
+  <div class="sub">{{ status(e.status, e.human_reviewed) }} · proposed {{ e.created_at.strftime("%b %d, %Y") }} by {{ e.proposed_by }} with {{ e.model }}</div></div></header>
+<div class="grid kpis">
+  <div class="card kpi"><div class="label">Score</div><div class="value">{{ "%.2f" | format(e.score) if e.score is not none else "–" }}</div><div class="note">0.5 = no evidence yet</div></div>
+  <div class="card kpi"><div class="label">Retrievals, 30 days</div><div class="value">{{ e.retrieval_count_30d if e.retrieval_count_30d is not none else "–" }}</div></div>
+  <div class="card kpi"><div class="label">Used when retrieved</div><div class="value">{{ pct(e.used_rate) }}</div></div>
+  <div class="card kpi"><div class="label">Worked when used</div><div class="value">{{ pct(e.success_rate) }}</div></div>
+</div>
+<div class="grid two">
+  <section class="card"><h2>Entry</h2><dl class="facts">
+    <dt>cause</dt><dd>{{ e.cause }}</dd><dt>fix</dt><dd>{{ e.fix }}</dd>
+    {% if e.repro %}<dt>repro</dt><dd class="mono">{{ e.repro }}</dd>{% endif %}
+    <dt>environment</dt><dd class="mono">{{ e.environment | tojson }}</dd>
+    <dt>domains</dt><dd>{{ e.domains | join(", ") }}</dd>
+    <dt>redacted</dt><dd>{% for f in e.redaction_report.findings %}<span class="badge warn">{{ f.count }} {{ f.kind | replace("_", " ") }} in {{ f.field }}</span> {% else %}nothing{% endfor %}</dd>
+  </dl>
+  {% if not e.human_reviewed and e.status != "retired" %}
+  <form class="review" method="post" action="/entries/{{ e.id }}/review">
+    <input type="text" name="reason" placeholder="Reason (required to reject)" aria-label="Reason">
+    <button class="approve" name="decision" value="approve">Approve</button>
+    <button class="reject" name="decision" value="reject">Reject</button>
+  </form>{% endif %}</section>
+  <div class="stack">
+    <section class="card"><h2>Score over time</h2>{{ line(history) }}</section>
+    <section class="card"><h2>Reviews</h2>{% if reviews %}<ul class="timeline">{% for r in reviews %}<li>
+      <span class="badge {{ 'good' if r.decision == 'approve' else 'bad' }}">{{ r.decision }}</span>
+      <span>{{ r.reviewer }}</span><span class="badge soft">{{ r.source }}</span>
+      <span class="muted">{{ r.created_at.strftime("%b %d %H:%M") }}</span>
+      {% if r.reason %}<div style="width: 100%" class="muted">{{ r.reason }}</div>{% endif %}</li>{% endfor %}</ul>
+      {% else %}<div class="empty">Not reviewed yet.</div>{% endif %}</section>
+  </div>
+</div>
+<section class="card" style="margin-top: 16px"><h2>Retrievals <span class="hint">latest 50</span></h2>
+  {% if retrievals %}<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th class="num">Rank</th><th>Used</th><th>Outcome</th><th>Agent's assessment</th></tr></thead><tbody>
+  {% for r in retrievals %}<tr><td class="muted" style="white-space: nowrap">{{ r.created_at.strftime("%b %d %H:%M") }}</td>
+    <td>{{ r.reporter }}<div class="muted">{{ r.model }}</div></td><td class="num">{{ r.rank_position }}</td>
+    <td>{{ r.used or "–" }}</td><td>{{ outcome(r.outcome, r.source) }}</td>
+    <td><div class="clip" style="max-width: 360px" title="{{ r.agent_assessment or '' }}">{{ r.agent_assessment or "" }}</div></td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">Never retrieved yet.</div>{% endif %}</section>
+{% endblock %}

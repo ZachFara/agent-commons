@@ -1,0 +1,39 @@
+{% macro bars(c) %}
+{% if c.empty %}<div class="empty">No activity in this period yet.</div>{% else %}
+<div class="legend">{% for l in c.legend %}<span><i class="{{ l.cls }}"></i>{{ l.label }}</span>{% endfor %}</div>
+<svg class="chart" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="Daily chart">
+  {% for t in c.ticks %}<line class="grid-line" x1="{{ c.left }}" x2="{{ c.width }}" y1="{{ t.y }}" y2="{{ t.y }}"/>
+  <text class="tick" x="{{ c.left - 6 }}" y="{{ t.y + 4 }}" text-anchor="end">{{ t.label }}</text>{% endfor %}
+  {% for b in c.bars %}<rect class="bar {{ b.cls }}" x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="{{ 2 if b.w > 6 else 1 }}"><title>{{ b.title }}</title></rect>{% endfor %}
+  {% for l in c.labels %}<text class="tick" x="{{ l.x }}" y="{{ c.height - 4 }}" text-anchor="middle">{{ l.label }}</text>{% endfor %}
+</svg>{% endif %}
+{% endmacro %}
+
+{% macro hbars(c) %}
+{% if not c.rows %}<div class="empty">No outcomes in the last 30 days.</div>{% else %}
+<div class="legend">{% for l in c.legend %}<span><i class="{{ l.cls }}"></i>{{ l.label }}</span>{% endfor %}</div>
+<div class="hbars">
+{% for r in c.rows %}<div class="row"><span>{{ r.label | replace("_", " ") }}</span>
+  <span class="track">{% for s in r.segments %}<span class="seg {{ s.cls }}" style="left: {{ s.left }}%; width: calc({{ s.width }}% - 2px)" title="{{ s.title }}"></span>{% endfor %}</span>
+  <span class="total">{{ r.total }}</span></div>{% endfor %}
+</div>{% endif %}
+{% endmacro %}
+
+{% macro line(c) %}
+{% if c.empty %}<div class="empty">No ranking snapshots yet.</div>{% else %}
+<svg class="chart" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="Score over time">
+  {% for t in c.ticks %}<line class="grid-line" x1="{{ c.left }}" x2="{{ c.width }}" y1="{{ t.y }}" y2="{{ t.y }}"/>
+  <text class="tick" x="{{ c.left - 6 }}" y="{{ t.y + 4 }}" text-anchor="end">{{ t.label }}</text>{% endfor %}
+  <path d="{{ c.path }}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>
+  {% for p in c.points %}<circle cx="{{ p.x }}" cy="{{ p.y }}" r="4" fill="var(--series-1)" stroke="var(--surface)" stroke-width="2"><title>{{ p.title }}</title></circle>{% endfor %}
+  {% for l in c.labels %}<text class="tick" x="{{ l.x }}" y="{{ c.height - 2 }}" text-anchor="{{ 'start' if loop.first else 'end' }}">{{ l.label }}</text>{% endfor %}
+</svg>{% endif %}
+{% endmacro %}
+
+{% macro status(s, human) %}<span class="badge {{ s }}">{{ s }}</span>{% if s != "pending" and not human %} <span class="badge soft" title="No human has reviewed this yet">unreviewed</span>{% endif %}{% endmacro %}
+
+{% macro pct(v) %}{% if v is none %}<span class="muted">–</span>{% else %}{{ "%.0f" | format(v * 100) }}%{% endif %}{% endmacro %}
+
+{% macro meter(v) %}{% if v is none %}<span class="muted">–</span>{% else %}<span class="meter"><b style="width: {{ "%.0f" | format(v * 100) }}%"></b></span>{{ "%.2f" | format(v) }}{% endif %}{% endmacro %}
+
+{% macro outcome(o, source) %}{% if not o %}<span class="muted">none yet</span>{% else %}<span class="badge {{ 'good' if o in ('tests_passed', 'error_resolved', 'user_accepted') else ('bad' if o in ('tests_failed', 'error_persisted', 'user_rejected') else '') }}">{{ o | replace("_", " ") }}</span>{% if source %} <span class="muted" title="{{ 'Observed by hooks' if source == 'hook' else 'Reported by the agent' }}">{{ 'observed' if source == 'hook' else 'self-reported' }}</span>{% endif %}{% endif %}{% endmacro %}
