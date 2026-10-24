@@ -7,7 +7,9 @@ what you learned, add open questions. Keep it short; history lives in git.
 
 - DESIGN.md §10 Phase 1 is done (2026-10-24): all seven MCP tools, CLI, admin dashboard,
   seeds, INSTALL.md. Owner installed it locally (2026-10-25).
-- Current phase: DESIGN.md §10 Phase 2 (hooks, secret scanning, ranking snapshots, hosted).
+- DESIGN.md §10 Phase 2 is done (2026-10-25): hooks and observed outcomes, secret scanning,
+  ranking and reliability, hosted mode.
+- Current phase: collecting data before Phase 3 (DESIGN §10: after a month of use).
 - Remote: https://github.com/ZachFara/agent-commons (private). CI runs on every PR.
 - Branch protection is unavailable (private repo on a free plan). Until the owner upgrades or
   makes the repo public, merge only with `gh pr merge --squash` after `gh pr checks --watch`
@@ -62,7 +64,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | T27a | done (with T27b) | Hosted identity: `reporters.is_admin`, `commons admin create-key`, key hashing, reporter from bearer key | Tests: key shown once, hash stored, lookup, admin flag |
 | T27b | done | `commons-mcp --http` with bearer auth; `local` reporters refused (0014) | In-process HTTP tests: no key 401, bad key 401, good key acts as that reporter; local refused |
 | T27c | done | Hosted hook endpoints; `commons hook` posts to the server when the config has a server URL and key | Tests against the app with a test client; spool stays local |
-| T27d | todo | Hosted dashboard behind admin key (HTTPS); `compose.hosted.yml` with Caddy; INSTALL hosted section | Tests: non-admin 403; compose config validates (`docker compose config`) |
+| T27d | done | Hosted dashboard behind admin key (HTTPS); `compose.hosted.yml` with Caddy; INSTALL hosted section | Tests: non-admin 403; compose config validates (`docker compose config`) |
 
 ### DESIGN Phase 3 (after a month of data)
 
@@ -88,7 +90,8 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T27d.
+1. Next session: DESIGN Phase 3 waits for a month of data (DESIGN §10). Until then: use it,
+   watch the dashboard, and tune the propose heuristic and `used` matching from real outcomes.
 
 ## Session log
 
@@ -194,3 +197,9 @@ being enough; whether anyone uses full_trace.
   `/api/hooks/*`, bearer key, strict derived-only shapes), `RemoteBackend`, `commons connect`
   (verifies the key, saves server+key in a 0600 config). Found and fixed: an existing config
   file kept 0644 after a key was written. Verified across real processes.
+- 2026-10-25: T27d hosted deployment: admin-only hosted dashboard (Basic auth with an admin
+  key, same-origin reviews behind the proxy), `server/Dockerfile`, `db/compose.hosted.yml` +
+  `db/Caddyfile`, INSTALL "Joining a hosted server" and "Hosting". Ran the whole stack locally
+  with DOMAIN=localhost: HTTPS, 401s without keys, dashboard with an admin key, MCP over HTTPS,
+  CSRF check through the proxy. Found and fixed: parallel image builds collided on one tag.
+  Phase 2 complete.
