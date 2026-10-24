@@ -23,6 +23,17 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --directory <path>/server commons hook stop",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
     "PostToolUseFailure": [
       {
         "matcher": "Bash",

@@ -28,7 +28,7 @@ def test_merge_keeps_other_tools_and_replaces_stale_commons_hooks() -> None:
     merged = merge_hooks(settings, commons_hooks())
     assert merged["model"] == "opus"
     assert merged["hooks"]["PostToolUse"][0] == OTHER_TOOL
-    assert "Stop" not in merged["hooks"]
+    assert merged["hooks"]["Stop"] == commons_hooks()["Stop"]
     assert merged["hooks"]["SessionStart"] == commons_hooks()["SessionStart"]
     assert merge_hooks(merged, commons_hooks()) == merged
 

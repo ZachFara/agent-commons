@@ -50,7 +50,8 @@ def test_long_error_message_finds_the_matching_entry_first(
         db, reporter, symptom="Segfault in numpy", cause="ABI mismatch", fix="Rebuild wheels"
     )
 
-    assert ids(search(server), weak, strong, unrelated) == [str(strong), str(weak)]
+    # limit=20: entries committed by other tests also match this common error text.
+    assert ids(search(server, limit=20), weak, strong, unrelated) == [str(strong), str(weak)]
 
 
 @pytest.mark.parametrize("status", ["pending", "rejected", "retired"])

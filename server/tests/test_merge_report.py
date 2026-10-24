@@ -24,7 +24,11 @@ def test_first_report_without_outcome_is_unknown() -> None:
 def test_agent_outcome_is_used_when_nothing_was_observed() -> None:
     record = merge_report(None, make_report("tests_passed", {"command": "pytest"}))
     assert record.outcome == "tests_passed"
-    assert record.evidence == {"agent": {"command": "pytest"}, "outcome_source": "agent"}
+    assert record.evidence == {
+        "agent": {"command": "pytest"},
+        "agent_outcome": "tests_passed",
+        "outcome_source": "agent",
+    }
 
 
 def test_observed_outcome_is_never_overwritten() -> None:
@@ -37,6 +41,7 @@ def test_observed_outcome_is_never_overwritten() -> None:
         "outcome_source": "hook",
         "observed": {"exit_code": 1},
         "agent": {"claim": "it worked"},
+        "agent_outcome": "tests_passed",
     }
     assert record.agent_assessment == "Helped: the pin fixed the import."
 

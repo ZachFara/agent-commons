@@ -3,7 +3,7 @@ from uuid import UUID
 from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 
-from commons.domain.outcomes import OutcomeRecord
+from commons.domain.outcomes import OutcomeRecord, Usage
 from commons.store.connection import Connection
 from commons.store.rows import returned_id
 
@@ -44,3 +44,8 @@ def save_outcome(conn: Connection, retrieval_id: UUID, record: OutcomeRecord) ->
         (retrieval_id, record.outcome, Jsonb(record.evidence), record.agent_assessment),
     )
     return returned_id(cursor.fetchone())
+
+
+def set_used(conn: Connection, retrieval_id: UUID, used: Usage | None) -> None:
+    """Record whether the entry's fix was used (observed by hooks; NULL = unknown)."""
+    conn.execute("UPDATE outcomes SET used = %s WHERE retrieval_id = %s", (used, retrieval_id))

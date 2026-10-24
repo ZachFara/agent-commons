@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -57,12 +58,15 @@ def merge_report(existing: OutcomeRecord | None, report: Report) -> OutcomeRecor
 
     The assessment is always stored. The agent's outcome is used only when no hook has
     observed one; observed outcomes are never overwritten. Agent evidence is kept under
-    `evidence.agent`, apart from hook payloads.
+    `evidence.agent`, apart from hook payloads, and the agent's claimed outcome under
+    `evidence.agent_outcome` so self-report accuracy can be measured (decision 0017).
     """
     evidence = dict(existing.evidence) if existing else {}
     outcome: OutcomeKind = existing.outcome if existing else "unknown"
     if report.evidence is not None:
         evidence["agent"] = report.evidence
+    if report.outcome is not None:
+        evidence["agent_outcome"] = report.outcome
     observed = existing is not None and existing.outcome_source() == "hook"
     if report.outcome is not None and not observed:
         outcome = report.outcome
@@ -70,3 +74,37 @@ def merge_report(existing: OutcomeRecord | None, report: Report) -> OutcomeRecor
     return OutcomeRecord(
         outcome=outcome, evidence=evidence, agent_assessment=report.agent_assessment
     )
+
+
+# Mirrors the Postgres enum usage.
+Usage = Literal["yes", "partial", "no"]
+
+
+@dataclass(frozen=True)
+class ObservedRun:
+    """A test command a hook saw, and how it exited."""
+
+    command: str
+    exit_code: int
+    at: datetime
+
+
+def merge_observation(existing: OutcomeRecord | None, run: ObservedRun | None) -> OutcomeRecord:
+    """Merge what hooks observed into the outcome row (DESIGN.md §4: observed fields win).
+
+    A test run after the retrieval sets the outcome; without one, the row is unchanged.
+    """
+    base = existing or OutcomeRecord(outcome="unknown", evidence={}, agent_assessment=None)
+    if run is None:
+        return base
+    evidence = {
+        **base.evidence,
+        "outcome_source": "hook",
+        "observed": {
+            "test_command": run.command,
+            "exit_code": run.exit_code,
+            "at": run.at.isoformat(),
+        },
+    }
+    outcome: OutcomeKind = "tests_passed" if run.exit_code == 0 else "tests_failed"
+    return OutcomeRecord(outcome=outcome, evidence=evidence, agent_assessment=base.agent_assessment)

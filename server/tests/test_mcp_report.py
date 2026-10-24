@@ -34,10 +34,12 @@ def report(server: FastMCP, task_id: str, entry_id: str, **arguments: object) ->
     )
 
 
-def outcome_rows(db: psycopg.Connection) -> list[tuple[Any, ...]]:
+def outcome_rows(db: psycopg.Connection, task_id: str) -> list[tuple[Any, ...]]:
+    """This task's outcomes; other tests commit outcomes to the shared database."""
     return db.execute(
         "SELECT o.outcome, o.used, o.evidence, o.agent_assessment, r.task_id::text "
-        "FROM outcomes o JOIN retrievals r ON r.id = o.retrieval_id"
+        "FROM outcomes o JOIN retrievals r ON r.id = o.retrieval_id WHERE r.task_id = %s",
+        (task_id,),
     ).fetchall()
 
 
@@ -49,11 +51,15 @@ def test_report_creates_an_outcome(
 
     assert result["outcome"] == "tests_passed"
     assert result["outcome_source"] == "agent"
-    assert outcome_rows(db) == [
+    assert outcome_rows(db, retrieved[0]) == [
         (
             "tests_passed",
             None,
-            {"agent": {"cmd": "pytest"}, "outcome_source": "agent"},
+            {
+                "agent": {"cmd": "pytest"},
+                "agent_outcome": "tests_passed",
+                "outcome_source": "agent",
+            },
             "The fix worked after upgrading Jinja2.",
             task_id,
         )
@@ -66,7 +72,7 @@ def test_report_without_outcome_records_unknown(
     result = report(server, *retrieved)
     assert result["outcome"] == "unknown"
     assert result["outcome_source"] is None
-    assert [row[0] for row in outcome_rows(db)] == ["unknown"]
+    assert [row[0] for row in outcome_rows(db, retrieved[0])] == ["unknown"]
 
 
 def test_second_report_updates_the_same_outcome(
@@ -75,7 +81,9 @@ def test_second_report_updates_the_same_outcome(
     first = report(server, *retrieved, outcome="tests_failed")
     second = report(server, *retrieved, outcome="tests_passed", agent_assessment="Worked on retry.")
     assert first["outcome_id"] == second["outcome_id"]
-    assert [(row[0], row[3]) for row in outcome_rows(db)] == [("tests_passed", "Worked on retry.")]
+    assert [(row[0], row[3]) for row in outcome_rows(db, retrieved[0])] == [
+        ("tests_passed", "Worked on retry.")
+    ]
 
 
 def test_repeated_searches_in_a_task_get_one_outcome(
@@ -84,7 +92,7 @@ def test_repeated_searches_in_a_task_get_one_outcome(
     task_id, entry_id = retrieved
     call(server, "search", {"query": "markupsafe", "task_id": task_id})
     report(server, task_id, entry_id)
-    assert len(outcome_rows(db)) == 1
+    assert len(outcome_rows(db, retrieved[0])) == 1
 
 
 def test_observed_outcome_wins_over_the_agents(
@@ -103,7 +111,7 @@ def test_observed_outcome_wins_over_the_agents(
         "outcome": "tests_failed",
         "outcome_source": "hook",
     }
-    ((outcome, used, _evidence, assessment, _task),) = outcome_rows(db)
+    ((outcome, used, _evidence, assessment, _task),) = outcome_rows(db, retrieved[0])
     assert (outcome, used, assessment) == (
         "tests_failed",
         "yes",
@@ -128,7 +136,7 @@ def test_report_on_something_not_retrieved_is_not_found(
         db.execute("UPDATE retrievals SET reporter_id = %s", (someone_else,))
     result = report(server, task_id, entry_id)
     assert result["error"]["code"] == "not_found"
-    assert outcome_rows(db) == []
+    assert outcome_rows(db, retrieved[0]) == []
 
 
 def test_empty_assessment_and_bad_outcome_are_invalid(

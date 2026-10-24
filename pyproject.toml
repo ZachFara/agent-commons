@@ -80,6 +80,7 @@ min_confidence = 60
 testpaths = ["server/tests"]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 xfail_strict = true
+filterwarnings = ["error"]
 
 # ---------------------------------------------------------------- import-linter
 # Enforces the module boundaries from DESIGN.md §2-§4. See docs/decisions/0003.

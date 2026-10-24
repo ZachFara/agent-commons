@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 from pathlib import Path
 from uuid import UUID
 
@@ -26,3 +27,28 @@ def append_spool(task_id: UUID, record: dict[str, object]) -> None:
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     with os.fdopen(descriptor, "a", encoding="utf-8") as spool:
         spool.write(json.dumps(record) + "\n")
+
+
+def read_spool(task_id: UUID) -> list[dict[str, object]]:
+    """Return the task's spooled records, oldest first; empty if there are none."""
+    path = spool_path(task_id)
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+SPOOL_RETENTION_DAYS = 30
+
+
+def prune_spools(now: float | None = None) -> int:
+    """Delete spools untouched for SPOOL_RETENTION_DAYS; return how many were removed."""
+    directory = state_dir() / "tasks"
+    if not directory.exists():
+        return 0
+    cutoff = (now if now is not None else time.time()) - SPOOL_RETENTION_DAYS * 86400
+    removed = 0
+    for path in directory.glob("*.jsonl"):
+        if path.stat().st_mtime < cutoff:
+            path.unlink()
+            removed += 1
+    return removed
