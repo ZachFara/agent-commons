@@ -1,5 +1,5 @@
 # 0008. Field mapping to cq knowledge units
-Status: Proposed (needs owner approval before T06)
+Status: Accepted (owner, 2026-10-24): renames approved, option (a) for symptom/cause/fix
 Date: 2026-10-24
 
 Context: DESIGN.md §2 says an entry is a superset of a cq knowledge unit and we must not invent
@@ -39,5 +39,6 @@ The symptom/cause/fix choice:
 Recommendation: (a). The meanings differ enough that these are our fields, not renamed cq ones;
 cq's limits (summary ≤500) are applied on export by truncation, recorded in the export report.
 
-Consequences: DESIGN.md §3-§4 change `tags`→`domains`, `proposed_by`→`created_by`; the
+Consequences: DESIGN.md §3-§4 change `tags`→`domains`, `proposed_by`→`created_by` (and
+`proposed_by_model`→`created_by_model` for consistency); the
 Phase 3 adapter becomes a near-mechanical projection.

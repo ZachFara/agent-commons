@@ -28,7 +28,7 @@ PROGRESS.md updated.
 | T03 | done | CI: Postgres service container + DB test fixture (per-test transaction or throwaway schema) | A test that runs `SELECT 1` through the fixture passes locally and in CI |
 | T04 | done | Migration runner in `store` + `commons migrate` CLI command + `commons` script entry | Applies numbered `.sql` files once, records them in `schema_migrations`; re-running is a no-op (tested) |
 | T05 | done | Check `cq-schema` field names and record the mapping in a decision record (prerequisite for T06) | `docs/decisions/` has the cq field mapping; any DESIGN.md field that collides with a cq name is listed as a proposed rename |
-| T06 | blocked (owner: decision 0008) | Migration 0001: all tables and enums from DESIGN.md §3 (including `reviews` and `entries.human_reviewed`, decision 0005), generated `search_vector` + GIN index | Test introspects every table, column, and enum after `migrate` |
+| T06 | todo | Migration 0001: all tables and enums from DESIGN.md §3 (including `reviews` and `entries.human_reviewed`, decision 0005), generated `search_vector` + GIN index | Test introspects every table, column, and enum after `migrate` |
 | T07 | todo | `domain`: enums and dataclasses for entries, retrievals, outcomes, reporters, models | Types mirror the schema; a test asserts Python enum values equal Postgres enum labels |
 | T08 | todo | `store` + `service`: propose. Creates a pending entry, upserts the model row, returns id + redaction report (empty until T21) | Service test: propose then read back; environment without versions is rejected with a structured error |
 | T09 | todo | Structured error type shared by service, MCP, and CLI | Every service error maps to `{"error": {"code", "message"}}`; test per code |
@@ -65,23 +65,21 @@ Raise new ones here. Do not resolve a question by guessing in code.
 
 1. **Branch protection.** Unavailable on a private repo without GitHub Pro. Options: upgrade,
    make the repo public, or keep the manual rule in Status. Owner to choose.
-2. **cq field mapping (blocks T06).** Decision 0008 (Proposed): rename `tags`→`domains`,
-   `proposed_by`→`created_by`, reviews `reviewer_id`→`reviewed_by`; keep symptom/cause/fix and
-   map them to cq's insight on export. Owner to approve or pick option (b).
-3. **Visibility of agent-approved, unreviewed entries in hosted mode.** Decision 0005 makes them
+2. **Visibility of agent-approved, unreviewed entries in hosted mode.** Decision 0005 makes them
    searchable locally. In a shared store, one reporter's agent could self-approve its own
    proposal. Proposal: in hosted mode, unreviewed entries are visible only to their proposer
    until a human reviews them. Decide before T27.
-4. **`privacy_mode` vs `local`.** Entries' `privacy_mode` enum is `entry, full_trace`, while the
+3. **`privacy_mode` vs `local`.** Entries' `privacy_mode` enum is `entry, full_trace`, while the
    reporter default also has `local`. Reading: local entries live only in the local store and
    carry `entry` there. Confirm.
-5. **Secret scanning timing.** DESIGN §4 says propose scans before writing, but §10 puts secret
+4. **Secret scanning timing.** DESIGN §4 says propose scans before writing, but §10 puts secret
    scanning in Phase 2. Plan: T08 returns an empty redaction report and T21 adds scanning. Fine
    for a single local user; must land before hosted mode.
-6. **License.** None yet; `LICENSE` is an allowed root file.
+5. **License.** None yet; `LICENSE` is an allowed root file.
 
 Resolved 2026-10-24 by owner: review model (decision 0005), hook location (decision 0006),
-seed entries come from real use rather than a manual batch (T18), admin dashboard added (T19-T20).
+seed entries come from real use rather than a manual batch (T18), admin dashboard added (T19-T20),
+cq field mapping (decision 0008: cq names for domains/created_by/reviewed_by, keep symptom/cause/fix).
 
 DESIGN.md §11 open questions (research, answered by data later): the non-obvious heuristic's
 rejection rate; whether diff matching detects `used` well enough; when full-text search stops
@@ -89,8 +87,8 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Owner: approve decision 0008, then T06.
-2. Owner, when convenient: open questions 1, 4, 6.
+1. Next session: T06.
+2. Owner, when convenient: open questions 1, 3, 5.
 
 ## Session log
 
