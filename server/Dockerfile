@@ -9,3 +9,5 @@ RUN uv sync --locked --no-dev --package commons
 ENV PATH=/app/.venv/bin:$PATH
 RUN useradd --system --uid 10001 commons
 USER commons
+# Cloud Run sets $PORT. Migrations are applied on start (serialized by an advisory lock).
+CMD ["commons-server", "--host", "0.0.0.0", "--migrate"]
