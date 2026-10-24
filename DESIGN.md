@@ -109,8 +109,8 @@ Returns entries ranked by score. Each result carries entry id, symptom, environm
 propose(symptom, environment, cause, fix, domains, repro?, task_id, model?)
 Creates a pending entry. The server runs secret scanning and redaction before writing. Returns the entry id and the redaction report so the human can see what was stripped.
 
-report(task_id, entry_id, agent_assessment, outcome?, evidence?, model?)
-Files an outcome. If hooks already wrote observed evidence for this task, the server merges and the observed fields win. The agent's assessment is stored but never overwrites an observed outcome.
+report(task_id, entry_id, agent_assessment, outcome?, evidence?)
+Files an outcome. If hooks already wrote observed evidence for this task, the server merges and the observed fields win. The outcome attaches to the earliest retrieval of the entry in the task; `evidence.outcome_source` records whether a hook or the agent set it. The agent's assessment is stored but never overwrites an observed outcome.
 
 approve(entry_id) and reject(entry_id, reason)
 Writes a reviews row. When an agent calls them, the review is provisional (source agent): it sets the entry's status but leaves human_reviewed false, and search provenance says "unreviewed". Human reviews come from `commons review` in local mode, the admin dashboard, or admin keys in hosted mode; the agent cannot mark its own review as human.
