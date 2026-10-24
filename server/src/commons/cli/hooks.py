@@ -11,7 +11,8 @@ from typing import Any, TextIO
 
 from commons.domain.errors import NotInitializedError
 from commons.domain.observations import ToolUse, exit_code_from_error
-from commons.service import hooks
+from commons.service import hook_client
+from commons.service.hook_client import HookBackend, LocalBackend
 from commons.service.local_state import state_dir
 from commons.store.connection import connect
 
@@ -27,8 +28,7 @@ def _session_start(payload: Payload) -> HookOutput:
     if not isinstance(session_id, str) or not (model is None or isinstance(model, str)):
         msg = "session_id must be a string and model a string if present"
         raise TypeError(msg)
-    with connect() as conn:
-        task_id = hooks.session_start(conn, session_id, model)
+    task_id = hook_client.on_session_start(_backend(), session_id, model)
     context = (
         f"Agent Commons task_id for this session: {task_id}. "
         "Pass it as task_id to every commons tool call."
@@ -47,8 +47,11 @@ def _post_tool_use_failure(payload: Payload) -> HookOutput:
 
 
 def _observe(use: ToolUse) -> None:
-    with connect() as conn:
-        hooks.observe_tool_use(conn, use)
+    hook_client.on_tool_use(_backend(), use)
+
+
+def _backend() -> HookBackend:
+    return LocalBackend(connect)
 
 
 def _tool_use(payload: Payload, *, failed: bool) -> ToolUse:
@@ -84,8 +87,8 @@ def _exit_code(payload: Payload, *, failed: bool) -> int | None:
 
 def _stop(payload: Payload) -> HookOutput:
     transcript = payload.get("transcript_path")
-    with connect() as conn:
-        result = hooks.stop(conn, str(payload["session_id"]), transcript or None)
+    session_id = str(payload["session_id"])
+    result = hook_client.on_stop(_backend(), session_id, str(transcript) if transcript else None)
     if result is None or not result.unreported or payload.get("stop_hook_active"):
         return None
     ids = ", ".join(str(entry_id) for entry_id in result.unreported)

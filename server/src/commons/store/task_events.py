@@ -11,9 +11,12 @@ from commons.store.connection import Connection
 from commons.store.rows import returned_id
 
 
-def task_for_session(conn: Connection, session_id: str) -> UUID | None:
-    """Return the task id SessionStart created for this session, if any."""
-    row = conn.execute("SELECT id FROM tasks WHERE session_id = %s", (session_id,)).fetchone()
+def task_for_session(conn: Connection, session_id: str, reporter_id: UUID) -> UUID | None:
+    """Return this reporter's task for the session, if SessionStart created one."""
+    row = conn.execute(
+        "SELECT id FROM tasks WHERE session_id = %s AND reporter_id = %s",
+        (session_id, reporter_id),
+    ).fetchone()
     return None if row is None else returned_id(row)
 
 

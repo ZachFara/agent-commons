@@ -1,17 +1,15 @@
-"""What Claude Code hooks record (DESIGN.md §5, decision 0016)."""
+"""What the store records for Claude Code hooks (DESIGN.md §5, decision 0016).
 
-import hashlib
-import json
+These run where the database is: in the hook process locally, on the server when hosted.
+Everything that reads the user's machine (spool, transcript) is in `hook_client`.
+"""
+
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID
 
-from commons.domain.observations import ToolUse, is_test_command
-from commons.domain.outcomes import ObservedRun, merge_observation
-from commons.domain.usage import compute_used
-from commons.privacy.redaction import scrub
-from commons.service.identity import configured_test_runners, current_reporter
-from commons.service.local_state import append_spool, prune_spools, read_spool
+from commons.domain.errors import NotPermittedError
+from commons.domain.outcomes import ObservedRun, Usage, merge_observation
+from commons.service.identity import current_reporter
 from commons.service.ranking import rank, ranking_is_stale
 from commons.store.connection import Connection
 from commons.store.models import model_id
@@ -28,53 +26,44 @@ from commons.store.tasks import start_task
 
 
 def session_start(conn: Connection, session_id: str, model: str | None) -> UUID:
-    """Create or resume the session's task and return its task id.
+    """Create or resume the calling reporter's task for this session; return its id.
 
-    Also does the daily housekeeping: prunes old spools and, if snapshots are over a day
-    old, re-ranks (decision 0017). Ranking is fast at local scale; hosted mode schedules it.
+    Re-ranks if snapshots are over a day old (decision 0017), so neither mode needs a
+    scheduler; ranking is fast at this scale.
     """
-    prune_spools()
     with conn.transaction():
         reporter = current_reporter(conn)
         model_row = model_id(conn, model) if model else None
         task_id = start_task(conn, session_id, reporter, model_row)
+        if task_id is None:
+            msg = "That session belongs to another reporter."
+            raise NotPermittedError(msg)
     if ranking_is_stale(conn):
         rank(conn)
     return task_id
 
 
-def observe_tool_use(conn: Connection, use: ToolUse) -> None:
-    """Record a tool call: scrubbed text to the local spool, derived facts to the store."""
+def record_tool_use(
+    conn: Connection,
+    session_id: str,
+    test_run: dict[str, object] | None,
+    file_change: dict[str, object] | None,
+) -> None:
+    """Store derived observations of one tool call; ignore sessions we have no task for."""
     with conn.transaction():
-        task_id = task_for_session(conn, use.session_id)
+        task_id = task_for_session(conn, session_id, current_reporter(conn))
         if task_id is None:
             return
-        if use.command is not None:
-            append_spool(task_id, {"tool": use.tool_name, "command": scrub(use.command)})
-        if use.new_text is not None:
-            append_spool(task_id, {"tool": use.tool_name, "text": scrub(use.new_text)})
-        if _is_test_run(use):
-            run: dict[str, object] = {
-                "command": scrub(use.command or ""),
-                "exit_code": use.exit_code,
-            }
-            add_task_event(conn, task_id, "test_run", run)
-        if use.file_path is not None and use.new_text is not None:
-            change: dict[str, object] = {
-                "path_sha256": _sha256(use.file_path),
-                "content_sha256": _sha256(use.new_text),
-            }
-            add_task_event(conn, task_id, "file_change", change)
+        if test_run is not None:
+            add_task_event(conn, task_id, "test_run", test_run)
+        if file_change is not None:
+            add_task_event(conn, task_id, "file_change", file_change)
 
 
-def _is_test_run(use: ToolUse) -> bool:
-    if use.command is None or use.exit_code is None:
-        return False
-    return is_test_command(use.command, configured_test_runners())
-
-
-def _sha256(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def retrievals_to_judge(conn: Connection, session_id: str) -> list[TaskRetrieval]:
+    """Return the entries retrieved in this session's task, for the client to judge `used`."""
+    task_id = task_for_session(conn, session_id, current_reporter(conn))
+    return [] if task_id is None else task_retrievals(conn, task_id)
 
 
 @dataclass(frozen=True)
@@ -85,49 +74,29 @@ class StopResult:
     unreported: list[UUID]
 
 
-def stop(conn: Connection, session_id: str, transcript_path: str | None) -> StopResult | None:
-    """Record observed model, `used`, and observed outcomes for the task (decision 0016)."""
+def finish_turn(
+    conn: Connection, session_id: str, model: str | None, used: dict[UUID, Usage | None]
+) -> StopResult | None:
+    """Record the observed model, `used` per retrieval, and observed outcomes (decision 0016)."""
     with conn.transaction():
-        task_id = task_for_session(conn, session_id)
+        task_id = task_for_session(conn, session_id, current_reporter(conn))
         if task_id is None:
             return None
-        model = observed_model(Path(transcript_path)) if transcript_path else None
         if model:
             set_task_model(conn, task_id, model_id(conn, model))
         runs = test_runs(conn, task_id)
-        session_text = _session_text(task_id)
         retrieved = task_retrievals(conn, task_id)
         for item in retrieved:
-            _record_observation(conn, item, runs, session_text)
+            _record_observation(conn, item, runs, used.get(item.retrieval_id))
     return StopResult(task_id, [item.entry_id for item in retrieved if not item.reported])
 
 
 def _record_observation(
-    conn: Connection, item: TaskRetrieval, runs: list[ObservedRun], session_text: str
+    conn: Connection, item: TaskRetrieval, runs: list[ObservedRun], used: Usage | None
 ) -> None:
     after = [run for run in runs if run.at > item.retrieved_at]
     record = merge_observation(
         locked_outcome(conn, item.retrieval_id), after[-1] if after else None
     )
     save_outcome(conn, item.retrieval_id, record)
-    set_used(conn, item.retrieval_id, compute_used(item.fix, session_text))
-
-
-def _session_text(task_id: UUID) -> str:
-    parts = (record.get("command") or record.get("text") for record in read_spool(task_id))
-    return "\n".join(str(part) for part in parts if part)
-
-
-def observed_model(transcript: Path) -> str | None:
-    """Return the model of the transcript's last assistant message, if it records one."""
-    if not transcript.exists():
-        return None
-    model = None
-    for line in transcript.read_text(encoding="utf-8").splitlines():
-        try:
-            message = json.loads(line).get("message")
-        except (json.JSONDecodeError, AttributeError):
-            continue
-        if isinstance(message, dict) and isinstance(message.get("model"), str):
-            model = message["model"]
-    return model
+    set_used(conn, item.retrieval_id, used)

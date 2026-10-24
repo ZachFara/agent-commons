@@ -7,6 +7,7 @@ from typing import Any
 import psycopg
 import pytest
 
+from commons.service.local_state import spool_path
 from hook_env import HookEnv
 
 TOKEN = "ghp_" + "t" * 36
@@ -61,8 +62,8 @@ def events(database_url: str, task_id: str) -> list[tuple[str, dict[str, Any]]]:
     return [(kind, data) for kind, data in rows]
 
 
-def spool(env: HookEnv, task_id: str) -> list[dict[str, Any]]:
-    path = env.state_dir / "tasks" / f"{task_id}.jsonl"
+def spool(session_id: str) -> list[dict[str, Any]]:
+    path = spool_path(session_id)
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
@@ -82,7 +83,7 @@ def test_test_runs_record_exit_codes(
         ("test_run", {"command": "uv run pytest -q", "exit_code": 0}),
         ("test_run", {"command": "npm test", "exit_code": 2}),
     ]
-    assert [r["command"] for r in spool(env, task_id)] == [
+    assert [r["command"] for r in spool(session_id)] == [
         "uv run pytest -q",
         "npm test",
         "pytest",
@@ -114,8 +115,9 @@ def test_edits_are_spooled_locally_and_only_hashed_in_the_store(
     assert [kind for kind, _ in stored] == ["file_change"] * 3
     assert all(set(data) == {"path_sha256", "content_sha256"} for _, data in stored)
     assert "jdoe" not in json.dumps(stored)
-    assert [r["text"] for r in spool(env, task_id)] == ["pin<2.1", "beta", "one\ntwo"]
-    path = env.state_dir / "tasks" / f"{task_id}.jsonl"
+    assert [r["text"] for r in spool(session_id)] == ["pin<2.1", "beta", "one\ntwo"]
+    path = spool_path(session_id)
+    assert path.parent == env.state_dir / "sessions"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
@@ -126,7 +128,7 @@ def test_secrets_are_scrubbed_everywhere(
     env.run("post-tool-use", bash(session_id, f"GITHUB_TOKEN={TOKEN} pytest"))
     ((_, data),) = events(database_url, task_id)
     assert data["command"] == "GITHUB_TOKEN=[REDACTED:github_token] pytest"
-    assert TOKEN not in json.dumps(spool(env, task_id))
+    assert TOKEN not in json.dumps(spool(session_id))
 
 
 def test_configured_test_runners_count(
@@ -140,7 +142,12 @@ def test_configured_test_runners_count(
     assert [kind for kind, _ in events(database_url, task_id)] == ["test_run"]
 
 
-def test_tool_use_outside_a_known_session_is_ignored(env: HookEnv) -> None:
+def test_tool_use_outside_a_known_session_reaches_no_task(env: HookEnv, database_url: str) -> None:
     env.run("post-tool-use", bash("never-started", "pytest"))
-    assert not (env.state_dir / "tasks").exists()
+    with psycopg.connect(database_url) as conn:
+        rows = conn.execute(
+            "SELECT count(*) FROM task_events e JOIN tasks t ON t.id = e.task_id "
+            "WHERE t.session_id = 'never-started'"
+        ).fetchone()
+    assert rows == (0,)
     assert "failed" not in env.log()
