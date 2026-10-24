@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 [dependency-groups]
 dev = [
     "commons",
-    "httpx>=0.28.1",
+    "httpx2>=2.16.0",
     "import-linter>=2.15",
     "mypy>=2.4.0",
     "pre-commit>=4.7.0",
@@ -101,7 +101,7 @@ layers = [
 name = "Pure layers never touch I/O libraries"
 type = "forbidden"
 source_modules = ["commons.domain", "commons.ranking", "commons.privacy", "commons.adapters"]
-forbidden_modules = ["psycopg", "fastmcp", "httpx", "subprocess", "socket"]
+forbidden_modules = ["psycopg", "fastmcp", "httpx", "httpx2", "subprocess", "socket"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]

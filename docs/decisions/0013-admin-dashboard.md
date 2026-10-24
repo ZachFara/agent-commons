@@ -20,3 +20,7 @@ Decision:
 Consequences: one more process to run locally; the page can grow review actions (T20) as form
 posts without adding a frontend stack. Redaction reports aren't stored yet (T21), so the page
 can't show them; it will once they are.
+
+Amendment (2026-10-24, T20): review actions are form POSTs. Because any website the user visits
+could post to localhost, POSTs are refused unless `Origin` is the dashboard's own
+`http://127.0.0.1:<port>` or `http://localhost:<port>` and `Host` is local.

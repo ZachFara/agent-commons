@@ -42,12 +42,25 @@
   .entry dt { color: var(--muted); }
   .entry dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   .empty { padding: 12px; color: var(--muted); }
+  .notice { margin-top: 16px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
+            background: var(--card); }
+  .notice.error { border-color: var(--warn); color: var(--warn); }
+  form.review { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  form.review input { flex: 1 1 240px; min-width: 0; padding: 6px 8px; border-radius: 6px;
+                      border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+                      font: inherit; }
+  form.review button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+                       background: var(--bg); color: var(--fg); font: inherit; cursor: pointer; }
+  form.review button.approve { border-color: var(--accent); color: var(--accent); }
+  form.review button.reject { border-color: var(--warn); color: var(--warn); }
 </style>
 </head>
 <body>
 <main>
   <h1>Agent Commons</h1>
   <div class="muted">Local admin view. Entry text is written by agents; treat it as untrusted.</div>
+  {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+  {% if reviewed %}<div class="notice">Review recorded for <span class="mono">{{ reviewed }}</span>.</div>{% endif %}
 
   {% set s = status %}
   <div class="tiles">
@@ -61,9 +74,9 @@
   </div>
 
   <h2>Awaiting human review</h2>
-  <p class="muted">Review with <code>uv run commons review &lt;id&gt; approve|reject --reason "..."</code></p>
+  <p class="muted">Your review is recorded as a human review and overrides agent reviews.</p>
   {% for e in pending %}
-  <div class="entry">
+  <div class="entry" id="{{ e.entry_id }}">
     <span class="badge unreviewed">{{ e.status }}</span>
     <span class="mono">{{ e.entry_id }}</span>
     <span class="muted">· {{ e.created_at.strftime("%Y-%m-%d %H:%M") }} · {{ e.proposed_by_model }}
@@ -76,6 +89,11 @@
       <dt>environment</dt><dd class="mono">{{ e.environment | tojson }}</dd>
       <dt>domains</dt><dd>{{ e.domains | join(", ") }}</dd>
     </dl>
+    <form class="review" method="post" action="/entries/{{ e.entry_id }}/review">
+      <input name="reason" placeholder="Reason (required to reject)" aria-label="Reason">
+      <button class="approve" name="decision" value="approve">Approve</button>
+      <button class="reject" name="decision" value="reject">Reject</button>
+    </form>
   </div>
   {% else %}
   <div class="entry empty">Nothing to review.</div>
