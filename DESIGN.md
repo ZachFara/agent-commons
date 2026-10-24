@@ -113,7 +113,7 @@ report(task_id, entry_id, agent_assessment, outcome?, evidence?)
 Files an outcome. If hooks already wrote observed evidence for this task, the server merges and the observed fields win. The outcome attaches to the earliest retrieval of the entry in the task; `evidence.outcome_source` records whether a hook or the agent set it. The agent's assessment is stored but never overwrites an observed outcome.
 
 approve(entry_id) and reject(entry_id, reason)
-Writes a reviews row. When an agent calls them, the review is provisional (source agent): it sets the entry's status but leaves human_reviewed false, and search provenance says "unreviewed". Human reviews come from `commons review` in local mode, the admin dashboard, or admin keys in hosted mode; the agent cannot mark its own review as human.
+Writes a reviews row. When an agent calls them, the review is provisional (source agent): it sets the entry's status but leaves human_reviewed false, and search provenance says "unreviewed". Human reviews come from `commons review` or the dashboard locally, and the admin-key-protected dashboard in hosted mode. MCP reviews are always agent reviews, even with an admin key (decision 0018).
 
 pending()
 Lists entries awaiting review: status pending, or not yet human-reviewed.
@@ -136,7 +136,7 @@ Observed outcomes come from hooks, not from the agent:
 - Stop: compute `used` by matching entry fix text against the session diff, assemble the evidence, and write the outcome. Prompt the agent to file its assessment if it hasn't.
 - SessionStart: mint task_id, set privacy mode from the reporter's default.
 
-Hooks are Claude Code's hook system (settings.json). `client/hooks.json` only calls `commons hook <event>`; the logic lives in the server package so it is typed and tested. Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
+Hook details, including what stays on the user's machine, are in decision 0016. Hooks are Claude Code's hook system (settings.json). `client/hooks.json` only calls `commons hook <event>`; the logic lives in the server package so it is typed and tested. Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
 
 ## 6. Privacy
 
@@ -155,7 +155,7 @@ Rules that apply in every mode:
 
 ## 7. Ranking and attribution
 
-v0: score = Bayesian success rate over outcomes where `used` is yes or partial, weighted by reporter reliability, with a prior of 0.5 and a decay factor on outcomes older than 90 days. Search orders by full-text relevance times this score, with 0.5 for entries without outcomes and recency as the tiebreak; `environment.language` filters by language name (decision 0012). Computed nightly into ranking_snapshots; `search` reads the latest snapshot.
+v0 (exact formula in decision 0017): score = Bayesian success rate over outcomes where `used` is yes or partial, weighted by reporter reliability, with a prior of 0.5 and a decay factor on outcomes older than 90 days. Search orders by full-text relevance times this score, with 0.5 for entries without outcomes and recency as the tiebreak; `environment.language` filters by language name (decision 0012). Computed nightly into ranking_snapshots; `search` reads the latest snapshot.
 
 v1, after a month of data:
 

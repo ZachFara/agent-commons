@@ -47,16 +47,22 @@ command and goes down through the layers.
 | T19 | done | Admin dashboard, read-only: pending queue, recent proposals with redaction reports, recent retrievals and outcomes. Adds a `web` entrypoint layer (decision record + import contract) | Served locally by the server; page test renders seeded rows; no write routes yet |
 | T20 | done | Admin dashboard: file human reviews (approve/reject with reason) | Review from the dashboard writes a human reviews row; tested |
 
-### DESIGN Phase 2 (split into session-sized tasks when Phase 1 is done)
+### DESIGN Phase 2: observed outcomes, ranking, hosted
 
-- T21 done: secret scanning and redaction in `privacy`, wired into propose and every write.
-- T22 SessionStart hook (all hooks call `commons hook <event>`, decision 0006): mint task_id, set privacy mode.
-- T23 PostToolUse hooks: test-runner capture (Bash), file hashes (Edit/Write).
-- T24 Stop hook: `used` from diff matching, evidence assembly, outcome write, assessment prompt.
-- T25 Nightly ranking job: v0 Bayesian score into ranking_snapshots; search reads latest snapshot.
-- T26 Reporter reliability recomputation.
-- T27 Hosted mode: streamable HTTP, bearer auth, `commons admin create-key`, `compose.hosted.yml`;
-  refuse writes from `local`-mode reporters or tasks (decision 0014).
+Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-10-25.
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T21 | done | Secret scanning and redaction on every write | Tested; report stored and shown |
+| T22 | todo | Hook plumbing: migration for `tasks` + `task_events`; `commons hook <event>` reading stdin, logging failures and exiting 0; SessionStart creates/reuses the task and prints the task id; server instructions use it; `client/hooks.json`; INSTALL step 4 merges it | Tests feed recorded payloads to `main(["hook", ...])`; start/resume reuse; malformed input exits 0 and logs |
+| T23 | todo | Observation hooks: Bash `PostToolUse`/`PostToolUseFailure` test runs (exit code parsed from `error`) into `task_events`; Edit/Write/Bash into the local spool; file-change hashes | Tests for runner matching (built-in + config regex), exit codes, spool contents, no code in the store |
+| T24 | todo | Stop hook: observed model from the transcript; `used` per retrieved entry; observed outcome from the latest test run after the retrieval; block once asking for `report` | Tests: used yes/partial/no/unknown; pass/fail after retrieval; earlier test runs ignored; stop_hook_active respected; agent outcome never overrides hook |
+| T25 | todo | `commons rank`: v0 score into ranking_snapshots; `evidence.agent_outcome` kept by report; background trigger from SessionStart when stale | Tests of the formula (prior, weights, partial, decay), snapshot fields, search uses the new score |
+| T26 | todo | Reporter reliability in `commons rank` | Tests: matches/pairs, NULL under 5 pairs, used as self-report weight |
+| T27a | todo | Hosted identity: `reporters.is_admin`, `commons admin create-key`, key hashing, reporter from bearer key | Tests: key shown once, hash stored, lookup, admin flag |
+| T27b | todo | `commons-mcp --http` with bearer auth; `local` reporters refused (0014) | In-process HTTP tests: no key 401, bad key 401, good key acts as that reporter; local refused |
+| T27c | todo | Hosted hook endpoints; `commons hook` posts to the server when the config has a server URL and key | Tests against the app with a test client; spool stays local |
+| T27d | todo | Hosted dashboard behind admin key (HTTPS); `compose.hosted.yml` with Caddy; INSTALL hosted section | Tests: non-admin 403; compose config validates (`docker compose config`) |
 
 ### DESIGN Phase 3 (after a month of data)
 
@@ -82,8 +88,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: Phase 2. Split T21-T27 into session-sized tasks first (start with T21,
-   secret scanning, which must land before hosted mode).
+1. Next session: T22.
 
 ## Session log
 
@@ -151,3 +156,5 @@ being enough; whether anyone uses full_trace.
   home-dir usernames. Runs on proposals (report stored in `entries.redaction_report`,
   migration 0003, shown in the dashboard queue), search queries as logged, reports, review
   reasons.
+- 2026-10-25: Phase 2 split into T22-T27d after checking hook payloads empirically;
+  decisions 0016-0018.
