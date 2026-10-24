@@ -40,7 +40,7 @@ T13-T15 were folded into the slices above (2026-10-24): the dead-code check reje
 service functions that no entry point calls yet, so each task now starts at an MCP tool or CLI
 command and goes down through the layers.
 
-| T16 | todo | `client/CLAUDE.snippet.md`: search-first, propose-on-surprise, post-hoc report, untrusted-data, full_trace downgrade rules | Snippet covers each rule in DESIGN.md §5-§6; under 60 lines |
+| T16 | done | `client/CLAUDE.snippet.md`: search-first, propose-on-surprise, post-hoc report, untrusted-data, full_trace downgrade rules | Snippet covers each rule in DESIGN.md §5-§6; under 60 lines |
 | T17 | todo | `INSTALL.md` (agent-facing, DESIGN.md §9 steps 1-7) and `README.md` | A fresh Claude Code session following INSTALL.md alone reaches a working `search` (owner verifies) |
 | T18 | todo | Ship a few seed entries (well-known public problems) loaded by `commons init`, so INSTALL step 7 has a known entry to find. Real entries come from use (owner, 2026-10-24) | `search` for a seed symptom returns it on a fresh install (tested) |
 | T19 | todo | Admin dashboard, read-only: pending queue, recent proposals with redaction reports, recent retrievals and outcomes. Adds a `web` entrypoint layer (decision record + import contract) | Served locally by the server; page test renders seeded rows; no write routes yet |
@@ -89,7 +89,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T16.
+1. Next session: T17.
 2. Owner, when convenient: open questions 1, 3, 5.
 
 ## Session log
@@ -131,3 +131,6 @@ being enough; whether anyone uses full_trace.
 - 2026-10-24: T12 `status` tool and `commons status`. Per-entry outcome stats SQL is shared
   (`store/outcome_stats.py`) by search and status. Decay flags omitted until Phase 3. All
   seven DESIGN.md §4 tools now exist.
+- 2026-10-24: T16 `client/CLAUDE.snippet.md` (41 lines). Until hooks exist the agent mints its
+  own task_id with `uuidgen`, and is told to keep secrets out since scanning (T21) isn't in yet;
+  update both lines when T21/T22 land. A test keeps the snippet's tool/argument names real.
