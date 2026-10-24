@@ -12,6 +12,7 @@ from commons.domain.usage import compute_used
 from commons.privacy.redaction import scrub
 from commons.service.identity import configured_test_runners, current_reporter
 from commons.service.local_state import append_spool, prune_spools, read_spool
+from commons.service.ranking import rank, ranking_is_stale
 from commons.store.connection import Connection
 from commons.store.models import model_id
 from commons.store.outcomes import locked_outcome, save_outcome, set_used
@@ -27,12 +28,19 @@ from commons.store.tasks import start_task
 
 
 def session_start(conn: Connection, session_id: str, model: str | None) -> UUID:
-    """Create or resume the session's task and return its task id."""
+    """Create or resume the session's task and return its task id.
+
+    Also does the daily housekeeping: prunes old spools and, if snapshots are over a day
+    old, re-ranks (decision 0017). Ranking is fast at local scale; hosted mode schedules it.
+    """
     prune_spools()
     with conn.transaction():
         reporter = current_reporter(conn)
         model_row = model_id(conn, model) if model else None
-        return start_task(conn, session_id, reporter, model_row)
+        task_id = start_task(conn, session_id, reporter, model_row)
+    if ranking_is_stale(conn):
+        rank(conn)
+    return task_id
 
 
 def observe_tool_use(conn: Connection, use: ToolUse) -> None:

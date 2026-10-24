@@ -12,7 +12,7 @@ from commons.cli.hooks import HANDLERS, run_hook
 from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
-from commons.service import reviews, seeds
+from commons.service import ranking, reviews, seeds
 from commons.service import status as status_service
 from commons.service.hook_install import default_settings_path, install_hooks
 from commons.service.identity import init_reporter
@@ -108,6 +108,13 @@ def _status(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _rank(_args: argparse.Namespace) -> int:
+    with connect() as conn:
+        count = ranking.rank(conn)
+    sys.stdout.write(f"ranked {count} approved entries\n")
+    return 0
+
+
 def _hook_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("event", choices=sorted(HANDLERS), help="Hook event; payload on stdin.")
 
@@ -154,6 +161,7 @@ COMMANDS: dict[str, Command] = {
     "pending": Command("List entries awaiting human review.", _pending),
     "review": Command("Approve or reject an entry as a human.", _review, _review_arguments),
     "status": Command("Show store statistics.", _status),
+    "rank": Command("Write ranking snapshots (runs daily on its own).", _rank),
     "hook": Command("Run a Claude Code hook (used by hooks.json).", _hook, _hook_arguments),
     "install-hooks": Command(
         "Add Agent Commons hooks to Claude Code settings.", _install_hooks, _install_hooks_arguments

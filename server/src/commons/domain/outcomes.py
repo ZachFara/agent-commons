@@ -108,3 +108,14 @@ def merge_observation(existing: OutcomeRecord | None, run: ObservedRun | None) -
     }
     outcome: OutcomeKind = "tests_passed" if run.exit_code == 0 else "tests_failed"
     return OutcomeRecord(outcome=outcome, evidence=evidence, agent_assessment=base.agent_assessment)
+
+
+@dataclass(frozen=True)
+class OutcomeSample:
+    """One outcome of a used entry, with what its weight depends on."""
+
+    success: bool
+    used: Usage
+    observed: bool  # set by a hook rather than the agent
+    reporter_reliability: float | None
+    age_days: float
