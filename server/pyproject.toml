@@ -3,7 +3,9 @@ name = "commons"
 version = "0.0.0"
 description = "Agent Commons: a shared, outcome-ranked knowledge store for coding agents."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "psycopg[binary]>=3.3.6",
+]
 
 [build-system]
 requires = ["hatchling"]
