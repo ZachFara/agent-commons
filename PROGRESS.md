@@ -33,7 +33,7 @@ PROGRESS.md updated.
 | T08 | done | MCP server + `propose`: FastMCP stdio, `commons-mcp` script, structured errors `{"error": {"code", "message"}}`, reporter from local config, model from optional `model` arg else `unknown` (decision 0009). Domain types and validation (environment needs versions, domains 1-16) come in with it. Redaction report empty until T21 | In-process FastMCP client test: propose returns entry id, status pending, redaction report; invalid input returns a structured error; row readable in DB |
 | T09 | done | `search` tool: full-text over approved entries, rank by recency (no snapshots yet), one retrievals row per result with rank and score, results under `data` with the untrusted note, provenance string incl. "unreviewed" | Tests: relevant entry first; pending/rejected never returned; retrievals rows written; payload shape |
 | T10 | done | `report` tool: self-report path, agent_assessment stored, outcome `unknown` unless given, merged into the retrieval's single outcome row | Tests: report after search creates an outcome; second report updates it; report for an entry not retrieved in that task is a structured error |
-| T11 | todo | Reviews (decision 0005): `approve`/`reject`/`pending` tools (source agent) and `commons review <id> approve\|reject [--reason]` (source human); status follows latest human review, else latest agent review | Tests: agent review sets status but not human_reviewed; human overrides agent; multiple reviewers kept; pending lists pending or unreviewed |
+| T11 | done | Reviews (decision 0005): `approve`/`reject`/`pending` tools (source agent) and `commons review <id> approve\|reject [--reason]` (source human); status follows latest human review, else latest agent review | Tests: agent review sets status but not human_reviewed; human overrides agent; multiple reviewers kept; pending lists pending or unreviewed |
 | T12 | todo | `status` tool and `commons status`: counts by status, 30-day retrievals and outcomes, top entries by success rate | Tests with seeded rows return expected counts; CLI prints them |
 
 T13-T15 were folded into the slices above (2026-10-24): the dead-code check rejects types and
@@ -89,7 +89,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T11.
+1. Next session: T12.
 2. Owner, when convenient: open questions 1, 3, 5.
 
 ## Session log
@@ -125,3 +125,6 @@ being enough; whether anyone uses full_trace.
   `evidence.outcome_source` is `agent` or `hook`, agent evidence under `evidence.agent`. Hooks
   (T22-T24) must set `outcome_source: "hook"` and put payloads under `evidence.observed`.
   `report` takes no `model` (0009 amended).
+- 2026-10-24: T11 reviews: `approve`/`reject`/`pending` tools (agent source), `commons review`
+  and `commons pending` (human). Tools are now registered via `FastMCP(tools=[...])` because
+  vulture can't see `@server.tool`. Made two tests order-independent (rule added to AGENTS.md).

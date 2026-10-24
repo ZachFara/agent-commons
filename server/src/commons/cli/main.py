@@ -5,9 +5,12 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import cast
+from uuid import UUID
 
-from commons.domain.errors import InvalidInputError
+from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
+from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
+from commons.service import reviews
 from commons.service.identity import init_reporter
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
@@ -45,6 +48,38 @@ def _init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _review_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("entry_id", type=UUID, help="Entry to review.")
+    parser.add_argument("decision", choices=REVIEW_DECISIONS)
+    parser.add_argument("--reason", help="Why. Required when rejecting.")
+
+
+def _review(args: argparse.Namespace) -> int:
+    request = ReviewRequest(
+        entry_id=args.entry_id,
+        decision=cast("ReviewDecision", args.decision),
+        reason=args.reason,
+        source="human",
+    )
+    with connect() as conn:
+        result = reviews.review(conn, request)
+    sys.stdout.write(f"entry {request.entry_id}: {result.status} (human reviewed)\n")
+    return 0
+
+
+def _pending(_args: argparse.Namespace) -> int:
+    with connect() as conn:
+        entries = reviews.pending(conn)
+    for entry in entries:
+        sys.stdout.write(
+            f"{entry.entry_id}  {entry.status:<8}  {entry.created_at:%Y-%m-%d}  "
+            f"{entry.proposed_by_model}\n  symptom: {entry.symptom}\n  cause:   {entry.cause}\n"
+            f"  fix:     {entry.fix}\n\n"
+        )
+    sys.stdout.write(f"{len(entries)} entries awaiting human review\n")
+    return 0
+
+
 def _no_arguments(_parser: argparse.ArgumentParser) -> None:
     pass
 
@@ -61,6 +96,8 @@ class Command:
 COMMANDS: dict[str, Command] = {
     "migrate": Command("Apply pending database migrations.", _migrate),
     "init": Command("Create or reuse your reporter identity.", _init, _init_arguments),
+    "pending": Command("List entries awaiting human review.", _pending),
+    "review": Command("Approve or reject an entry as a human.", _review, _review_arguments),
 }
 
 
@@ -74,11 +111,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the CLI and return its exit code. Invalid input exits 1 with a message."""
+    """Run the CLI and return its exit code. Expected errors exit 1 with a message."""
     args = build_parser().parse_args(argv)
     name: str = args.command
     try:
         return COMMANDS[name].handler(args)
-    except InvalidInputError as error:
+    except (InvalidInputError, NotFoundError, NotInitializedError) as error:
         sys.stderr.write(f"error: {error}\n")
         return 1

@@ -78,10 +78,12 @@ def test_missing_model_is_recorded_as_unknown(server: FastMCP, db: psycopg.Conne
 def test_invalid_proposal_is_a_structured_error(
     server: FastMCP, db: psycopg.Connection, overrides: dict[str, Any], message: str
 ) -> None:
-    result = call(server, "propose", proposal(**overrides))
+    arguments = proposal(**overrides)
+    result = call(server, "propose", arguments)
     assert result["error"]["code"] == "invalid_input"
     assert message in result["error"]["message"]
-    assert db.execute("SELECT count(*) FROM entries").fetchone() == (0,)
+    written = db.execute("SELECT count(*) FROM entries WHERE task_id = %s", (arguments["task_id"],))
+    assert written.fetchone() == (0,)
 
 
 def test_wrong_argument_types_are_a_structured_error(server: FastMCP) -> None:
