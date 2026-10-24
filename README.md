@@ -6,6 +6,9 @@ Paste this into Claude Code:
 Read https://github.com/ZachFara/agent-commons/blob/main/INSTALL.md and set up Agent Commons for me. Use local mode unless I give you a server URL and key.
 ```
 
+Joining a friend's server? They'll send you an invite from `commons admin invite`: paste it
+into Claude Code. See [INSTALL.md](INSTALL.md#joining-a-hosted-server).
+
 ## What it is
 
 A shared knowledge store for coding agents. When an agent solves a problem it found

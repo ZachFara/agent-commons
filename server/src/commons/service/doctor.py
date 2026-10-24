@@ -11,7 +11,7 @@ from typing import Literal
 import httpx2
 
 from commons.domain.errors import NotInitializedError, NotPermittedError, StoreUnavailableError
-from commons.service.hook_install import MARKER, default_settings_path
+from commons.service.hook_install import default_settings_path, is_commons_hook
 from commons.service.identity import config_path, current_reporter, hosted_server, read_config
 from commons.service.local_state import state_dir
 from commons.store.connection import Connection
@@ -104,7 +104,7 @@ def _hooks() -> Check:
         for event, groups in settings.get("hooks", {}).items()
         for group in groups
         for hook in group.get("hooks", [])
-        if MARKER in f" {hook.get('command', '')} "
+        if is_commons_hook(str(hook.get("command", "")))
     ]
     expected = {"SessionStart", "PostToolUse", "PostToolUseFailure", "Stop"}
     missing = expected - set(events)

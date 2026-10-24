@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 from uuid import UUID
 
+from commons.cli import onboarding
 from commons.cli.hooks import HANDLERS, run_hook
 from commons.domain.errors import (
     InvalidInputError,
@@ -118,15 +119,25 @@ def _status(_args: argparse.Namespace) -> int:
 
 
 def _admin_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("action", choices=["create-key"])
+    parser.add_argument("action", choices=["create-key", "invite"])
     parser.add_argument("pseudonym", help="Reporter to mint a key for (created if new).")
     parser.add_argument("--admin", action="store_true", help="May use the hosted dashboard.")
+    parser.add_argument("--server", help="Server URL to put in the invite (invite only).")
 
 
 def _admin(args: argparse.Namespace) -> int:
     pseudonym: str = args.pseudonym
+    if args.action == "invite" and not args.server:
+        msg = "invite needs --server, the URL your friend will connect to."
+        raise InvalidInputError(msg)
     with connect() as conn:
         key = keys.create_key(conn, pseudonym, admin=args.admin)
+    if args.action == "invite":
+        sys.stdout.write(
+            f"Send this to {pseudonym} privately (it contains their key; any older key stops "
+            f"working):\n\n{onboarding.invite_message(args.server, key)}\n"
+        )
+        return 0
     role = "admin" if args.admin else "reporter"
     sys.stdout.write(
         f"API key for {pseudonym} ({role}). It is shown only once; any older key stops working:"
@@ -270,6 +281,11 @@ COMMANDS: dict[str, Command] = {
     "pending": Command("List entries awaiting human review.", _pending),
     "review": Command("Approve or reject an entry as a human.", _review, _review_arguments),
     "status": Command("Show store statistics.", _status),
+    "join": Command(
+        "Join a hosted server: check the key, save it, install hooks.",
+        onboarding.join,
+        onboarding.join_arguments,
+    ),
     "connect": Command("Send hook observations to a hosted server.", _connect, _connect_arguments),
     "admin": Command("Hosted mode administration.", _admin, _admin_arguments),
     "doctor": Command("Check this machine's setup and say what to fix.", _doctor),

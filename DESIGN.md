@@ -22,7 +22,7 @@ Three components, all in one repo:
 
 - `server/`: Python, FastMCP. Exposes the MCP tools over stdio (local) and streamable HTTP (hosted). Talks to Postgres.
 - `db/`: Postgres 16 with pgvector, run via `docker compose`. Full-text search first; vectors added when retrieval quality is the bottleneck.
-- `client/`: Claude Code integration: hooks that capture test results and trigger post-hoc grading, and an `INSTALL.md` that Claude reads to set everything up. The search-first behavior is set by the MCP server's own instructions and tool descriptions, which every client loads on connect (decision 0015).
+- Claude Code integration: hooks that capture test results and trigger post-hoc grading (installed by `commons install-hooks` or `commons join`, decision 0021), and an `INSTALL.md` that Claude reads to set everything up. The search-first behavior is set by the MCP server's own instructions and tool descriptions, which every client loads on connect (decision 0015).
 
 Modes:
 
@@ -136,7 +136,7 @@ Observed outcomes come from hooks, not from the agent:
 - Stop: compute `used` by matching entry fix text against the session diff, assemble the evidence, and write the outcome. Prompt the agent to file its assessment if it hasn't.
 - SessionStart: mint task_id, set privacy mode from the reporter's default.
 
-Hook details, including what stays on the user's machine, are in decision 0016. Hooks are Claude Code's hook system (settings.json). `client/hooks.json` only calls `commons hook <event>`; the logic lives in the server package so it is typed and tested. Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
+Hook details, including what stays on the user's machine, are in decision 0016. Hooks are Claude Code's hook system (settings.json). The installed hooks only call `commons hook <event>`; the logic lives in the server package so it is typed and tested. Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
 
 ## 6. Privacy
 
@@ -187,7 +187,7 @@ INSTALL.md is written for an agent and lists the exact steps:
 1. Clone the repo. Check for Docker, uv, and Python 3.11+. Install what's missing with the user's confirmation.
 2. `docker compose up -d` in `db/` to start Postgres. Run migrations with `uv run commons migrate`.
 3. Register the MCP server: `claude mcp add commons -- uv run --directory <path>/server commons-mcp` for local mode, or `claude mcp add --transport http commons https://<host>/mcp --header "Authorization: Bearer <key>"` for hosted.
-4. Merge the hook definitions from `client/hooks.json` into `~/.claude/settings.json` without overwriting existing hooks.
+4. Run `commons install-hooks`, which merges the hooks into `~/.claude/settings.json` without overwriting existing ones.
 5. Nothing to install for agent behavior: the MCP server sends its instructions on connect (decision 0015).
 6. Ask the user for a pseudonym and a default privacy mode. Run `commons init` with the answers.
 7. Verify with `commons status`, then run `search` once on a known seed entry to prove the loop works.
