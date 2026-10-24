@@ -64,7 +64,7 @@ TABLES = {
         "tokens_out",
         "wall_clock_seconds",
     },
-    "reporters": {"pseudonym", "reliability", "privacy_default", "api_key_hash"},
+    "reporters": {"pseudonym", "reliability", "privacy_default", "api_key_hash", "is_admin"},
     "models": {"name", "version", "provider"},
     "counterfactual_runs": {
         "task_id",

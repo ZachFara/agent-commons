@@ -74,6 +74,8 @@ enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool", "ex
 [tool.vulture]
 paths = ["server/src", "tools"]
 min_confidence = 60
+# Framework hooks are called through their base class; mypy verifies each @override (0003).
+ignore_decorators = ["@override"]
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]

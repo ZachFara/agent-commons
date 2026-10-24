@@ -11,15 +11,21 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from pydantic import ValidationError as PydanticValidationError
 from typing_extensions import override
 
-from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
+from commons.domain.errors import (
+    InvalidInputError,
+    NotFoundError,
+    NotInitializedError,
+    NotPermittedError,
+)
 
-ErrorCode = Literal["invalid_input", "not_initialized", "not_found", "internal"]
+ErrorCode = Literal["invalid_input", "not_initialized", "not_found", "forbidden", "internal"]
 INVALID_INPUT: ErrorCode = "invalid_input"
 INTERNAL: ErrorCode = "internal"
 _CODES: dict[type[Exception], ErrorCode] = {
     InvalidInputError: INVALID_INPUT,
     NotInitializedError: "not_initialized",
     NotFoundError: "not_found",
+    NotPermittedError: "forbidden",
 }
 _INTERNAL_MESSAGE = "Unexpected server error; see server logs."
 
@@ -39,7 +45,7 @@ def structured_errors() -> Iterator[None]:
     """
     try:
         yield
-    except (InvalidInputError, NotInitializedError, NotFoundError) as error:
+    except (InvalidInputError, NotInitializedError, NotFoundError, NotPermittedError) as error:
         raise tool_error(_CODES[type(error)], str(error)) from error
     except Exception as error:
         logger.exception("tool failed")

@@ -59,8 +59,8 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | T24 | done | Stop hook: observed model from the transcript; `used` per retrieved entry; observed outcome from the latest test run after the retrieval; block once asking for `report` | Tests: used yes/partial/no/unknown; pass/fail after retrieval; earlier test runs ignored; stop_hook_active respected; agent outcome never overrides hook |
 | T25 | done | `commons rank`: v0 score into ranking_snapshots; runs from SessionStart when stale | Tests of the formula (prior, weights, partial, decay), snapshot fields, search uses the new score |
 | T26 | done | Reporter reliability in `commons rank` | Tests: matches/pairs, NULL under 5 pairs, used as self-report weight |
-| T27a | todo | Hosted identity: `reporters.is_admin`, `commons admin create-key`, key hashing, reporter from bearer key | Tests: key shown once, hash stored, lookup, admin flag |
-| T27b | todo | `commons-mcp --http` with bearer auth; `local` reporters refused (0014) | In-process HTTP tests: no key 401, bad key 401, good key acts as that reporter; local refused |
+| T27a | done (with T27b) | Hosted identity: `reporters.is_admin`, `commons admin create-key`, key hashing, reporter from bearer key | Tests: key shown once, hash stored, lookup, admin flag |
+| T27b | done | `commons-mcp --http` with bearer auth; `local` reporters refused (0014) | In-process HTTP tests: no key 401, bad key 401, good key acts as that reporter; local refused |
 | T27c | todo | Hosted hook endpoints; `commons hook` posts to the server when the config has a server URL and key | Tests against the app with a test client; spool stays local |
 | T27d | todo | Hosted dashboard behind admin key (HTTPS); `compose.hosted.yml` with Caddy; INSTALL hosted section | Tests: non-admin 403; compose config validates (`docker compose config`) |
 
@@ -88,7 +88,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T27a.
+1. Next session: T27c.
 
 ## Session log
 
@@ -181,3 +181,8 @@ being enough; whether anyone uses full_trace.
 - 2026-10-25: T26 reliability computed first in `commons rank` from (agent_outcome, observed)
   pairs: agreement on success vs not (0017 amended), NULL below 5 pairs, then used as the
   self-report weight.
+- 2026-10-25: T27a+b together (the key lookup is only reachable from the HTTP server, so the
+  dead-code check needs both): `reporters.is_admin` (migration 0006), `commons admin create-key`
+  (SHA-256 stored, shown once, rotation), `commons-mcp --http` with FastMCP `TokenVerifier`;
+  hosted identity only from the key (`serving_hosted`), `local`-privacy reporters get
+  `forbidden`. vulture now ignores `@override` methods (owner-approved, 0003 amended).
