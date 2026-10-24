@@ -54,12 +54,17 @@ PROGRESS.md and record a decision.
 
 ```
 make setup    # uv sync + install pre-commit and commit-msg hooks (once per clone)
+make db       # start local Postgres via docker compose; tests need it running
 make check    # THE check: format, lint, complexity, types, dead code, imports, layout, tests
 make fix      # auto-format and apply safe lint fixes, then run the check
 uv run pytest server/tests/test_smoke.py   # run one test file
 ```
 
 `make check` is exactly what pre-commit and CI run. If it passes locally it passes in CI.
+
+Database tests use the `db` fixture in `server/tests/conftest.py`: a throwaway database per
+test session, a rolled-back transaction per test. Point it elsewhere with
+`COMMONS_TEST_DATABASE_URL`. Never mock the database.
 
 ## Rules
 
