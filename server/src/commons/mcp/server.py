@@ -1,7 +1,8 @@
 """The Agent Commons MCP server (DESIGN.md §4). Tools are thin: parse, call service, shape JSON."""
 
+import argparse
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from typing import Annotated, Any
 
@@ -15,10 +16,12 @@ from commons.domain.reviews import PendingEntry, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchHit, SearchRequest
 from commons.domain.status import StoreStatus
 from commons.mcp import instructions
+from commons.mcp.auth import ApiKeyVerifier, calling_reporter
 from commons.mcp.errors import StructuredValidationErrors, structured_errors
 from commons.service import proposals, reports, reviews
 from commons.service import search as search_service
 from commons.service import status as status_service
+from commons.service.identity import serving_hosted
 from commons.store.connection import Connection, connect
 
 ConnectionFactory = Callable[[], AbstractContextManager[Connection]]
@@ -36,8 +39,11 @@ ModelArg = Annotated[
 ]
 
 
-def build_server(connection: ConnectionFactory = connect) -> FastMCP:
-    """Build the server. `connection` opens a database connection per tool call."""
+def build_server(connection: ConnectionFactory = connect, *, hosted: bool = False) -> FastMCP:
+    """Build the server. `connection` opens a database connection per tool call.
+
+    Hosted servers require an API key on every request (decision 0018).
+    """
 
     def propose(  # keyword-only: tools are always called with named arguments
         *,
@@ -71,7 +77,7 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
             repro=repro,
             task_id=task_id,
         )
-        with structured_errors(), connection() as conn:
+        with structured_errors(), calling_reporter(), connection() as conn:
             result = proposals.propose(conn, proposal, model)
         return {
             "entry_id": str(result.entry_id),
@@ -91,7 +97,7 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
         model: ModelArg = None,
     ) -> dict[str, Any]:
         request = SearchRequest(query=query, task_id=task_id, environment=environment, limit=limit)
-        with structured_errors(), connection() as conn:
+        with structured_errors(), calling_reporter(), connection() as conn:
             hits = search_service.search(conn, request, model)
         return {"note": UNTRUSTED_NOTE, "data": [_hit_json(hit) for hit in hits]}
 
@@ -118,7 +124,7 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
             outcome=outcome,
             evidence=evidence,
         )
-        with structured_errors(), connection() as conn:
+        with structured_errors(), calling_reporter(), connection() as conn:
             result = reports.report(conn, request)
         return {
             "outcome_id": str(result.outcome_id),
@@ -135,7 +141,7 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
         request = ReviewRequest(
             entry_id=entry_id, decision="approve", reason=reason, source="agent"
         )
-        with structured_errors(), connection() as conn:
+        with structured_errors(), calling_reporter(), connection() as conn:
             result = reviews.review(conn, request)
         return _review_json(entry_id, result)
 
@@ -146,19 +152,19 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
     ) -> dict[str, Any]:
         """Provisionally reject an entry. Recorded as an agent review; a human confirms later."""
         request = ReviewRequest(entry_id=entry_id, decision="reject", reason=reason, source="agent")
-        with structured_errors(), connection() as conn:
+        with structured_errors(), calling_reporter(), connection() as conn:
             result = reviews.review(conn, request)
         return _review_json(entry_id, result)
 
     def pending() -> dict[str, Any]:
         """List entries no human has reviewed yet, oldest first."""
-        with structured_errors(), connection() as conn:
+        with structured_errors(), calling_reporter(), connection() as conn:
             entries = reviews.pending(conn)
         return {"note": UNTRUSTED_NOTE, "data": [_pending_json(entry) for entry in entries]}
 
     def status() -> dict[str, Any]:
         """Store statistics: entries by status, 30-day activity, top entries by success rate."""
-        with structured_errors(), connection() as conn:
+        with structured_errors(), calling_reporter(), connection() as conn:
             result = status_service.status(conn)
         return _status_json(result)
 
@@ -167,6 +173,7 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
         instructions=instructions.INSTRUCTIONS,
         middleware=[StructuredValidationErrors()],
         mask_error_details=True,
+        auth=ApiKeyVerifier(connection) if hosted else None,
         tools=[
             Tool.from_function(propose, description=instructions.PROPOSE),
             Tool.from_function(search, description=instructions.SEARCH),
@@ -238,6 +245,17 @@ def _hit_json(hit: SearchHit) -> dict[str, Any]:
     }
 
 
-def main() -> None:
-    """Run the server over stdio (local mode)."""
-    build_server().run(show_banner=False)
+def main(argv: Sequence[str] | None = None) -> None:
+    """Run over stdio (local mode), or over streamable HTTP with API keys (hosted mode)."""
+    parser = argparse.ArgumentParser(prog="commons-mcp", description=main.__doc__)
+    parser.add_argument("--http", action="store_true", help="Serve hosted mode over HTTP.")
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address.")
+    parser.add_argument("--port", type=int, default=8000, help="HTTP port.")
+    args = parser.parse_args(argv)
+    if not args.http:
+        build_server().run(show_banner=False)
+        return
+    host: str = args.host
+    port: int = args.port
+    with serving_hosted():
+        build_server(hosted=True).run(transport="http", host=host, port=port, show_banner=False)

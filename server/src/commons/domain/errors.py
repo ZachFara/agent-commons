@@ -8,3 +8,7 @@ class NotInitializedError(RuntimeError):
 
 class NotFoundError(LookupError):
     """The referenced thing does not exist for this caller. The message is safe to show."""
+
+
+class NotPermittedError(PermissionError):
+    """The caller may not do this. The message is safe to show."""

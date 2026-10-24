@@ -6,6 +6,9 @@ who is calling in local mode. Hosted mode identifies reporters by API key instea
 
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -17,6 +20,31 @@ from commons.store.models import model_id
 from commons.store.reporters import find_reporter, upsert_reporter
 
 UNKNOWN_MODEL = "unknown"
+
+# Hosted mode (decision 0018): identity comes only from the request's API key, never from a
+# config file on the server. The entry point sets _HOSTED; each request sets _REQUEST_REPORTER.
+_HOSTED: ContextVar[bool] = ContextVar("commons_hosted", default=False)
+_REQUEST_REPORTER: ContextVar[UUID | None] = ContextVar("commons_request_reporter", default=None)
+
+
+@contextmanager
+def serving_hosted() -> Iterator[None]:
+    """Run the block as a hosted server: identity only from API keys, never the config file."""
+    token = _HOSTED.set(True)
+    try:
+        yield
+    finally:
+        _HOSTED.reset(token)
+
+
+@contextmanager
+def acting_as(reporter_id: UUID) -> Iterator[None]:
+    """Attribute everything done inside the block to this reporter (one hosted request)."""
+    token = _REQUEST_REPORTER.set(reporter_id)
+    try:
+        yield
+    finally:
+        _REQUEST_REPORTER.reset(token)
 
 
 @dataclass(frozen=True)
@@ -66,7 +94,12 @@ def configured_test_runners() -> list[str]:
 
 
 def current_reporter(conn: Connection) -> UUID:
-    """Return this machine's reporter id, from the config `init` wrote."""
+    """Return the calling reporter: the request's key holder, else this machine's identity."""
+    if (requested := _REQUEST_REPORTER.get()) is not None:
+        return requested
+    if _HOSTED.get():
+        msg = "This server needs an API key: send `Authorization: Bearer <key>`."
+        raise NotInitializedError(msg)
     pseudonym = str(read_config()["pseudonym"])
     reporter_id = find_reporter(conn, pseudonym)
     if reporter_id is None:

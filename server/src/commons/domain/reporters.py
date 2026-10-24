@@ -1,5 +1,7 @@
 import re
+from dataclasses import dataclass
 from typing import Literal, get_args
+from uuid import UUID
 
 from commons.domain.errors import InvalidInputError
 
@@ -19,3 +21,12 @@ def validate_pseudonym(pseudonym: str) -> str:
         msg = "Pseudonym must be 3-40 characters: letters, digits, '-' or '_'."
         raise InvalidInputError(msg)
     return pseudonym
+
+
+@dataclass(frozen=True)
+class KeyHolder:
+    """The reporter a hosted-mode API key belongs to (decision 0018)."""
+
+    reporter_id: UUID
+    is_admin: bool
+    privacy_default: PrivacyDefault

@@ -26,3 +26,8 @@ Python repo), vulture for dead code, import-linter because it expresses layers d
 Consequences: the bar is high from the first line, which is cheaper than tightening later.
 Rule ignores are listed with reasons in `pyproject.toml`. Changing any threshold or adding an
 ignore is a loosening and needs a PROGRESS.md entry and the owner's approval first.
+
+Amendment (2026-10-25, owner-approved): vulture ignores methods decorated with `@override`.
+Frameworks call these through the base class (e.g. FastMCP's `TokenVerifier.verify_token`), so
+vulture can't see a caller; mypy's `explicit-override` check already guarantees each one really
+overrides a base method, so nothing genuinely dead can hide behind it.
