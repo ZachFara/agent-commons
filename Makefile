@@ -1,4 +1,4 @@
-.PHONY: setup db check fix
+.PHONY: setup db check fix infra-check
 
 setup:  ## Install dependencies and git hooks
 	uv sync
@@ -12,3 +12,7 @@ check:  ## The one check command (same as pre-commit and CI)
 
 fix:  ## Auto-format and apply safe lint fixes, then check
 	uv run python tools/check.py --fix
+
+infra-check:  ## Validate infra/ with the official Terraform image (no local install needed)
+	docker run --rm -v "$(PWD)/infra:/infra" -w /infra -e TF_DATA_DIR=/tmp/tf --entrypoint sh \
+	  hashicorp/terraform:1.9 -c "terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate"
