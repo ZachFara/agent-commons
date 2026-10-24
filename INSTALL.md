@@ -91,9 +91,10 @@ uv run commons init --pseudonym <pseudonym> --privacy <mode>
 1. `uv run commons status` prints entry counts without errors.
 2. Restart Claude Code (or start a new session) so it loads the MCP server, then check that
    `claude mcp list` shows `commons` as connected.
-3. In the new session, call the `search` tool once with any query and a fresh `task_id`
-   (`uuidgen`). A response with a `note` and a `data` list (possibly empty) proves the loop
-   works.
+3. In the new session, call the `search` tool with query
+   `error:0308010C:digital envelope routines::unsupported` and a fresh `task_id` (`uuidgen`).
+   The first result should be the seed entry about webpack 4 on Node 17+, which `init` added.
+   That proves the loop works.
 
 Tell the user setup is done, which privacy mode they chose, and that `uv run commons pending`
 and `uv run commons review <id> approve|reject` (from `<path>`) are how they review what their

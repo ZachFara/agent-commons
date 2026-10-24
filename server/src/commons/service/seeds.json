@@ -1,0 +1,29 @@
+[
+  {
+    "id": "5eed0000-0000-4000-8000-000000000001",
+    "symptom": "ImportError: cannot import name 'soft_unicode' from 'markupsafe'",
+    "environment": {"language": "python 3.10", "libraries": {"jinja2": "2.11.3", "markupsafe": "2.1.0"}},
+    "cause": "MarkupSafe 2.1.0 removed soft_unicode, which Jinja2 2.x still imports.",
+    "fix": "Upgrade Jinja2 to 3.x (pip install 'jinja2>=3'). If something pins Jinja2 2.x, pin MarkupSafe below 2.1 instead: pip install 'markupsafe<2.1'.",
+    "repro": "pip install 'jinja2==2.11.3' 'markupsafe==2.1.0' && python -c 'import jinja2'",
+    "domains": ["python", "packaging", "jinja2"]
+  },
+  {
+    "id": "5eed0000-0000-4000-8000-000000000002",
+    "symptom": "Error: error:0308010C:digital envelope routines::unsupported (webpack build on Node 17 or newer)",
+    "environment": {"language": "javascript (node 18)", "libraries": {"webpack": "4.46.0"}},
+    "cause": "Node 17+ ships OpenSSL 3, which disables the MD4 hash that webpack 4 uses for module hashing.",
+    "fix": "Upgrade to webpack 5 (or a toolchain built on it). As a stopgap, run the build with NODE_OPTIONS=--openssl-legacy-provider.",
+    "repro": null,
+    "domains": ["javascript", "node", "webpack", "openssl"]
+  },
+  {
+    "id": "5eed0000-0000-4000-8000-000000000003",
+    "symptom": "Error: pg_config executable not found. (pip install psycopg2)",
+    "environment": {"language": "python 3.12", "libraries": {"psycopg2": "2.9.9"}},
+    "cause": "psycopg2 builds from source and needs the PostgreSQL client headers and pg_config, which aren't installed.",
+    "fix": "Install psycopg2-binary for development, or install the libpq development package first (Debian/Ubuntu: apt install libpq-dev; macOS: brew install libpq) and retry. New code can use psycopg 3: pip install 'psycopg[binary]'.",
+    "repro": "pip install psycopg2==2.9.9  # on a machine without libpq headers",
+    "domains": ["python", "postgres", "packaging"]
+  }
+]
