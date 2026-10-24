@@ -2,14 +2,21 @@
 
 import json
 import os
+import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# This file lives at <repo>/server/src/commons/service/; the template at <repo>/client/.
-REPO_ROOT = Path(__file__).resolve().parents[4]
-TEMPLATE = REPO_ROOT / "client" / "hooks.json"
-MARKER = " commons hook "
+# (Claude Code event, tool matcher or None for all, `commons hook` event, timeout in seconds)
+HOOK_EVENTS: tuple[tuple[str, str | None, str, int], ...] = (
+    ("SessionStart", None, "session-start", 30),
+    ("PostToolUse", "Bash|Edit|Write|MultiEdit", "post-tool-use", 30),
+    ("PostToolUseFailure", "Bash", "post-tool-use-failure", 30),
+    ("Stop", None, "stop", 60),
+)
+# Matches our hook commands, old (`uv run ... commons hook x`) and new ("/path/commons" hook x).
+_OURS = re.compile(r"(?:^|[\s/\"'])commons\"? hook ")
 
 
 def default_settings_path() -> Path:
@@ -18,11 +25,28 @@ def default_settings_path() -> Path:
     return Path(base) / "settings.json"
 
 
-def commons_hooks(repo_root: Path = REPO_ROOT) -> dict[str, list[Any]]:
-    """Return the hook groups from the template with this clone's path filled in."""
-    text = TEMPLATE.read_text(encoding="utf-8").replace("<path>", str(repo_root))
-    hooks: dict[str, list[Any]] = json.loads(text)["hooks"]
+def commons_executable() -> Path:
+    """Return the `commons` executable next to this interpreter (clone .venv or uv tool)."""
+    return Path(sys.executable).with_name("commons")
+
+
+def commons_hooks(executable: Path | None = None) -> dict[str, list[Any]]:
+    """Return Claude Code hook groups that run `commons hook <event>` with this install."""
+    command = f'"{executable or commons_executable()}" hook'
+    hooks: dict[str, list[Any]] = {}
+    for event, matcher, name, timeout in HOOK_EVENTS:
+        group: dict[str, Any] = {
+            "hooks": [{"type": "command", "command": f"{command} {name}", "timeout": timeout}]
+        }
+        if matcher:
+            group = {"matcher": matcher, **group}
+        hooks[event] = [group]
     return hooks
+
+
+def is_commons_hook(command: str) -> bool:
+    """Return whether a hook command is one of ours, from any version of the installer."""
+    return bool(_OURS.search(command))
 
 
 def merge_hooks(settings: dict[str, Any], ours: dict[str, list[Any]]) -> dict[str, Any]:
@@ -41,7 +65,7 @@ def merge_hooks(settings: dict[str, Any], ours: dict[str, list[Any]]) -> dict[st
 
 
 def _is_ours(group: dict[str, Any]) -> bool:
-    return any(MARKER in f" {hook.get('command', '')} " for hook in group.get("hooks", []))
+    return any(is_commons_hook(str(hook.get("command", ""))) for hook in group.get("hooks", []))
 
 
 @dataclass(frozen=True)

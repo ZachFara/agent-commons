@@ -110,24 +110,19 @@ agents propose, and `uv run commons-dashboard` opens an admin view at http://127
 
 ## Joining a hosted server
 
-For a user who was given a server URL (`https://<host>`) and an API key (`ac_...`).
+For a user who was given a server URL (`https://<host>`) and an API key (`ac_...`), usually as
+an invite from `commons admin invite`. No clone and no Docker are needed. Run, in order:
 
-1. Do step 1 (prerequisites and clone). Docker is not needed; the clone runs the hooks.
-2. Register the server's MCP endpoint:
+```
+uv tool install 'git+https://github.com/ZachFara/agent-commons#subdirectory=server'
+commons join --server https://<host> --key <key>
+claude mcp add --scope user --transport http commons https://<host>/mcp --header 'Authorization: Bearer <key>'
+```
 
-   ```
-   claude mcp add --scope user --transport http commons https://<host>/mcp --header "Authorization: Bearer <key>"
-   ```
-
-3. Point this machine's hooks at the server (this checks the key first):
-
-   ```
-   cd <path> && uv run commons connect --server https://<host> --key <key>
-   ```
-
-4. Do step 4 (`uv run commons install-hooks`). Hooks send only derived data (test results,
-   file hashes); edit text and commands stay on this machine.
-5. Verify as in step 7, skipping `commons status`.
+`commons join` checks the key with the server, saves it (mode 0600), and installs the Claude
+Code hooks; hooks send only derived data (test results, file hashes), while edit text and
+commands stay on this machine. Then restart Claude Code and run `commons doctor`: every line
+should be ✓. Update later with `uv tool upgrade commons`.
 
 The key identifies the user on the server; their privacy mode is set there by the admin, and a
 `local` mode is refused because nothing in local mode leaves the machine.
@@ -151,16 +146,17 @@ machine with Docker and a DNS name pointing at it (ports 80 and 443 open).
    docker compose -f db/compose.hosted.yml --env-file db/.env up -d --build --wait
    ```
 
-3. Mint keys. Each command prints a key once; send it to the person privately.
+3. Invite people. This prints a message with their key and three commands; send it privately.
+   They paste it into Claude Code (or a terminal) and are set up.
 
    ```
-   docker compose -f db/compose.hosted.yml --env-file db/.env exec server commons admin create-key <pseudonym> [--admin]
+   docker compose -f db/compose.hosted.yml --env-file db/.env exec server commons admin invite <pseudonym> --server https://<domain>
    ```
 
-   Minting again for the same pseudonym replaces the old key.
+   Use `create-key <pseudonym> --admin` for an admin key. Minting again for the same pseudonym
+   replaces the old key.
 4. Admins review proposals at `https://<domain>/`. The browser asks for a user name (anything)
    and a password (an admin key).
-5. Members install with the one-line message in the README plus the URL and their key.
 
 Ranking refreshes itself when a session starts and snapshots are over a day old; no scheduler
 is needed. Back up the `pgdata` volume.

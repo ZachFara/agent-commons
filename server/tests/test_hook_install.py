@@ -5,7 +5,12 @@ from typing import Any
 import pytest
 
 from commons.cli.main import main
-from commons.service.hook_install import REPO_ROOT, commons_hooks, merge_hooks
+from commons.service.hook_install import (
+    commons_executable,
+    commons_hooks,
+    is_commons_hook,
+    merge_hooks,
+)
 
 OTHER_TOOL = {"matcher": "Bash", "hooks": [{"type": "command", "command": "lint-on-save"}]}
 STALE_OURS = {
@@ -13,11 +18,28 @@ STALE_OURS = {
 }
 
 
-def test_template_points_at_this_clone() -> None:
+def test_hooks_run_this_installs_commons_executable() -> None:
     hooks = commons_hooks()
     command = hooks["SessionStart"][0]["hooks"][0]["command"]
-    assert command == f"uv run --directory {REPO_ROOT}/server commons hook session-start"
-    assert "<path>" not in json.dumps(hooks)
+    assert command == f'"{commons_executable()}" hook session-start'
+    assert commons_executable().exists()
+    assert set(hooks) == {"SessionStart", "PostToolUse", "PostToolUseFailure", "Stop"}
+    assert hooks["PostToolUse"][0]["matcher"] == "Bash|Edit|Write|MultiEdit"
+
+
+@pytest.mark.parametrize(
+    ("command", "ours"),
+    [
+        ("uv run --directory /x/server commons hook stop", True),
+        ('"/home/a b/.local/bin/commons" hook stop', True),
+        ("/opt/venv/bin/commons hook post-tool-use", True),
+        ("commons hook session-start", True),
+        ("lint-on-save", False),
+        ("mycommons hook stop", False),
+    ],
+)
+def test_recognizes_commons_hooks_from_any_installer_version(command: str, *, ours: bool) -> None:
+    assert is_commons_hook(command) is ours
 
 
 def test_merge_keeps_other_tools_and_replaces_stale_commons_hooks() -> None:
