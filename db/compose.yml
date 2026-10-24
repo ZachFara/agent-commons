@@ -1,0 +1,24 @@
+# Local Postgres for Agent Commons. Run from this directory: docker compose up -d
+# Override any default with an environment variable or a db/.env file (gitignored).
+name: agent-commons
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${COMMONS_DB_USER:-commons}
+      POSTGRES_PASSWORD: ${COMMONS_DB_PASSWORD:-commons}
+      POSTGRES_DB: ${COMMONS_DB_NAME:-commons}
+    ports:
+      - "127.0.0.1:${COMMONS_DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  pgdata:
