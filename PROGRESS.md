@@ -238,3 +238,8 @@ being enough; whether anyone uses full_trace.
   Verified as a friend would: invite, isolated `uv tool install`, join, a hook through the
   installed binary, `claude mcp add` in a scratch Claude config (Claude reported Connected),
   doctor all green.
+- 2026-10-25: T33 applied (owner-approved): Neon project imported (PG 18), staging branch, per-env
+  roles/databases/secrets, Cloud Run production https://agent-commons-jzxq74etsa-uc.a.run.app and
+  staging https://agent-commons-staging-jzxq74etsa-uc.a.run.app, GitHub variables and environments
+  (production needs the owner's approval). First apply hit a transient Cloud Run "internal error"
+  on a fresh project; a retry succeeded. Fixed perpetual drift on Cloud Run's service-level scaling.

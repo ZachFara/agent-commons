@@ -92,9 +92,10 @@ resource "google_cloud_run_v2_service" "server" {
     }
   }
 
-  # GitHub Actions deploys new images; Terraform owns everything else.
+  # GitHub Actions deploys new images; Terraform owns everything else. The service-level
+  # `scaling` block is filled in by Cloud Run (limits live in template.scaling above).
   lifecycle {
-    ignore_changes = [template[0].containers[0].image, client, client_version]
+    ignore_changes = [template[0].containers[0].image, client, client_version, scaling]
   }
 
   depends_on = [
