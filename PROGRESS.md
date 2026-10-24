@@ -5,8 +5,9 @@ what you learned, add open questions. Keep it short; history lives in git.
 
 ## Status
 
-- Repo setup done (2026-10-24): tooling, checks, docs. No feature code yet.
-- Current phase: DESIGN.md §10 Phase 1 (schema, server, CLI, install docs, seed entries).
+- DESIGN.md §10 Phase 1 is done (2026-10-24): all seven MCP tools, CLI, admin dashboard,
+  seeds, INSTALL.md. Owner installed it locally (2026-10-25).
+- Current phase: DESIGN.md §10 Phase 2 (hooks, secret scanning, ranking snapshots, hosted).
 - Remote: https://github.com/ZachFara/agent-commons (private). CI runs on every PR.
 - Branch protection is unavailable (private repo on a free plan). Until the owner upgrades or
   makes the repo public, merge only with `gh pr merge --squash` after `gh pr checks --watch`
@@ -23,7 +24,7 @@ PROGRESS.md updated.
 
 | ID | Status | Task | Done when |
 |---|---|---|---|
-| T01 | done (partial) | GitHub remote `agent-commons`, branch protection on `main` requiring the `check` workflow | Remote and CI done. Protection blocked by plan, see Open questions |
+| T01 | done (partial) | GitHub remote `agent-commons`, branch protection on `main` requiring the `check` workflow | Remote and CI done. Protection needs a paid plan; owner is fine without it |
 | T02 | done | `db/compose.yml`: Postgres 16 + pgvector, healthcheck, local volume; `.env` defaults documented | `docker compose -f db/compose.yml up -d` reports healthy; `CREATE EXTENSION vector` succeeds |
 | T03 | done | CI: Postgres service container + DB test fixture (per-test transaction or throwaway schema) | A test that runs `SELECT 1` through the fixture passes locally and in CI |
 | T04 | done | Migration runner in `store` + `commons migrate` CLI command + `commons` script entry | Applies numbered `.sql` files once, records them in `schema_migrations`; re-running is a no-op (tested) |
@@ -41,7 +42,7 @@ service functions that no entry point calls yet, so each task now starts at an M
 command and goes down through the layers.
 
 | T16 | done | `client/CLAUDE.snippet.md`: search-first, propose-on-surprise, post-hoc report, untrusted-data, full_trace downgrade rules | Snippet covers each rule in DESIGN.md §5-§6; under 60 lines |
-| T17 | needs owner verification | `INSTALL.md` (agent-facing, DESIGN.md §9 steps 1-7) and `README.md` | A fresh Claude Code session following INSTALL.md alone reaches a working `search` (owner verifies) |
+| T17 | done | `INSTALL.md` (agent-facing, DESIGN.md §9 steps 1-7) and `README.md` | A fresh Claude Code session following INSTALL.md alone reaches a working `search` (owner verifies) |
 | T18 | done | Ship a few seed entries (well-known public problems) loaded by `commons init`, so INSTALL step 7 has a known entry to find. Real entries come from use (owner, 2026-10-24) | `search` for a seed symptom returns it on a fresh install (tested) |
 | T19 | done | Admin dashboard, read-only: pending queue, recent proposals with redaction reports, recent retrievals and outcomes. Adds a `web` entrypoint layer (decision record + import contract) | Served locally by the server; page test renders seeded rows; no write routes yet |
 | T20 | done | Admin dashboard: file human reviews (approve/reject with reason) | Review from the dashboard writes a human reviews row; tested |
@@ -54,7 +55,8 @@ command and goes down through the layers.
 - T24 Stop hook: `used` from diff matching, evidence assembly, outcome write, assessment prompt.
 - T25 Nightly ranking job: v0 Bayesian score into ranking_snapshots; search reads latest snapshot.
 - T26 Reporter reliability recomputation.
-- T27 Hosted mode: streamable HTTP, bearer auth, `commons admin create-key`, `compose.hosted.yml`.
+- T27 Hosted mode: streamable HTTP, bearer auth, `commons admin create-key`, `compose.hosted.yml`;
+  refuse writes from `local`-mode reporters or tasks (decision 0014).
 
 ### DESIGN Phase 3 (after a month of data)
 
@@ -65,25 +67,16 @@ command and goes down through the layers.
 
 Raise new ones here. Do not resolve a question by guessing in code.
 
-1. **Branch protection.** Unavailable on a private repo without GitHub Pro. Options: upgrade,
-   make the repo public, or keep the manual rule in Status. Owner to choose.
-   Related: while the repo is private, the README's one-line install can't fetch INSTALL.md
-   or clone without auth. Install from a local clone until then.
-2. **Visibility of agent-approved, unreviewed entries in hosted mode.** Decision 0005 makes them
-   searchable locally. In a shared store, one reporter's agent could self-approve its own
-   proposal. Proposal: in hosted mode, unreviewed entries are visible only to their proposer
-   until a human reviews them. Decide before T27.
-3. **`privacy_mode` vs `local`.** Entries' `privacy_mode` enum is `entry, full_trace`, while the
-   reporter default also has `local`. Reading: local entries live only in the local store and
-   carry `entry` there. Confirm.
-4. **Secret scanning timing.** DESIGN §4 says propose scans before writing, but §10 puts secret
+1. **Secret scanning timing.** DESIGN §4 says propose scans before writing, but §10 puts secret
    scanning in Phase 2. Plan: T08 returns an empty redaction report and T21 adds scanning. Fine
    for a single local user; must land before hosted mode.
-5. **License.** None yet; `LICENSE` is an allowed root file.
 
 Resolved 2026-10-24 by owner: review model (decision 0005), hook location (decision 0006),
 seed entries come from real use rather than a manual batch (T18), admin dashboard added (T19-T20),
 cq field mapping (decision 0008: cq names for domains/created_by/reviewed_by, keep symptom/cause/fix).
+Resolved 2026-10-25 by owner: branch protection stays off (merge only after `check` passes, local
+hook blocks main); unreviewed entries are visible to everyone in hosted mode; `local` means
+"write only to the local store" (decision 0014); no license for now; seed fixes confirmed.
 
 DESIGN.md §11 open questions (research, answered by data later): the non-obvious heuristic's
 rejection rate; whether diff matching detects `used` well enough; when full-text search stops
@@ -93,8 +86,6 @@ being enough; whether anyone uses full_trace.
 
 1. Next session: Phase 2. Split T21-T27 into session-sized tasks first (start with T21,
    secret scanning, which must land before hosted mode).
-2. Owner: verify T17 by following INSTALL.md in a fresh Claude Code session.
-3. Owner, when convenient: open questions 1, 3, 5.
 
 ## Session log
 
@@ -151,3 +142,6 @@ being enough; whether anyone uses full_trace.
 - 2026-10-24: T20 review from the dashboard (human source, reviewer = local identity). POSTs
   require Origin to equal the dashboard's own localhost origin and Host to be local (CSRF and
   DNS rebinding). DESIGN Phase 1 tasks are done except owner verification of T17.
+- 2026-10-25: owner installed via INSTALL.md (T17 verified; agent skipped the CLAUDE.md step,
+  so the snippet moves into the MCP server's instructions, decision 0015). Resolved open
+  questions; decision 0014 on `local`.
