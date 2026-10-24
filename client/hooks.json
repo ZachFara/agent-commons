@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --directory <path>/server commons hook session-start",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

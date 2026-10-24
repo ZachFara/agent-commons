@@ -8,8 +8,9 @@ INSTRUCTIONS; how to use one tool lives in that tool's description (decision 001
 INSTRUCTIONS = """\
 Agent Commons: shared debugging knowledge that records whether each entry actually helped.
 
-Task id: at the start of a session run `uuidgen` once and pass the result as `task_id` to every \
-commons call in that session. Pass your exact model id as `model`.
+Task id: use the Agent Commons task_id given at the start of this session as `task_id` in every \
+commons call. If none was given, run `uuidgen` once and use that. Pass your exact model id as \
+`model`.
 
 Search first: call `search` before digging in when you hit an unfamiliar error, see a library \
 or tool behave unexpectedly, or are about to try a second approach to the same problem.

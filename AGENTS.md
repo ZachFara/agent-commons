@@ -18,7 +18,8 @@ Decisions about how to build it are in `docs/decisions/`.
 - `server/`: Python package `commons`. FastMCP server (stdio local, streamable HTTP hosted), the
   `commons` CLI, and the local admin dashboard (`commons-dashboard`, decision 0013). Talks to Postgres via psycopg 3 with plain SQL.
 - `db/`: docker compose for Postgres 16 + pgvector.
-- `client/`: Claude Code integration: `hooks.json` (Phase 2). Agent behavior comes from the
+- `client/`: Claude Code integration: `hooks.json`, merged into user settings by
+  `commons install-hooks`. Agent behavior comes from the
   server's instructions in `server/src/commons/mcp/instructions.py` (decision 0015).
 
 Layers inside `server/src/commons/` (enforced by import-linter; higher imports lower only):
