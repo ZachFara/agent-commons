@@ -55,7 +55,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 |---|---|---|---|
 | T21 | done | Secret scanning and redaction on every write | Tested; report stored and shown |
 | T22 | done | Hook plumbing: migration for `tasks` + `task_events`; `commons hook <event>` reading stdin, logging failures and exiting 0; SessionStart creates/reuses the task and prints the task id; server instructions use it; `client/hooks.json`; INSTALL step 4 merges it | Tests feed recorded payloads to `main(["hook", ...])`; start/resume reuse; malformed input exits 0 and logs |
-| T23 | todo | Observation hooks: Bash `PostToolUse`/`PostToolUseFailure` test runs (exit code parsed from `error`) into `task_events`; Edit/Write/Bash into the local spool; file-change hashes | Tests for runner matching (built-in + config regex), exit codes, spool contents, no code in the store |
+| T23 | done | Observation hooks: Bash `PostToolUse`/`PostToolUseFailure` test runs (exit code parsed from `error`) into `task_events`; Edit/Write/Bash into the local spool; file-change hashes | Tests for runner matching (built-in + config regex), exit codes, spool contents, no code in the store |
 | T24 | todo | Stop hook: observed model from the transcript; `used` per retrieved entry; observed outcome from the latest test run after the retrieval; block once asking for `report` | Tests: used yes/partial/no/unknown; pass/fail after retrieval; earlier test runs ignored; stop_hook_active respected; agent outcome never overrides hook |
 | T25 | todo | `commons rank`: v0 score into ranking_snapshots; `evidence.agent_outcome` kept by report; background trigger from SessionStart when stale | Tests of the formula (prior, weights, partial, decay), snapshot fields, search uses the new score |
 | T26 | todo | Reporter reliability in `commons rank` | Tests: matches/pairs, NULL under 5 pairs, used as self-report weight |
@@ -88,7 +88,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T23.
+1. Next session: T24.
 
 ## Session log
 
@@ -163,3 +163,8 @@ being enough; whether anyone uses full_trace.
   `client/hooks.json` into settings idempotently with a backup. Hooks run synchronously (~0.12s
   `uv run` start-up) so events are recorded before Stop reads them. Hook log:
   `$XDG_STATE_HOME/agent-commons/hooks.log`.
+- 2026-10-25: T23 observation hooks: `task_events` (migration 0005) for test runs (scrubbed
+  command, exit code from `PostToolUse`=0 / `PostToolUseFailure` "Exit code N") and file-change
+  hashes; scrubbed edit text and commands in the 0600 local spool. Runner matching ignores
+  installs and non-command mentions (`cat pytest.ini`). Verified with real `claude -p`.
+  TODO in T24: prune old spools.

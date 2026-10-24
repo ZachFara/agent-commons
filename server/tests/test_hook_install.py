@@ -43,7 +43,8 @@ def test_install_hooks_command_writes_backs_up_and_is_idempotent(
     assert main(["install-hooks", "--settings", str(settings)]) == 0
     written = json.loads(settings.read_text(encoding="utf-8"))
     assert written["theme"] == "dark"
-    assert written["hooks"]["PostToolUse"] == [OTHER_TOOL]
+    assert written["hooks"]["PostToolUse"][0] == OTHER_TOOL
+    assert len(written["hooks"]["PostToolUse"]) == 2
     assert "SessionStart" in written["hooks"]
     backup = tmp_path / "settings.json.agent-commons.bak"
     assert json.loads(backup.read_text(encoding="utf-8")) == original

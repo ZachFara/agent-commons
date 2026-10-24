@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any, TextIO
 
 from commons.domain.errors import NotInitializedError
+from commons.domain.observations import ToolUse, exit_code_from_error
 from commons.service import hooks
 from commons.service.local_state import state_dir
 from commons.store.connection import connect
@@ -35,8 +36,56 @@ def _session_start(payload: Payload) -> HookOutput:
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
 
 
+def _post_tool_use(payload: Payload) -> HookOutput:
+    _observe(_tool_use(payload, failed=False))
+    return None
+
+
+def _post_tool_use_failure(payload: Payload) -> HookOutput:
+    _observe(_tool_use(payload, failed=True))
+    return None
+
+
+def _observe(use: ToolUse) -> None:
+    with connect() as conn:
+        hooks.observe_tool_use(conn, use)
+
+
+def _tool_use(payload: Payload, *, failed: bool) -> ToolUse:
+    """Parse a PostToolUse / PostToolUseFailure payload (shapes checked in decision 0016)."""
+    name = str(payload["tool_name"])
+    tool_input = payload.get("tool_input") or {}
+    is_bash = name == "Bash"
+    return ToolUse(
+        session_id=str(payload["session_id"]),
+        tool_name=name,
+        command=str(tool_input.get("command", "")) if is_bash else None,
+        file_path=None if is_bash or failed else tool_input.get("file_path"),
+        new_text=None if is_bash or failed else _new_text(tool_input),
+        exit_code=_exit_code(payload, failed=failed) if is_bash else None,
+    )
+
+
+def _new_text(tool_input: Payload) -> str | None:
+    """Text an Edit (new_string), Write (content), or MultiEdit (edits[].new_string) adds."""
+    if "edits" in tool_input:
+        return "\n".join(str(edit.get("new_string", "")) for edit in tool_input["edits"])
+    text = tool_input.get("new_string", tool_input.get("content"))
+    return None if text is None else str(text)
+
+
+def _exit_code(payload: Payload, *, failed: bool) -> int | None:
+    if not failed:
+        return 0
+    if payload.get("is_interrupt"):
+        return None
+    return exit_code_from_error(str(payload.get("error", "")))
+
+
 HANDLERS: dict[str, Callable[[Payload], HookOutput]] = {
     "session-start": _session_start,
+    "post-tool-use": _post_tool_use,
+    "post-tool-use-failure": _post_tool_use_failure,
 }
 
 
