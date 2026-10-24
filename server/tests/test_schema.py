@@ -76,6 +76,7 @@ TABLES = {
         "wall_clock_seconds",
     },
     "traces": {"entry_id", "task_id", "content", "redaction_report"},
+    "tasks": {"session_id", "reporter_id", "model_id", "privacy_mode"},
     "ranking_snapshots": {
         "entry_id",
         "computed_at",

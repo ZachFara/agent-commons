@@ -59,8 +59,15 @@ claude mcp add --scope user commons -e COMMONS_DATABASE_URL=<url> -- uv run --di
 
 ## 4. Hooks
 
-Not available yet: the hooks that observe test results and edits are in development. Skip this
-step. Outcomes are recorded from the agent's own reports until then.
+Tell the user this adds Agent Commons hooks to `~/.claude/settings.json` (their other hooks are
+kept, and the previous file is saved next to it as `settings.json.agent-commons.bak`), then run:
+
+```
+cd <path> && uv run commons install-hooks
+```
+
+The hooks give each session a task id and record test results; edits and commands stay on this
+machine (decision 0016). Running the command again updates the hooks in place.
 
 ## 5. Agent instructions
 

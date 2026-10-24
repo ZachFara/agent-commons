@@ -4,14 +4,17 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 from uuid import UUID
 
+from commons.cli.hooks import HANDLERS, run_hook
 from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
 from commons.service import reviews, seeds
 from commons.service import status as status_service
+from commons.service.hook_install import default_settings_path, install_hooks
 from commons.service.identity import init_reporter
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
@@ -105,6 +108,33 @@ def _status(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _hook_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("event", choices=sorted(HANDLERS), help="Hook event; payload on stdin.")
+
+
+def _hook(args: argparse.Namespace) -> int:
+    event: str = args.event
+    return run_hook(event, sys.stdin, sys.stdout)
+
+
+def _install_hooks_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--settings", type=Path, default=None, help="Claude Code settings.json to update."
+    )
+
+
+def _install_hooks(args: argparse.Namespace) -> int:
+    path: Path = args.settings or default_settings_path()
+    result = install_hooks(path)
+    if not result.changed:
+        sys.stdout.write(f"hooks already installed in {path}\n")
+        return 0
+    sys.stdout.write(f"hooks installed in {path}\n")
+    if result.backup_path:
+        sys.stdout.write(f"previous settings saved to {result.backup_path}\n")
+    return 0
+
+
 def _no_arguments(_parser: argparse.ArgumentParser) -> None:
     pass
 
@@ -124,6 +154,10 @@ COMMANDS: dict[str, Command] = {
     "pending": Command("List entries awaiting human review.", _pending),
     "review": Command("Approve or reject an entry as a human.", _review, _review_arguments),
     "status": Command("Show store statistics.", _status),
+    "hook": Command("Run a Claude Code hook (used by hooks.json).", _hook, _hook_arguments),
+    "install-hooks": Command(
+        "Add Agent Commons hooks to Claude Code settings.", _install_hooks, _install_hooks_arguments
+    ),
 }
 
 
