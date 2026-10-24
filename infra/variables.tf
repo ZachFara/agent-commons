@@ -9,8 +9,13 @@ variable "region" {
   default     = "us-central1"
 }
 
+variable "neon_project_id" {
+  description = "ID of the existing Neon project to import (Neon console, Settings, General)."
+  type        = string
+}
+
 variable "neon_region" {
-  description = "Neon region; aws-us-east-2 (Ohio) is close to us-central1."
+  description = "Region of the Neon project; must match the existing project."
   type        = string
   default     = "aws-us-east-2"
 }
@@ -27,14 +32,8 @@ variable "image" {
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
 
-variable "max_instances" {
-  description = "Upper bound on Cloud Run instances; keeps a runaway from leaving the free tier."
-  type        = number
-  default     = 2
-}
-
 variable "billing_account" {
-  description = "Billing account ID for a spend alert (optional; empty to skip the budget)."
+  description = "Billing account ID for a Terraform-managed spend alert (optional; empty to skip)."
   type        = string
   default     = ""
 }

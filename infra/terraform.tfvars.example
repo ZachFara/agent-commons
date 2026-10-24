@@ -1,3 +1,4 @@
-project_id = "agent-commons-123456"
-# Optional: a $5/month spend alert. Find it with: gcloud billing accounts list
+project_id      = "agent-commons-512623"
+neon_project_id = "weathered-cloud-96612464"
+# Optional Terraform-managed spend alert. Leave unset if you created budgets in the console.
 # billing_account = "012345-6789AB-CDEF01"

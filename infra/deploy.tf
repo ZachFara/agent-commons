@@ -44,14 +44,16 @@ resource "google_artifact_registry_repository_iam_member" "deployer_pushes" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "deployer_deploys" {
-  name     = google_cloud_run_v2_service.server.name
+  for_each = local.environments
+  name     = google_cloud_run_v2_service.server[each.key].name
   location = var.region
   role     = "roles/run.developer"
   member   = "serviceAccount:${google_service_account.deployer.email}"
 }
 
 resource "google_service_account_iam_member" "deployer_acts_as_server" {
-  service_account_id = google_service_account.server.name
+  for_each           = local.environments
+  service_account_id = google_service_account.server[each.key].name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.deployer.email}"
 }

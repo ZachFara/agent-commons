@@ -1,7 +1,8 @@
 name: deploy
 
-# Builds the server image and deploys it to Cloud Run (infra/README.md).
-# Runs only once the repository variables from `terraform output github_variables` are set.
+# Every merge to main: build one image, deploy it to staging, smoke-test it, then wait for
+# approval on the "production" environment and promote the same image (decision 0022).
+# Skipped until the repository variables from `terraform output github_variables` exist.
 on:
   workflow_dispatch:
   push:
@@ -11,15 +12,17 @@ concurrency:
   group: deploy
   cancel-in-progress: false
 
+env:
+  REGION: ${{ vars.GCP_REGION }}
+  IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/agent-commons/server:${{ github.sha }}
+
 jobs:
-  deploy:
+  build:
     if: vars.GCP_PROJECT_ID != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # for Workload Identity Federation
-    env:
-      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/agent-commons/server:${{ github.sha }}
+      id-token: write # Workload Identity Federation
     steps:
       - uses: actions/checkout@v5
       - uses: google-github-actions/auth@v2
@@ -27,15 +30,50 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOYER }}
       - uses: google-github-actions/setup-gcloud@v2
-      - run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+      - run: gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
       - run: docker build -f server/Dockerfile -t "$IMAGE" .
       - run: docker push "$IMAGE"
-      - run: >-
-          gcloud run deploy agent-commons
-          --image "$IMAGE"
-          --region "${{ vars.GCP_REGION }}"
-          --quiet
-      - name: Smoke test
+
+  staging:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - id: deploy
         run: |
-          url=$(gcloud run services describe agent-commons --region "${{ vars.GCP_REGION }}" --format 'value(status.url)')
-          test "$(curl -fsS "$url/healthz")" = ok
+          gcloud run deploy agent-commons-staging --image "$IMAGE" --region "$REGION" --quiet
+          echo "url=$(gcloud run services describe agent-commons-staging --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        run: test "$(curl -fsS --retry 5 --retry-delay 3 "${{ steps.deploy.outputs.url }}/healthz")" = ok
+
+  production:
+    needs: staging
+    runs-on: ubuntu-latest
+    environment:
+      name: production # requires approval (see infra/README.md)
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - id: deploy
+        run: |
+          gcloud run deploy agent-commons --image "$IMAGE" --region "$REGION" --quiet
+          echo "url=$(gcloud run services describe agent-commons --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        run: test "$(curl -fsS --retry 5 --retry-delay 3 "${{ steps.deploy.outputs.url }}/healthz")" = ok
