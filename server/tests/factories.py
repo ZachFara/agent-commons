@@ -34,3 +34,22 @@ def entry(
     assert row
     entry_id: uuid.UUID = row[0]
     return entry_id
+
+
+def outcome(
+    db: psycopg.Connection,
+    entry_id: uuid.UUID,
+    reporter: uuid.UUID,
+    result: str = "tests_passed",
+    created_at: str | None = None,
+) -> None:
+    """Insert a retrieval of the entry in a new task and a used outcome for it."""
+    when = created_at or "now"
+    db.execute(
+        "WITH r AS (INSERT INTO retrievals (entry_id, reporter_id, model_id, task_id, query, "
+        "rank_position, score_at_retrieval, created_at) VALUES (%s, %s, %s, %s, 'q', 1, 0.5, %s) "
+        "RETURNING id) "
+        "INSERT INTO outcomes (retrieval_id, used, outcome, created_at) "
+        "SELECT id, 'yes', %s, %s FROM r",
+        (entry_id, reporter, model_id(db, "claude-opus-5-5"), uuid.uuid4(), when, result, when),
+    )

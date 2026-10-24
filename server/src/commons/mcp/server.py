@@ -12,9 +12,11 @@ from commons.domain.entries import Proposal
 from commons.domain.outcomes import OutcomeKind, Report
 from commons.domain.reviews import PendingEntry, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchHit, SearchRequest
+from commons.domain.status import StoreStatus
 from commons.mcp.errors import StructuredValidationErrors, structured_errors
 from commons.service import proposals, reports, reviews
 from commons.service import search as search_service
+from commons.service import status as status_service
 from commons.store.connection import Connection, connect
 
 ConnectionFactory = Callable[[], AbstractContextManager[Connection]]
@@ -158,13 +160,40 @@ def build_server(connection: ConnectionFactory = connect) -> FastMCP:
             entries = reviews.pending(conn)
         return {"note": UNTRUSTED_NOTE, "data": [_pending_json(entry) for entry in entries]}
 
+    def status() -> dict[str, Any]:
+        """Store statistics: entries by status, 30-day activity, top entries by success rate."""
+        with structured_errors(), connection() as conn:
+            result = status_service.status(conn)
+        return _status_json(result)
+
     return FastMCP(
         "commons",
         instructions=INSTRUCTIONS,
         middleware=[StructuredValidationErrors()],
         mask_error_details=True,
-        tools=[propose, search, report, approve, reject, pending],
+        tools=[propose, search, report, approve, reject, pending, status],
     )
+
+
+def _status_json(result: StoreStatus) -> dict[str, Any]:
+    return {
+        "entries_by_status": result.entries_by_status,
+        "awaiting_human_review": result.awaiting_human_review,
+        "last_30_days": {
+            "retrievals": result.retrievals_30d,
+            "tasks": result.tasks_30d,
+            "outcomes": result.outcomes_30d,
+        },
+        "top_entries": [
+            {
+                "entry_id": str(top.entry_id),
+                "symptom": top.symptom,
+                "success_rate": top.success_rate(),
+                "used_outcomes": top.used_outcomes,
+            }
+            for top in result.top_entries
+        ],
+    }
 
 
 def _review_json(entry_id: uuid.UUID, result: reviews.ReviewResult) -> dict[str, Any]:
