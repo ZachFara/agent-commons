@@ -10,6 +10,8 @@ EntryStatus = Literal["pending", "approved", "rejected", "retired"]
 
 MAX_DOMAINS = 16  # cq's limit (decision 0008)
 MAX_DOMAIN_LENGTH = 64
+# Environment keys agents fill in; at least one is required, each with versions.
+ENVIRONMENT_KEYS = ("language", "libraries", "tool")
 _VERSIONED_KEYS = ("language", "tool")
 _HAS_VERSION = re.compile(r"\d")
 
@@ -59,6 +61,6 @@ def _validate_environment(environment: dict[str, object]) -> None:
         if value is not None and not (isinstance(value, str) and _HAS_VERSION.search(value)):
             msg = f'environment.{key} must include a version, e.g. "python 3.12".'
             raise InvalidInputError(msg)
-    if not libraries and not any(key in environment for key in _VERSIONED_KEYS):
+    if not any(environment.get(key) for key in ENVIRONMENT_KEYS):
         msg = "environment must include at least one of language, libraries, or tool, versioned."
         raise InvalidInputError(msg)

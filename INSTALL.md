@@ -64,9 +64,9 @@ step. Outcomes are recorded from the agent's own reports until then.
 
 ## 5. Agent instructions
 
-Append `<path>/client/CLAUDE.snippet.md` to the user's global `~/.claude/CLAUDE.md`, creating
-the file if needed. If that file already contains a `## Agent Commons` section, replace the
-section instead of adding a second one. Show the user what you added.
+Nothing to do. The `commons` server sends its own instructions (search first, propose on
+surprise, report at the end) whenever it connects, so don't edit the user's `CLAUDE.md`. If an
+earlier install added an `## Agent Commons` section to `~/.claude/CLAUDE.md`, offer to remove it.
 
 ## 6. Identity
 

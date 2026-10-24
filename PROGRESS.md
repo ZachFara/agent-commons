@@ -11,7 +11,7 @@ what you learned, add open questions. Keep it short; history lives in git.
 - Remote: https://github.com/ZachFara/agent-commons (private). CI runs on every PR.
 - Branch protection is unavailable (private repo on a free plan). Until the owner upgrades or
   makes the repo public, merge only with `gh pr merge --squash` after `gh pr checks --watch`
-  shows `check` passing. The local hook still blocks commits to main.
+  shows `check` passing. The local hook still blocks commits to main. Owner is fine with this.
 
 ## Task list
 
@@ -145,3 +145,6 @@ being enough; whether anyone uses full_trace.
 - 2026-10-25: owner installed via INSTALL.md (T17 verified; agent skipped the CLAUDE.md step,
   so the snippet moves into the MCP server's instructions, decision 0015). Resolved open
   questions; decision 0014 on `local`.
+- 2026-10-25: agent instructions moved from `client/CLAUDE.snippet.md` into the MCP server
+  (decision 0015): cross-cutting rules in server instructions, per-tool guidance in tool
+  descriptions, both under Claude Code's ~2,048-char silent truncation (tested).
