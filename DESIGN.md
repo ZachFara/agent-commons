@@ -142,7 +142,7 @@ Hooks are Claude Code's hook system (settings.json). `client/hooks.json` only ca
 
 Three modes per reporter, overridable per task.
 
-- local: nothing leaves the machine. Entries and outcomes go to the local store only.
+- local: nothing leaves the machine. Entries and outcomes go to the local store only. `local` decides where a write goes, not a field on the row: local entries are stored with privacy_mode entry, and a reporter whose mode is local never writes to a hosted store (decision 0014).
 - entry (default): structured entries and outcomes are shared. No traces.
 - full_trace: the full redacted session trace is attached to entries and outcomes. For homework, hobby projects, and anyone who has decided they don't care.
 
