@@ -15,21 +15,22 @@ Decisions about how to build it are in `docs/decisions/`.
 
 ## Architecture
 
-- `server/`: Python package `commons`. FastMCP server (stdio local, streamable HTTP hosted) and
-  the `commons` CLI. Talks to Postgres via psycopg 3 with plain SQL.
+- `server/`: Python package `commons`. FastMCP server (stdio local, streamable HTTP hosted), the
+  `commons` CLI, and the local admin dashboard (`commons-dashboard`, decision 0013). Talks to Postgres via psycopg 3 with plain SQL.
 - `db/`: docker compose for Postgres 16 + pgvector.
 - `client/`: Claude Code integration: `CLAUDE.snippet.md`, `hooks.json`, assets for INSTALL.md.
 
 Layers inside `server/src/commons/` (enforced by import-linter; higher imports lower only):
 
 ```
-mcp | cli                               entrypoints, thin; independent of each other
+mcp | cli | web                         entrypoints, thin; independent of each other
 service                                 use cases: search, propose, report, approve, status
 store | ranking | privacy | adapters    independent of each other
 domain                                  types and enums; imports nothing in commons
 ```
 
-Only `store` imports psycopg. Only `mcp` imports FastMCP. `domain`, `ranking`, `privacy`,
+Only `store` imports psycopg. Only `mcp` imports FastMCP. Only `web` imports starlette,
+uvicorn, jinja2. `domain`, `ranking`, `privacy`,
 `adapters` do no I/O. Details and rationale: `docs/decisions/0002-repository-layout.md`.
 
 ## Directory layout
@@ -58,6 +59,7 @@ make db       # start local Postgres via docker compose; tests need it running
 make check    # THE check: format, lint, complexity, types, dead code, imports, layout, tests
 make fix      # auto-format and apply safe lint fixes, then run the check
 uv run pytest server/tests/test_smoke.py   # run one test file
+uv run commons-dashboard                   # admin dashboard on http://127.0.0.1:8765
 ```
 
 `make check` is exactly what pre-commit and CI run. If it passes locally it passes in CI.

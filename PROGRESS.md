@@ -43,7 +43,7 @@ command and goes down through the layers.
 | T16 | done | `client/CLAUDE.snippet.md`: search-first, propose-on-surprise, post-hoc report, untrusted-data, full_trace downgrade rules | Snippet covers each rule in DESIGN.md §5-§6; under 60 lines |
 | T17 | needs owner verification | `INSTALL.md` (agent-facing, DESIGN.md §9 steps 1-7) and `README.md` | A fresh Claude Code session following INSTALL.md alone reaches a working `search` (owner verifies) |
 | T18 | done | Ship a few seed entries (well-known public problems) loaded by `commons init`, so INSTALL step 7 has a known entry to find. Real entries come from use (owner, 2026-10-24) | `search` for a seed symptom returns it on a fresh install (tested) |
-| T19 | todo | Admin dashboard, read-only: pending queue, recent proposals with redaction reports, recent retrievals and outcomes. Adds a `web` entrypoint layer (decision record + import contract) | Served locally by the server; page test renders seeded rows; no write routes yet |
+| T19 | done | Admin dashboard, read-only: pending queue, recent proposals with redaction reports, recent retrievals and outcomes. Adds a `web` entrypoint layer (decision record + import contract) | Served locally by the server; page test renders seeded rows; no write routes yet |
 | T20 | todo | Admin dashboard: file human reviews (approve/reject with reason) | Review from the dashboard writes a human reviews row; tested |
 
 ### DESIGN Phase 2 (split into session-sized tasks when Phase 1 is done)
@@ -91,7 +91,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T19.
+1. Next session: T20.
 2. Owner: verify T17 by following INSTALL.md in a fresh Claude Code session.
 3. Owner, when convenient: open questions 1, 3, 5.
 
@@ -144,3 +144,6 @@ being enough; whether anyone uses full_trace.
   idempotently by `commons init` as approved + human-reviewed by the `agent-commons-seed`
   reporter. INSTALL step 7 now searches for one. Search/report tests scope results to their own
   entries since seeds are committed to the shared test DB.
+- 2026-10-24: T19 read-only admin dashboard (decision 0013): `commons-dashboard`, localhost only,
+  counts, review queue, recent proposals, recent retrievals with outcomes. Redaction reports
+  aren't persisted yet, so they're not shown; T21 should store them on the entry.

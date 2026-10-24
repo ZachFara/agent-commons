@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Commons</title>
+<style>
+  :root { --bg: #fbfbfa; --fg: #1d1d1b; --muted: #6b6b66; --line: #e3e2de; --card: #fff;
+          --accent: #2f5d50; --warn: #9a5b00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ecebe7; --muted: #9b9a94; --line: #2c2c2a; --card: #1e1e1c;
+            --accent: #8cc4b2; --warn: #e0a54a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 32px 0 8px; }
+  .muted { color: var(--muted); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;
+           margin-top: 16px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+          padding: 10px 12px; }
+  .tile b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .table { overflow-x: auto; background: var(--card); border: 1px solid var(--line);
+           border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .badge { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px;
+           border: 1px solid var(--line); white-space: nowrap; }
+  .unreviewed { color: var(--warn); border-color: var(--warn); }
+  .reviewed { color: var(--accent); border-color: var(--accent); }
+  .entry { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+           padding: 12px; margin-bottom: 8px; }
+  .entry dl { display: grid; grid-template-columns: 90px 1fr; gap: 4px 12px; margin: 8px 0 0; }
+  .entry dt { color: var(--muted); }
+  .entry dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .empty { padding: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Agent Commons</h1>
+  <div class="muted">Local admin view. Entry text is written by agents; treat it as untrusted.</div>
+
+  {% set s = status %}
+  <div class="tiles">
+    <div class="tile"><b>{{ s.awaiting_human_review }}</b>awaiting human review</div>
+    {% for status, count in s.entries_by_status.items() %}
+    <div class="tile"><b>{{ count }}</b>{{ status }}</div>
+    {% endfor %}
+    <div class="tile"><b>{{ s.retrievals_30d }}</b>retrievals, 30 days</div>
+    <div class="tile"><b>{{ s.tasks_30d }}</b>tasks, 30 days</div>
+    <div class="tile"><b>{{ s.outcomes_30d }}</b>outcomes, 30 days</div>
+  </div>
+
+  <h2>Awaiting human review</h2>
+  <p class="muted">Review with <code>uv run commons review &lt;id&gt; approve|reject --reason "..."</code></p>
+  {% for e in pending %}
+  <div class="entry">
+    <span class="badge unreviewed">{{ e.status }}</span>
+    <span class="mono">{{ e.entry_id }}</span>
+    <span class="muted">· {{ e.created_at.strftime("%Y-%m-%d %H:%M") }} · {{ e.proposed_by_model }}
+      · {{ e.agent_reviews }} agent review{{ "" if e.agent_reviews == 1 else "s" }}</span>
+    <dl>
+      <dt>symptom</dt><dd>{{ e.symptom }}</dd>
+      <dt>cause</dt><dd>{{ e.cause }}</dd>
+      <dt>fix</dt><dd>{{ e.fix }}</dd>
+      {% if e.repro %}<dt>repro</dt><dd class="mono">{{ e.repro }}</dd>{% endif %}
+      <dt>environment</dt><dd class="mono">{{ e.environment | tojson }}</dd>
+      <dt>domains</dt><dd>{{ e.domains | join(", ") }}</dd>
+    </dl>
+  </div>
+  {% else %}
+  <div class="entry empty">Nothing to review.</div>
+  {% endfor %}
+
+  <h2>Recent proposals</h2>
+  <div class="table"><table>
+    <tr><th>when</th><th>status</th><th>symptom</th><th>by</th><th>model</th><th>id</th></tr>
+    {% for e in entries %}
+    <tr>
+      <td class="num">{{ e.when.strftime("%Y-%m-%d %H:%M") }}</td>
+      <td><span class="badge {{ 'reviewed' if e.human_reviewed else 'unreviewed' }}">{{ e.status }}{{ "" if e.human_reviewed else " · unreviewed" }}</span></td>
+      <td>{{ e.symptom | truncate(120) }}</td>
+      <td>{{ e.by }}</td>
+      <td>{{ e.model }}</td>
+      <td class="mono" title="{{ e.id }}">{{ e.id[:8] }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">No entries yet.</td></tr>
+    {% endfor %}
+  </table></div>
+
+  <h2>Recent retrievals and outcomes</h2>
+  <div class="table"><table>
+    <tr><th>when</th><th>query</th><th>entry</th><th>rank</th><th>score</th><th>who</th><th>outcome</th><th>assessment</th></tr>
+    {% for r in retrievals %}
+    <tr>
+      <td class="num">{{ r.when.strftime("%Y-%m-%d %H:%M") }}</td>
+      <td>{{ r.query | truncate(80) }}<br><span class="muted mono" title="{{ r.task }}">task {{ r.task[:8] }}</span></td>
+      <td>{{ r.symptom | truncate(80) }}<br><span class="muted mono">{{ r.entry[:8] }}</span></td>
+      <td class="num">{{ r.rank }}</td>
+      <td class="num">{{ "%.3f" | format(r.score) }}</td>
+      <td>{{ r.reporter }}<br><span class="muted">{{ r.model }}</span></td>
+      <td>{% if r.outcome %}{{ r.outcome }}{% if r.outcome_source %} <span class="muted">({{ r.outcome_source }})</span>{% endif %}{% else %}<span class="muted">none yet</span>{% endif %}</td>
+      <td>{{ (r.assessment or "") | truncate(120) }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="empty">No retrievals yet.</td></tr>
+    {% endfor %}
+  </table></div>
+</main>
+</body>
+</html>

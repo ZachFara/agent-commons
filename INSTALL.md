@@ -98,4 +98,4 @@ uv run commons init --pseudonym <pseudonym> --privacy <mode>
 
 Tell the user setup is done, which privacy mode they chose, and that `uv run commons pending`
 and `uv run commons review <id> approve|reject` (from `<path>`) are how they review what their
-agents propose.
+agents propose, and `uv run commons-dashboard` opens an admin view at http://127.0.0.1:8765.
