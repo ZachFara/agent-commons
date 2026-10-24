@@ -2,7 +2,7 @@ from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
 
-from commons.domain.outcomes import SUCCESS_OUTCOMES, OutcomeSample
+from commons.domain.outcomes import SUCCESS_OUTCOMES, OutcomeKind, OutcomeSample
 from commons.store.connection import Connection
 
 # Outcomes that say whether the entry worked: used, with a known, decisive outcome.
@@ -70,3 +70,26 @@ def latest_snapshot_at(conn: Connection) -> datetime | None:
     """When ranking last ran, or None if it never has."""
     row = conn.execute("SELECT max(computed_at) FROM ranking_snapshots").fetchone()
     return None if row is None else row[0]
+
+
+def reliability_pairs(conn: Connection) -> dict[UUID, list[tuple[OutcomeKind, OutcomeKind]]]:
+    """(agent's claimed outcome, observed outcome) per reporter, where both exist."""
+    pairs: dict[UUID, list[tuple[OutcomeKind, OutcomeKind]]] = defaultdict(list)
+    rows = conn.execute(
+        "SELECT r.reporter_id, o.evidence->>'agent_outcome', o.outcome::text "
+        "FROM outcomes o JOIN retrievals r ON r.id = o.retrieval_id "
+        "WHERE o.evidence->>'outcome_source' = 'hook' AND o.evidence ? 'agent_outcome'"
+    ).fetchall()
+    for reporter_id, claimed, observed in rows:
+        pairs[reporter_id].append((claimed, observed))
+    return pairs
+
+
+def set_reliabilities(conn: Connection, values: dict[UUID, float | None]) -> None:
+    """Store each reporter's reliability; reporters not listed become NULL (unknown)."""
+    conn.execute("UPDATE reporters SET reliability = NULL WHERE reliability IS NOT NULL")
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            "UPDATE reporters SET reliability = %s WHERE id = %s",
+            [(value, reporter_id) for reporter_id, value in values.items() if value is not None],
+        )
