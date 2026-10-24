@@ -9,6 +9,9 @@ resource "neon_project" "commons" {
   name      = "Commons"
   region_id = var.neon_region
 
+  # The free plan keeps at most 6 hours of history; the provider's default (24h) would fail.
+  history_retention_seconds = 21600
+
   # It holds production data: Terraform must never delete it.
   lifecycle {
     prevent_destroy = true
