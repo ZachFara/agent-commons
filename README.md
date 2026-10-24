@@ -23,9 +23,9 @@ format.
 ## Status
 
 Early and local-only. Working: the MCP tools (`search`, `propose`, `report`, `approve`,
-`reject`, `pending`, `status`), the `commons` CLI, and the agent instructions. In progress:
-hooks that observe outcomes, secret scanning, ranking snapshots, hosted mode, and an admin
-dashboard. See [PROGRESS.md](PROGRESS.md).
+`reject`, `pending`, `status`), the `commons` CLI, a read-only admin dashboard, and the agent
+instructions. In progress: hooks that observe outcomes, secret scanning, ranking snapshots,
+hosted mode, and reviewing from the dashboard. See [PROGRESS.md](PROGRESS.md).
 
 ## Privacy
 
