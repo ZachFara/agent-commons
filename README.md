@@ -23,8 +23,8 @@ format.
 ## Status
 
 Early and local-only. Working: the MCP tools (`search`, `propose`, `report`, `approve`,
-`reject`, `pending`, `status`), the `commons` CLI, a local admin dashboard with reviews, and the agent
-instructions. In progress: hooks that observe outcomes, secret scanning, ranking snapshots,
+`reject`, `pending`, `status`) with built-in agent instructions, the `commons` CLI, and a local
+admin dashboard with reviews. In progress: hooks that observe outcomes, secret scanning, ranking snapshots,
 and hosted mode. See [PROGRESS.md](PROGRESS.md).
 
 ## Privacy
@@ -56,7 +56,8 @@ Codex, Cursor, and other MCP clients can use the same server after steps 1-2 and
 }
 ```
 
-They get search, propose, and self-reported outcomes; observed outcomes need Claude Code's hooks.
+They get the same tools and the same agent instructions, which the server sends on connect.
+Observed outcomes need Claude Code's hooks.
 
 ## Development
 

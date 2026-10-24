@@ -22,7 +22,7 @@ Three components, all in one repo:
 
 - `server/`: Python, FastMCP. Exposes the MCP tools over stdio (local) and streamable HTTP (hosted). Talks to Postgres.
 - `db/`: Postgres 16 with pgvector, run via `docker compose`. Full-text search first; vectors added when retrieval quality is the bottleneck.
-- `client/`: Claude Code integration. A `CLAUDE.md` snippet that sets search-first behavior, hooks that capture test results and trigger post-hoc grading, and an `INSTALL.md` that Claude reads to set everything up.
+- `client/`: Claude Code integration: hooks that capture test results and trigger post-hoc grading, and an `INSTALL.md` that Claude reads to set everything up. The search-first behavior is set by the MCP server's own instructions and tool descriptions, which every client loads on connect (decision 0015).
 
 Modes:
 
@@ -123,9 +123,9 @@ Store statistics: entry counts by status, retrievals and outcomes in the last 30
 
 ## 5. Agent workflow
 
-Search first. The `CLAUDE.md` snippet instructs the agent to call `search` when it hits an unfamiliar error, a library behavior it didn't expect, or a problem it has already tried once to solve. Results are read as reference material. The agent then tests any fix it applies rather than trusting the entry.
+Search first. The server's instructions tell the agent to call `search` when it hits an unfamiliar error, a library behavior it didn't expect, or a problem it has already tried once to solve. Results are read as reference material. The agent then tests any fix it applies rather than trusting the entry.
 
-Propose on surprise. After solving a problem, the agent asks itself whether the solution was non-obvious: it took more than one attempt, the fix contradicted documentation, or the cause was version-specific. If so it calls `propose`. The heuristic lives in `CLAUDE.md` and will be tuned by watching what gets proposed.
+Propose on surprise. After solving a problem, the agent asks itself whether the solution was non-obvious: it took more than one attempt, the fix contradicted documentation, or the cause was version-specific. If so it calls `propose`. The heuristic lives in the server's instructions and will be tuned by watching what gets proposed.
 
 Post-hoc grading. When the task ends, the agent calls `report` for every entry it retrieved, giving its own assessment of whether the entry helped. This is the self-report. It is stored alongside the observed outcome so the gap between what agents say and what happened becomes a measured quantity, and so reporter reliability can be computed.
 
@@ -150,7 +150,7 @@ Rules that apply in every mode:
 
 - Secret scanning runs on every write: API keys, tokens, private keys, connection strings, emails, and paths containing a username. Findings are redacted and listed in the redaction report.
 - Reporters are pseudonymous, never anonymous, and the README says so. Repo names, paths, and writing style identify people.
-- A reporter can consent for their own work only. The `CLAUDE.md` snippet tells the agent to downgrade full_trace to entry when the session touches code with another author in git blame.
+- A reporter can consent for their own work only. The server's instructions tell the agent to downgrade full_trace to entry when the session touches code with another author in git blame.
 - Traces are evidence for analysis and are never returned by search or included in exports by default.
 
 ## 7. Ranking and attribution
@@ -188,7 +188,7 @@ INSTALL.md is written for an agent and lists the exact steps:
 2. `docker compose up -d` in `db/` to start Postgres. Run migrations with `uv run commons migrate`.
 3. Register the MCP server: `claude mcp add commons -- uv run --directory <path>/server commons-mcp` for local mode, or `claude mcp add --transport http commons https://<host>/mcp --header "Authorization: Bearer <key>"` for hosted.
 4. Merge the hook definitions from `client/hooks.json` into `~/.claude/settings.json` without overwriting existing hooks.
-5. Append `client/CLAUDE.snippet.md` to the user's global `CLAUDE.md`.
+5. Nothing to install for agent behavior: the MCP server sends its instructions on connect (decision 0015).
 6. Ask the user for a pseudonym and a default privacy mode. Run `commons init` with the answers.
 7. Verify with `commons status`, then run `search` once on a known seed entry to prove the loop works.
 
@@ -198,7 +198,7 @@ Hosted mode for a group: one person runs `docker compose -f compose.hosted.yml u
 
 ## 10. Build phases
 
-Phase 1, one day: Postgres schema, FastMCP server with search, propose, report, approve, pending, status. Full-text search. CLI for migrate, init, status. INSTALL.md and the CLAUDE.md snippet. Ship a few seed entries for install verification; real entries come from use. Admin dashboard (read-only, then reviews).
+Phase 1, one day: Postgres schema, FastMCP server with search, propose, report, approve, pending, status. Full-text search. CLI for migrate, init, status. INSTALL.md and the agent instructions. Ship a few seed entries for install verification; real entries come from use. Admin dashboard (read-only, then reviews).
 
 Phase 2, one week of use: Claude Code hooks for observed outcomes and the `used` computation from diffs. Secret scanning. Nightly ranking snapshots. Hosted mode with API keys.
 
