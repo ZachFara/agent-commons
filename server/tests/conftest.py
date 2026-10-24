@@ -34,7 +34,10 @@ def database_url() -> Iterator[str]:
 
 @pytest.fixture
 def db(database_url: str) -> Iterator[psycopg.Connection]:
-    """Yield a connection whose work is rolled back after the test."""
-    with psycopg.connect(database_url) as conn:
+    """Yield a connection whose work is rolled back after the test.
+
+    The outer transaction makes any `conn.transaction()` in code under test a savepoint, so
+    nothing commits even when the code manages its own transactions.
+    """
+    with psycopg.connect(database_url) as conn, conn.transaction(force_rollback=True):
         yield conn
-        conn.rollback()

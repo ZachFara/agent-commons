@@ -26,7 +26,7 @@ PROGRESS.md updated.
 | T01 | done (partial) | GitHub remote `agent-commons`, branch protection on `main` requiring the `check` workflow | Remote and CI done. Protection blocked by plan, see Open questions |
 | T02 | done | `db/compose.yml`: Postgres 16 + pgvector, healthcheck, local volume; `.env` defaults documented | `docker compose -f db/compose.yml up -d` reports healthy; `CREATE EXTENSION vector` succeeds |
 | T03 | done | CI: Postgres service container + DB test fixture (per-test transaction or throwaway schema) | A test that runs `SELECT 1` through the fixture passes locally and in CI |
-| T04 | todo | Migration runner in `store` + `commons migrate` CLI command + `commons` script entry | Applies numbered `.sql` files once, records them in `schema_migrations`; re-running is a no-op (tested) |
+| T04 | done | Migration runner in `store` + `commons migrate` CLI command + `commons` script entry | Applies numbered `.sql` files once, records them in `schema_migrations`; re-running is a no-op (tested) |
 | T05 | todo | Check `cq-schema` field names and record the mapping in a decision record (prerequisite for T06) | `docs/decisions/` has the cq field mapping; any DESIGN.md field that collides with a cq name is listed as a proposed rename |
 | T06 | todo | Migration 0001: all tables and enums from DESIGN.md §3 (including `reviews` and `entries.human_reviewed`, decision 0005), generated `search_vector` + GIN index | Test introspects every table, column, and enum after `migrate` |
 | T07 | todo | `domain`: enums and dataclasses for entries, retrievals, outcomes, reporters, models | Types mirror the schema; a test asserts Python enum values equal Postgres enum labels |
@@ -89,7 +89,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T04.
+1. Next session: T05.
 2. Owner, when convenient: open questions 1, 4, 6.
 
 ## Session log
@@ -102,3 +102,6 @@ being enough; whether anyone uses full_trace.
   Schema, including `CREATE EXTENSION vector`, belongs to migrations, not init scripts.
 - 2026-10-24: T03 CI Postgres service container, `db` test fixture, `make db`. `make check`
   now needs local Postgres running.
+- 2026-10-24: T04 migration runner (`store/migrate.py`, files in `store/migrations/`) and
+  `commons migrate`. Fixed the T03 `db` fixture: code calling `conn.transaction()` committed
+  for real; tests now run inside a force-rollback outer transaction. Decision 0007 (argparse).
