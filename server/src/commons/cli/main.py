@@ -14,8 +14,9 @@ from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
 from commons.service import keys, ranking, reviews, seeds
 from commons.service import status as status_service
+from commons.service.hook_client import RemoteBackend, remote_client
 from commons.service.hook_install import default_settings_path, install_hooks
-from commons.service.identity import init_reporter
+from commons.service.identity import init_reporter, save_server
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
 
@@ -126,6 +127,21 @@ def _admin(args: argparse.Namespace) -> int:
     return 0
 
 
+def _connect_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--server", required=True, help="Hosted server URL, e.g. https://host")
+    parser.add_argument("--key", required=True, help="API key from the server's admin.")
+
+
+def _connect(args: argparse.Namespace) -> int:
+    url: str = args.server
+    key: str = args.key
+    with remote_client(url, key) as client:
+        RemoteBackend(client).ping()
+    path = save_server(url, key)
+    sys.stdout.write(f"hooks will report to {url}; settings saved in {path}\n")
+    return 0
+
+
 def _rank(_args: argparse.Namespace) -> int:
     with connect() as conn:
         count = ranking.rank(conn)
@@ -179,6 +195,7 @@ COMMANDS: dict[str, Command] = {
     "pending": Command("List entries awaiting human review.", _pending),
     "review": Command("Approve or reject an entry as a human.", _review, _review_arguments),
     "status": Command("Show store statistics.", _status),
+    "connect": Command("Send hook observations to a hosted server.", _connect, _connect_arguments),
     "admin": Command("Hosted mode administration.", _admin, _admin_arguments),
     "rank": Command("Write ranking snapshots (runs daily on its own).", _rank),
     "hook": Command("Run a Claude Code hook (used by hooks.json).", _hook, _hook_arguments),

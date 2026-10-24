@@ -63,6 +63,7 @@ make fix      # auto-format and apply safe lint fixes, then run the check
 uv run pytest server/tests/test_smoke.py   # run one test file
 uv run commons-dashboard                   # admin dashboard on http://127.0.0.1:8765
 uv run commons-mcp --http --port 8000     # hosted mode; keys via `commons admin create-key`
+uv run commons-dashboard --hosted          # hosted hook API (and admin dashboard, T27d)
 ```
 
 `make check` is exactly what pre-commit and CI run. If it passes locally it passes in CI.
