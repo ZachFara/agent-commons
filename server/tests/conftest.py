@@ -7,16 +7,23 @@ transaction that is rolled back, so tests never see each other's rows.
 Start Postgres locally with `make db`. CI provides it as a service container.
 """
 
+import json
 import os
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 
 import psycopg
 import pytest
+from fastmcp import FastMCP
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
+from commons.mcp.server import build_server
+from commons.store.connection import Connection
 from commons.store.migrate import apply_migrations
+from commons.store.reporters import upsert_reporter
 
 ADMIN_URL = os.environ.get(
     "COMMONS_TEST_DATABASE_URL", "postgresql://commons:commons@localhost:5432/commons"
@@ -46,3 +53,24 @@ def db(database_url: str) -> Iterator[psycopg.Connection]:
     """
     with psycopg.connect(database_url) as conn, conn.transaction(force_rollback=True):
         yield conn
+
+
+@pytest.fixture
+def reporter(db: psycopg.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> uuid.UUID:
+    """Create a reporter and make it this machine's identity, as `commons init` would."""
+    pseudonym = f"tester-{uuid.uuid4().hex[:8]}"
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"pseudonym": pseudonym}), encoding="utf-8")
+    monkeypatch.setenv("COMMONS_CONFIG", str(config))
+    return upsert_reporter(db, pseudonym, "entry")
+
+
+@pytest.fixture
+def server(db: psycopg.Connection) -> FastMCP:
+    """An MCP server whose tools use the test's rolled-back connection."""
+
+    @contextmanager
+    def test_connection() -> Iterator[Connection]:
+        yield db
+
+    return build_server(test_connection)

@@ -48,6 +48,7 @@ entries
 - created_by_model: model id.
 - privacy_mode: enum entry, full_trace. Local-only entries never leave the machine and are not rows in a hosted store.
 - trace_id: nullable, references traces.
+- task_id: UUID, nullable. The session that proposed it; null for imported entries.
 - search_vector: tsvector, generated from symptom, cause, fix, domains.
 
 retrievals
