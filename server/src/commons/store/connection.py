@@ -2,6 +2,9 @@ import os
 from typing import TypeAlias
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
+
+from commons.domain.errors import StoreUnavailableError
 
 # Layers above store use this name so that only store imports the driver.
 Connection: TypeAlias = psycopg.Connection
@@ -15,5 +18,10 @@ def database_url() -> str:
 
 
 def connect() -> Connection:
-    """Open a connection to the configured database."""
-    return psycopg.connect(database_url())
+    """Open a connection to the configured database, or raise StoreUnavailableError."""
+    try:
+        return psycopg.connect(database_url())
+    except psycopg.OperationalError as error:
+        host = conninfo_to_dict(database_url()).get("host", "?")
+        msg = f"Can't reach the database at {host}. Is Postgres running? (`make db`)"
+        raise StoreUnavailableError(msg) from error

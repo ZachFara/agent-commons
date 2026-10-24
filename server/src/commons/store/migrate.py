@@ -38,3 +38,14 @@ def apply_migrations(conn: psycopg.Connection, directory: Path = MIGRATIONS_DIR)
             conn.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (path.name,))
             applied_now.append(path.name)
     return applied_now
+
+
+def pending_migrations(conn: psycopg.Connection, directory: Path = MIGRATIONS_DIR) -> list[str]:
+    """Return the migrations not applied yet, without applying anything."""
+    exists = conn.execute("SELECT to_regclass('schema_migrations')").fetchone()
+    done = set()
+    if exists and exists[0] is not None:
+        done = {row[0] for row in conn.execute("SELECT name FROM schema_migrations")}
+    return [
+        p.name for p in sorted(directory.glob("[0-9][0-9][0-9][0-9]_*.sql")) if p.name not in done
+    ]

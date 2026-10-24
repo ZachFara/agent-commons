@@ -12,3 +12,7 @@ class NotFoundError(LookupError):
 
 class NotPermittedError(PermissionError):
     """The caller may not do this. The message is safe to show."""
+
+
+class StoreUnavailableError(ConnectionError):
+    """The database can't be reached. The message says where and what to try."""

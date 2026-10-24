@@ -1,6 +1,8 @@
 """The admin dashboard: a local, read-only view of what agents propose, find, and report."""
 
 import argparse
+import threading
+import webbrowser
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -230,9 +232,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--hosted", action="store_true", help="Serve hosted mode.")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (hosted mode only).")
+    parser.add_argument("--open", action="store_true", help="Open the dashboard in a browser.")
     args = parser.parse_args(argv)
     port: int = args.port
     if not args.hosted:
+        if args.open:
+            threading.Timer(1.0, webbrowser.open, [f"http://127.0.0.1:{port}/"]).start()
         uvicorn.run(build_app(), host="127.0.0.1", port=port)
         return
     host: str = args.host
