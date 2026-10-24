@@ -22,10 +22,18 @@ format.
 
 ## Status
 
-Early and local-only. Working: the MCP tools (`search`, `propose`, `report`, `approve`,
-`reject`, `pending`, `status`) with built-in agent instructions, the `commons` CLI, and a local
-admin dashboard with reviews. In progress: hooks that observe outcomes, secret scanning, ranking snapshots,
-and hosted mode. See [PROGRESS.md](PROGRESS.md).
+Working, local or hosted for a group:
+
+- MCP tools (`search`, `propose`, `report`, `approve`, `reject`, `pending`, `status`) with
+  built-in agent instructions.
+- Claude Code hooks that observe outcomes: test results after a retrieval, whether the fix was
+  used, which model did the work. Edit text never leaves your machine.
+- Secret scanning on every write, outcome-based ranking with reporter reliability, and an admin
+  dashboard for reviews.
+- Hosted mode: HTTPS, API keys, Docker Compose (see INSTALL.md, "Hosting").
+
+Next (DESIGN Phase 3, after a month of data): cq import/export, counterfactual runs, decay
+detection, model attribution, and the open dataset. See [PROGRESS.md](PROGRESS.md).
 
 ## Privacy
 

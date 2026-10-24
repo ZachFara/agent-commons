@@ -173,7 +173,10 @@ def test_hosted_web_app_binds_where_told(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("uvicorn.run", lambda _app, **kwargs: calls.append(kwargs))
     web.main(["--hosted", "--host", "10.0.0.5", "--port", "9000"])
     web.main(["--host", "10.0.0.5"])  # ignored without --hosted: the local dashboard has no auth
-    assert calls == [{"host": "10.0.0.5", "port": 9000}, {"host": "127.0.0.1", "port": 8765}]
+    assert calls == [
+        {"host": "10.0.0.5", "port": 9000, "proxy_headers": True, "forwarded_allow_ips": "*"},
+        {"host": "127.0.0.1", "port": 8765},
+    ]
 
 
 def test_hook_cli_reports_to_the_server_when_connected(

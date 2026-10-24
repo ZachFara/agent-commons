@@ -1,0 +1,67 @@
+# Hosted Agent Commons for a group (decision 0018). Run from the repo root:
+#   docker compose -f db/compose.hosted.yml --env-file db/.env up -d --build
+# db/.env (gitignored) must set DOMAIN and COMMONS_DB_PASSWORD. See INSTALL.md, "Hosting".
+name: agent-commons-hosted
+
+x-server: &server
+  image: agent-commons-server  # built once, by the migrate service
+  restart: unless-stopped
+  environment:
+    COMMONS_DATABASE_URL: postgresql://commons:${COMMONS_DB_PASSWORD:?set COMMONS_DB_PASSWORD}@postgres:5432/commons
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: commons
+      POSTGRES_PASSWORD: ${COMMONS_DB_PASSWORD:?set COMMONS_DB_PASSWORD}
+      POSTGRES_DB: commons
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U commons -d commons"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  migrate:
+    <<: *server
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: "no"
+    command: ["commons", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mcp:
+    <<: *server
+    command: ["commons-mcp", "--http", "--host", "0.0.0.0", "--port", "8000"]
+
+  web:
+    <<: *server
+    command: ["commons-dashboard", "--hosted", "--host", "0.0.0.0", "--port", "8765"]
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - mcp
+      - web
+
+volumes:
+  pgdata:
+  caddy_data:

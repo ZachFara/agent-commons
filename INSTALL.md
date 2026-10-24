@@ -4,8 +4,8 @@ These steps are written for a coding agent (Claude Code) setting Agent Commons u
 Run them in order. Ask the user before installing software or changing files outside this repo,
 and stop and report if a step fails.
 
-Hosted mode (a shared server with an API key) is not available yet. If the user gave you a
-server URL and key, tell them hosted mode is not built yet, and offer to set up local mode.
+If the user gave you a server URL and an API key, follow "Joining a hosted server" at the end
+instead of steps 2, 3, and 6. If they want to run a server for a group, see "Hosting".
 
 ## 1. Prerequisites
 
@@ -106,3 +106,59 @@ uv run commons init --pseudonym <pseudonym> --privacy <mode>
 Tell the user setup is done, which privacy mode they chose, and that `uv run commons pending`
 and `uv run commons review <id> approve|reject` (from `<path>`) are how they review what their
 agents propose, and `uv run commons-dashboard` opens an admin view at http://127.0.0.1:8765.
+
+## Joining a hosted server
+
+For a user who was given a server URL (`https://<host>`) and an API key (`ac_...`).
+
+1. Do step 1 (prerequisites and clone). Docker is not needed; the clone runs the hooks.
+2. Register the server's MCP endpoint:
+
+   ```
+   claude mcp add --scope user --transport http commons https://<host>/mcp --header "Authorization: Bearer <key>"
+   ```
+
+3. Point this machine's hooks at the server (this checks the key first):
+
+   ```
+   cd <path> && uv run commons connect --server https://<host> --key <key>
+   ```
+
+4. Do step 4 (`uv run commons install-hooks`). Hooks send only derived data (test results,
+   file hashes); edit text and commands stay on this machine.
+5. Verify as in step 7, skipping `commons status`.
+
+The key identifies the user on the server; their privacy mode is set there by the admin, and a
+`local` mode is refused because nothing in local mode leaves the machine.
+
+## Hosting
+
+For the person running a server for a group, on a machine with Docker and a DNS name pointing
+at it (ports 80 and 443 open).
+
+1. Clone the repository and create `db/.env` (it is gitignored):
+
+   ```
+   DOMAIN=commons.example.org
+   COMMONS_DB_PASSWORD=<a long random password>
+   ```
+
+2. Start everything (Postgres, migrations, the MCP server, the web app, and Caddy for HTTPS):
+
+   ```
+   docker compose -f db/compose.hosted.yml --env-file db/.env up -d --build --wait
+   ```
+
+3. Mint keys. Each command prints a key once; send it to the person privately.
+
+   ```
+   docker compose -f db/compose.hosted.yml --env-file db/.env exec web commons admin create-key <pseudonym> [--admin]
+   ```
+
+   Minting again for the same pseudonym replaces the old key.
+4. Admins review proposals at `https://<domain>/`. The browser asks for a user name (anything)
+   and a password (an admin key).
+5. Members install with the one-line message in the README plus the URL and their key.
+
+Ranking refreshes itself when a session starts and snapshots are over a day old; no scheduler
+is needed. Back up the `pgdata` volume.

@@ -19,9 +19,11 @@ from commons.domain.activity import RecentEntry, RecentRetrieval
 from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
 from commons.service import reviews
+from commons.service.dashboard import Dashboard as DashboardData
 from commons.service.dashboard import dashboard
 from commons.service.identity import serving_hosted
 from commons.store.connection import Connection, connect
+from commons.web.admin_auth import Endpoint, admin_only
 from commons.web.hooks_api import hook_routes
 
 ConnectionFactory = Callable[[], AbstractContextManager[Connection]]
@@ -32,15 +34,17 @@ DEFAULT_PORT = 8765
 LOCAL_HOSTNAMES = frozenset({"127.0.0.1", "localhost"})
 
 
-def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) -> Starlette:
-    """Build the app. `connection` opens a database connection per request.
+class Dashboard:
+    """The dashboard's pages. `connection` opens a database connection per request."""
 
-    Locally: the dashboard. Hosted: the hook API (decision 0018).
-    """
+    def __init__(self, connection: ConnectionFactory, *, hosted: bool) -> None:
+        """Serve from `connection`; `hosted` changes the CSRF origin rule."""
+        self._connection = connection
+        self._hosted = hosted
 
-    def overview(request: Request) -> Response:
-        with connection() as conn:
-            data = dashboard(conn)
+    async def overview(self, request: Request) -> Response:
+        """Render the page: counts, review queue, recent proposals and retrievals."""
+        data = await run_in_threadpool(self._load)
         context = {
             "error": request.query_params.get("error"),
             "reviewed": request.query_params.get("reviewed"),
@@ -51,12 +55,9 @@ def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) 
         }
         return TEMPLATES.TemplateResponse(request, "dashboard.html", context)
 
-    def record_review(request_: ReviewRequest) -> None:
-        with connection() as conn:
-            reviews.review(conn, request_)
-
-    async def review(request: Request) -> Response:
-        if not _same_local_origin(request):
+    async def review(self, request: Request) -> Response:
+        """Record a human review from the queue's form."""
+        if not _same_origin(request, hosted=self._hosted):
             return PlainTextResponse("Cross-origin request refused.", status_code=403)
         form = await request.form()
         decision = form.get("decision")
@@ -70,32 +71,53 @@ def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) 
             source="human",
         )
         try:
-            await run_in_threadpool(record_review, review_request)
+            await run_in_threadpool(self._record, review_request)
         except (InvalidInputError, NotFoundError, NotInitializedError) as error:
             return _back({"error": str(error)})
         return _back({"reviewed": str(review_request.entry_id)})
 
+    def _load(self) -> DashboardData:
+        with self._connection() as conn:
+            return dashboard(conn)
+
+    def _record(self, request: ReviewRequest) -> None:
+        with self._connection() as conn:
+            reviews.review(conn, request)
+
+
+def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) -> Starlette:
+    """Build the app. `connection` opens a database connection per request.
+
+    Locally: the dashboard, open on 127.0.0.1. Hosted: the hook API plus the dashboard for
+    admin keys only (decision 0018).
+    """
+    pages = Dashboard(connection, hosted=hosted)
+    overview: Endpoint = pages.overview
+    review: Endpoint = pages.review
     if hosted:
-        return Starlette(routes=hook_routes(connection))
-    return Starlette(
-        routes=[
-            Route("/", overview),
-            Route("/entries/{entry_id:uuid}/review", review, methods=["POST"]),
-        ]
-    )
+        overview, review = admin_only(overview, connection), admin_only(review, connection)
+    routes = [
+        Route("/", overview),
+        Route("/entries/{entry_id:uuid}/review", review, methods=["POST"]),
+    ]
+    return Starlette(routes=[*hook_routes(connection), *routes] if hosted else routes)
 
 
 def _back(params: dict[str, str]) -> Response:
     return RedirectResponse(f"/?{urlencode(params)}", status_code=303)
 
 
-def _same_local_origin(request: Request) -> bool:
-    """Refuse cross-site form posts (CSRF) and non-local Host headers (DNS rebinding).
+def _same_origin(request: Request, *, hosted: bool) -> bool:
+    """Refuse cross-site form posts (CSRF): Origin must be this dashboard's own origin.
 
-    Browsers send Origin on POST; it must be this dashboard's own localhost origin.
+    Browsers send Origin on POST, and send stored Basic credentials cross-site too, so the
+    hosted dashboard needs this as much as the local one. Locally the Host must also be
+    localhost (DNS rebinding). Hosted, the scheme comes from the proxy (`--proxy-headers`).
     """
     host = request.headers.get("host", "")
     origin = request.headers.get("origin")
+    if hosted:
+        return origin == f"{request.url.scheme}://{host}"
     return host.split(":")[0] in LOCAL_HOSTNAMES and origin == f"http://{host}"
 
 
@@ -147,4 +169,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     host: str = args.host
     with serving_hosted():
-        uvicorn.run(build_app(hosted=True), host=host, port=port)
+        # Behind Caddy: trust its X-Forwarded-Proto so the CSRF check sees https.
+        uvicorn.run(
+            build_app(hosted=True),
+            host=host,
+            port=port,
+            proxy_headers=True,
+            forwarded_allow_ips="*",
+        )

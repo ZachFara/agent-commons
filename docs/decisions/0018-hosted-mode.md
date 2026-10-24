@@ -19,3 +19,12 @@ Decision:
 
 Consequences: the same code serves both modes; identity comes from the config file locally
 and from the key when hosted.
+
+Amendments (2026-10-25, T27c-d):
+- Hosted hooks post to `/api/hooks/*` on the web app (`commons-dashboard --hosted`), not to the
+  MCP server, so only `web` imports Starlette. Shapes are validated strictly (derived data only).
+- The hosted dashboard uses HTTP Basic with an admin key as the password; review POSTs still
+  require a same-origin `Origin` (browsers send Basic credentials cross-site).
+- No daily job: SessionStart re-ranks when snapshots are over a day old, in both modes.
+- `compose.hosted.yml` lives in `db/` with the local compose file; the image is
+  `server/Dockerfile`. Verified end to end with `DOMAIN=localhost`.

@@ -21,3 +21,9 @@ The server connects with `COMMONS_DATABASE_URL`, default
 Schema is created by `commons migrate`, not by init scripts, so local and hosted databases are
 built the same way. Data lives in the `agent-commons_pgdata` volume;
 `docker compose down -v` deletes it.
+
+## Hosted mode
+
+`compose.hosted.yml` runs a group server: Postgres, `commons migrate`, `commons-mcp --http`,
+`commons-dashboard --hosted`, and Caddy (`Caddyfile`) for HTTPS on `$DOMAIN`. The image is built
+from `server/Dockerfile`. See INSTALL.md, "Hosting".

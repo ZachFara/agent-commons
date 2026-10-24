@@ -194,7 +194,7 @@ INSTALL.md is written for an agent and lists the exact steps:
 
 The same steps are packaged as a Claude Code plugin (`.claude-plugin/`) so users on the marketplace path can run `claude plugin install agent-commons` instead. Codex and Cursor users get a generic MCP config block in the README.
 
-Hosted mode for a group: one person runs `docker compose -f compose.hosted.yml up -d` on a VPS, runs `commons admin create-key <pseudonym>`, and sends the URL and key. The friend pastes the one-line install message with the URL and key appended.
+Hosted mode for a group: one person runs `docker compose -f db/compose.hosted.yml up -d` on a VPS (INSTALL.md, "Hosting"), runs `commons admin create-key <pseudonym>`, and sends the URL and key. The friend pastes the one-line install message with the URL and key appended.
 
 ## 10. Build phases
 

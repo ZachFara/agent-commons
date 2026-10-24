@@ -1,0 +1,6 @@
+# Only what the image needs; everything else stays out of the build context.
+**
+!pyproject.toml
+!uv.lock
+!server/pyproject.toml
+!server/src/**
