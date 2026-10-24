@@ -1,6 +1,6 @@
-output "server_url" {
-  description = "Members connect to <server_url>/mcp; admins open <server_url>/."
-  value       = google_cloud_run_v2_service.server.uri
+output "urls" {
+  description = "Per environment: members connect to <url>/mcp; admins open <url>/."
+  value       = { for env, service in google_cloud_run_v2_service.server : env => service.uri }
 }
 
 output "image_repository" {

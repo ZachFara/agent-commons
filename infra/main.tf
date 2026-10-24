@@ -1,5 +1,4 @@
 locals {
-  service_name = "agent-commons"
   apis = [
     "artifactregistry.googleapis.com",
     "iamcredentials.googleapis.com",
@@ -19,7 +18,7 @@ resource "google_artifact_registry_repository" "images" {
   repository_id = "agent-commons"
   location      = var.region
   format        = "DOCKER"
-  description   = "Agent Commons server images"
+  description   = "Agent Commons server images (shared by staging and production)"
 
   # Stay inside the 0.5 GB free storage: images are ~150 MB, so keep the 3 newest.
   cleanup_policies {
@@ -40,29 +39,32 @@ resource "google_artifact_registry_repository" "images" {
 }
 
 resource "google_service_account" "server" {
-  account_id   = "agent-commons-server"
-  display_name = "Agent Commons server (Cloud Run)"
+  for_each     = local.environments
+  account_id   = "agent-commons-${each.key}"
+  display_name = "Agent Commons server (${each.key})"
 }
 
 resource "google_secret_manager_secret_iam_member" "server_reads_database_url" {
-  secret_id = google_secret_manager_secret.database_url.id
+  for_each  = local.environments
+  secret_id = google_secret_manager_secret.database_url[each.key].id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.server.email}"
+  member    = "serviceAccount:${google_service_account.server[each.key].email}"
 }
 
 resource "google_cloud_run_v2_service" "server" {
-  name                = local.service_name
+  for_each            = local.environments
+  name                = each.value.service_name
   location            = var.region
   ingress             = "INGRESS_TRAFFIC_ALL"
   deletion_protection = false
 
   template {
-    service_account                  = google_service_account.server.email
+    service_account                  = google_service_account.server[each.key].email
     max_instance_request_concurrency = 40
 
     scaling {
       min_instance_count = 0 # scale to zero: free when idle
-      max_instance_count = var.max_instances
+      max_instance_count = each.value.max_instances
     }
 
     containers {
@@ -82,7 +84,7 @@ resource "google_cloud_run_v2_service" "server" {
         name = "COMMONS_DATABASE_URL"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.database_url.secret_id
+            secret  = google_secret_manager_secret.database_url[each.key].secret_id
             version = "latest"
           }
         }
@@ -102,9 +104,10 @@ resource "google_cloud_run_v2_service" "server" {
   ]
 }
 
-# Public endpoint: the app authenticates every request itself (API keys, admin Basic auth).
+# Public endpoints: the app authenticates every request itself (API keys, admin Basic auth).
 resource "google_cloud_run_v2_service_iam_member" "public" {
-  name     = google_cloud_run_v2_service.server.name
+  for_each = local.environments
+  name     = google_cloud_run_v2_service.server[each.key].name
   location = var.region
   role     = "roles/run.invoker"
   member   = "allUsers"

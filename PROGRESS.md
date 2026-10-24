@@ -73,6 +73,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | T30 | done | One hosted process: `/mcp`, hook API, dashboard in a single ASGI app with stateless HTTP (Cloud Run gives one URL per service) | In-process tests over the combined app; compose updated |
 | T31 | done | Terraform in `infra/` for Neon + Cloud Run + Artifact Registry + Secret Manager (decision record), GitHub Actions deploy, cost estimate | `terraform validate` passes; docs give the exact apply steps |
 | T32 | done | Friend onboarding: `uv tool install` from GitHub, hooks call the installed `commons` directly, `commons join`, `commons admin invite` prints a paste-ready message | Tests for join/invite; a fresh tool install joins a local hosted server |
+| T33 | doing | Staging and production (decision 0022): import the Neon project, staging branch, per-environment Cloud Run services and secrets, build → staging → approved production pipeline; apply with the owner | Both URLs answer `/healthz`; a friend can join production; staging redeploys on merge |
 
 ### DESIGN Phase 3 (after a month of data)
 
@@ -98,7 +99,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Owner: apply infra/ (infra/README.md), then `commons admin invite` your friend.
+1. T33: apply infra/ with the owner, then `commons admin invite` the friend on production.
 2. Next: DESIGN Phase 3 after a month of data (DESIGN §10).
 
 ## Session log
