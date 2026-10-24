@@ -40,6 +40,7 @@ TABLES = {
         "created_by_model",
         "privacy_mode",
         "trace_id",
+        "task_id",
         "search_vector",
     },
     "reviews": {"entry_id", "reviewed_by", "decision", "reason", "source"},

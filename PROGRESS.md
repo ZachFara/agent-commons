@@ -30,7 +30,7 @@ PROGRESS.md updated.
 | T05 | done | Check `cq-schema` field names and record the mapping in a decision record (prerequisite for T06) | `docs/decisions/` has the cq field mapping; any DESIGN.md field that collides with a cq name is listed as a proposed rename |
 | T06 | done | Migration 0001: all tables and enums from DESIGN.md §3 (including `reviews` and `entries.human_reviewed`, decision 0005), generated `search_vector` + GIN index | Test introspects every table, column, and enum after `migrate` |
 | T07 | done | `commons init`: pseudonym (refuse email-like), privacy default; create or reuse the reporter row; write the local identity config the MCP server reads (record where in a decision) | CLI tests via `main`: init creates a reporter and config; re-running with the same pseudonym reuses it; email-like pseudonym exits non-zero with a clear message |
-| T08 | todo | MCP server + `propose`: FastMCP stdio, `commons-mcp` script, structured errors `{"error": {"code", "message"}}`, reporter from local config, model from optional `model` arg else `unknown` (decision 0009). Domain types and validation (environment needs versions, domains 1-16) come in with it. Redaction report empty until T21 | In-process FastMCP client test: propose returns entry id, status pending, redaction report; invalid input returns a structured error; row readable in DB |
+| T08 | done | MCP server + `propose`: FastMCP stdio, `commons-mcp` script, structured errors `{"error": {"code", "message"}}`, reporter from local config, model from optional `model` arg else `unknown` (decision 0009). Domain types and validation (environment needs versions, domains 1-16) come in with it. Redaction report empty until T21 | In-process FastMCP client test: propose returns entry id, status pending, redaction report; invalid input returns a structured error; row readable in DB |
 | T09 | todo | `search` tool: full-text over approved entries, rank by recency (no snapshots yet), one retrievals row per result with rank and score, results under `data` with the untrusted note, provenance string incl. "unreviewed" | Tests: relevant entry first; pending/rejected never returned; retrievals rows written; payload shape |
 | T10 | todo | `report` tool: self-report path, agent_assessment stored, outcome `unknown` unless given, merged into the retrieval's single outcome row | Tests: report after search creates an outcome; second report updates it; report for an entry not retrieved in that task is a structured error |
 | T11 | todo | Reviews (decision 0005): `approve`/`reject`/`pending` tools (source agent) and `commons review <id> approve\|reject [--reason]` (source human); status follows latest human review, else latest agent review | Tests: agent review sets status but not human_reviewed; human overrides agent; multiple reviewers kept; pending lists pending or unreviewed |
@@ -89,7 +89,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T08.
+1. Next session: T09.
 2. Owner, when convenient: open questions 1, 3, 5.
 
 ## Session log
@@ -114,3 +114,7 @@ being enough; whether anyone uses full_trace.
   model identification.
 - 2026-10-24: T07 `commons init` (decision 0010). Conventions added to AGENTS.md: Literal
   types for DB enums, `store.connection.Connection` above store, `InvalidInputError`.
+- 2026-10-24: T08 MCP server + `propose`, verified over real stdio with `commons-mcp`.
+  Owner-approved: `entries.task_id` (migration 0002), mcp/ exempt from max-args (decision 0011).
+  Environment rule: language/tool must contain a version, every library pinned, at least one
+  of the three present. Middleware overrides `__call__` (not `on_call_tool`) so vulture sees it.

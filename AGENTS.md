@@ -66,6 +66,9 @@ Database tests use the `db` fixture in `server/tests/conftest.py`: a throwaway d
 test session, a rolled-back transaction per test. Point it elsewhere with
 `COMMONS_TEST_DATABASE_URL`. Never mock the database.
 
+MCP tool tests use the `server` and `reporter` fixtures and `mcp_client.call(server, tool,
+args)`, which returns the tool's JSON or its structured error.
+
 Schema changes are new files in `server/src/commons/store/migrations/NNNN_name.sql`, applied
 by `uv run commons migrate`. Never edit a migration that has been merged.
 

@@ -47,6 +47,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "server/tests/**" = ["S101", "D", "PLR2004"]
 "tools/**" = ["S603", "S607", "T201"]
+# MCP tool signatures are the external API schema; flat parameters per DESIGN.md (decision 0011).
+"server/src/commons/mcp/**" = ["PLR0913"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 8

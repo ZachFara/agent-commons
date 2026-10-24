@@ -1,12 +1,16 @@
 """Literal types in `domain` mirror Postgres enums; these tests keep them in sync."""
 
+from typing import get_args
+
 import psycopg
 from psycopg import sql
 
+from commons.domain.entries import EntryStatus
 from commons.domain.reporters import PRIVACY_DEFAULTS
 
 MIRRORS: dict[str, tuple[str, ...]] = {
     "privacy_default": PRIVACY_DEFAULTS,
+    "entry_status": get_args(EntryStatus),
 }
 
 
