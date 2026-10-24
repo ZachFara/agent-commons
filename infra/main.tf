@@ -1,0 +1,111 @@
+locals {
+  service_name = "agent-commons"
+  apis = [
+    "artifactregistry.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "run.googleapis.com",
+    "secretmanager.googleapis.com",
+    "sts.googleapis.com",
+  ]
+}
+
+resource "google_project_service" "apis" {
+  for_each           = toset(local.apis)
+  service            = each.value
+  disable_on_destroy = false
+}
+
+resource "google_artifact_registry_repository" "images" {
+  repository_id = "agent-commons"
+  location      = var.region
+  format        = "DOCKER"
+  description   = "Agent Commons server images"
+
+  # Stay inside the 0.5 GB free storage: images are ~150 MB, so keep the 3 newest.
+  cleanup_policies {
+    id     = "keep-recent"
+    action = "KEEP"
+    most_recent_versions {
+      keep_count = 3
+    }
+  }
+  cleanup_policies {
+    id     = "delete-old"
+    action = "DELETE"
+    condition {
+      older_than = "604800s"
+    }
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_service_account" "server" {
+  account_id   = "agent-commons-server"
+  display_name = "Agent Commons server (Cloud Run)"
+}
+
+resource "google_secret_manager_secret_iam_member" "server_reads_database_url" {
+  secret_id = google_secret_manager_secret.database_url.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.server.email}"
+}
+
+resource "google_cloud_run_v2_service" "server" {
+  name                = local.service_name
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = false
+
+  template {
+    service_account                  = google_service_account.server.email
+    max_instance_request_concurrency = 40
+
+    scaling {
+      min_instance_count = 0 # scale to zero: free when idle
+      max_instance_count = var.max_instances
+    }
+
+    containers {
+      image = var.image
+      ports {
+        container_port = 8080
+      }
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+        cpu_idle          = true # request-based billing, the free-tier mode
+        startup_cpu_boost = true
+      }
+      env {
+        name = "COMMONS_DATABASE_URL"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.database_url.secret_id
+            version = "latest"
+          }
+        }
+      }
+    }
+  }
+
+  # GitHub Actions deploys new images; Terraform owns everything else.
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image, client, client_version]
+  }
+
+  depends_on = [
+    google_project_service.apis,
+    google_secret_manager_secret_version.database_url,
+    google_secret_manager_secret_iam_member.server_reads_database_url,
+  ]
+}
+
+# Public endpoint: the app authenticates every request itself (API keys, admin Basic auth).
+resource "google_cloud_run_v2_service_iam_member" "public" {
+  name     = google_cloud_run_v2_service.server.name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}

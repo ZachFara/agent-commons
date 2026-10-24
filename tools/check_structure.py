@@ -16,6 +16,7 @@ ALLOWED_DIRS = frozenset(
         "client",
         "db",
         "docs",
+        "infra",
         "server",
         "tools",
     }

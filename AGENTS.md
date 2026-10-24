@@ -45,6 +45,7 @@ AGENTS.md  CLAUDE.md  DESIGN.md  PROGRESS.md  Makefile  pyproject.toml  uv.lock
 client/              Claude Code hooks (Phase 2)
 db/                  docker compose, Postgres config
 docs/decisions/      decision records (NNNN-title.md)
+infra/               Terraform for Neon + Cloud Run (decision 0020)
 server/src/commons/  the package (layers above)
 server/tests/        tests
 tools/               repo tooling: check.py, check_structure.py, check_commit_msg.py
@@ -65,6 +66,7 @@ uv run pytest server/tests/test_smoke.py   # run one test file
 uv run commons-dashboard                   # admin dashboard on http://127.0.0.1:8765
 uv run python tools/demo_data.py           # separate commons_demo DB with fake activity
 uv run commons doctor                      # check this machine's setup
+make infra-check                           # validate infra/ (Terraform via Docker)
 uv run commons-server --migrate            # hosted mode: MCP, hooks API, dashboard on $PORT
 ```
 

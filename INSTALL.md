@@ -134,8 +134,9 @@ The key identifies the user on the server; their privacy mode is set there by th
 
 ## Hosting
 
-For the person running a server for a group, on a machine with Docker and a DNS name pointing
-at it (ports 80 and 443 open).
+For the person running a server for a group. The free managed route (Neon + Google Cloud Run,
+set up with Terraform) is in [infra/README.md](infra/README.md). The steps below are for your own
+machine with Docker and a DNS name pointing at it (ports 80 and 443 open).
 
 1. Clone the repository and create `db/.env` (it is gitignored):
 

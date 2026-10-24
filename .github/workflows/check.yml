@@ -31,3 +31,18 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run python tools/check.py
+
+  # Terraform isn't a Python dev dependency, so infra/ is validated here (decision 0020).
+  infra:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate

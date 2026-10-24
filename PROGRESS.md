@@ -71,7 +71,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | T28 | done | Dashboard redesign: navigation; overview with charts (activity over time, outcome mix, self-report accuracy); review queue; entries list with search/filter and an entry page (content, provenance, score history, retrievals, outcomes, reviews); tasks; reporters and models. Checked in a real browser | Page tests for every route; screenshots reviewed in light and dark |
 | T29 | done | CLI utilities: `commons doctor` (config, DB, migrations, hooks, server), `commons search` (preview, no retrieval logged), `commons show <id>`, `commons-dashboard --open` | CLI tests per command |
 | T30 | done | One hosted process: `/mcp`, hook API, dashboard in a single ASGI app with stateless HTTP (Cloud Run gives one URL per service) | In-process tests over the combined app; compose updated |
-| T31 | todo | Terraform in `infra/` for Neon + Cloud Run + Artifact Registry + Secret Manager (decision record), GitHub Actions deploy, cost estimate | `terraform validate` passes; docs give the exact apply steps |
+| T31 | done | Terraform in `infra/` for Neon + Cloud Run + Artifact Registry + Secret Manager (decision record), GitHub Actions deploy, cost estimate | `terraform validate` passes; docs give the exact apply steps |
 | T32 | todo | Friend onboarding: `uv tool install` from GitHub, hooks call the installed `commons` directly, `commons join`, `commons admin invite` prints a paste-ready message | Tests for join/invite; a fresh tool install joins a local hosted server |
 
 ### DESIGN Phase 3 (after a month of data)
@@ -98,7 +98,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. Next session: T31.
+1. Next session: T32.
 2. After T28-T32: DESIGN Phase 3 waits for a month of data (DESIGN §10).
 
 ## Session log
@@ -226,3 +226,9 @@ being enough; whether anyone uses full_trace.
 - 2026-10-25: T30 `commons-server` (decision 0019): MCP (stateless HTTP), hook API, dashboard,
   /healthz in one app; `--migrate` on start; image CMD; compose is Postgres + server + Caddy.
   Ran the stack locally over HTTPS: all routes behave.
+- 2026-10-25: T31 Terraform in `infra/` (decision 0020): Neon project, Cloud Run service (scale to
+  zero, max 2 instances, secret-backed DB URL, public with app-level auth), Artifact Registry
+  (keeps 3 images to stay in the free 0.5 GB), Workload Identity Federation for GitHub Actions
+  (`deploy.yml`, main only), optional $5 budget alert. Validated with the official Terraform
+  image against google v6.50.0 and neon v0.18.0; CI job `infra`. Not applied: needs the owner's
+  accounts. infra/README.md has the steps and cost table.
