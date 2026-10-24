@@ -8,10 +8,14 @@ import hashlib
 import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
+import httpx2
+
+from commons.domain.errors import NotInitializedError, NotPermittedError
 from commons.domain.observations import ToolUse, is_test_command
 from commons.domain.outcomes import Usage
 from commons.domain.usage import compute_used
@@ -84,6 +88,83 @@ class LocalBackend:
         """Record the turn's observations."""
         with self._connection() as conn:
             return hooks.finish_turn(conn, session_id, model, used)
+
+
+class RemoteBackend:
+    """Post derived observations to a hosted server's hook API (decision 0018)."""
+
+    def __init__(self, client: httpx2.Client) -> None:
+        """Use `client`, already pointed at the server with the API key."""
+        self._client = client
+
+    def _post(self, step: str, body: dict[str, Any]) -> dict[str, Any]:
+        response = self._client.post(f"/api/hooks/{step}", json=body)
+        if response.status_code == httpx2.codes.UNAUTHORIZED:
+            msg = "The hosted server rejected the API key. Run `commons connect` again."
+            raise NotInitializedError(msg)
+        if response.status_code == httpx2.codes.FORBIDDEN:
+            raise NotPermittedError(response.json()["error"]["message"])
+        response.raise_for_status()
+        result: dict[str, Any] = response.json()
+        return result
+
+    def ping(self) -> None:
+        """Check the server accepts the key."""
+        self._post("ping", {})
+
+    def session_start(self, session_id: str, model: str | None) -> UUID:
+        """Create or resume the session's task."""
+        return UUID(
+            self._post("session-start", {"session_id": session_id, "model": model})["task_id"]
+        )
+
+    def tool_use(
+        self,
+        session_id: str,
+        test_run: dict[str, object] | None,
+        file_change: dict[str, object] | None,
+    ) -> None:
+        """Store one tool call's derived observations."""
+        body = {"session_id": session_id, "test_run": test_run, "file_change": file_change}
+        self._post("tool-use", body)
+
+    def retrievals(self, session_id: str) -> list[TaskRetrieval]:
+        """Entries retrieved in the session's task."""
+        items = self._post("retrievals", {"session_id": session_id})["retrievals"]
+        return [
+            TaskRetrieval(
+                retrieval_id=UUID(item["retrieval_id"]),
+                entry_id=UUID(item["entry_id"]),
+                fix=item["fix"],
+                retrieved_at=datetime.fromisoformat(item["retrieved_at"]),
+                reported=item["reported"],
+            )
+            for item in items
+        ]
+
+    def stop(
+        self, session_id: str, model: str | None, used: dict[UUID, Usage | None]
+    ) -> StopResult | None:
+        """Record the turn's observations."""
+        body = {
+            "session_id": session_id,
+            "model": model,
+            "used": {str(retrieval): value for retrieval, value in used.items()},
+        }
+        result = self._post("stop", body)
+        if result["task_id"] is None:
+            return None
+        return StopResult(UUID(result["task_id"]), [UUID(e) for e in result["unreported"]])
+
+
+def remote_client(url: str, key: str) -> httpx2.Client:
+    """Return an HTTP client for a hosted server, authenticated with the API key."""
+    return httpx2.Client(
+        base_url=url, headers={"authorization": f"Bearer {key}"}, timeout=REMOTE_TIMEOUT
+    )
+
+
+REMOTE_TIMEOUT = 10.0
 
 
 def on_session_start(backend: HookBackend, session_id: str, model: str | None) -> UUID:

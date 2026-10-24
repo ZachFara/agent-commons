@@ -20,7 +20,9 @@ from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializ
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
 from commons.service import reviews
 from commons.service.dashboard import dashboard
+from commons.service.identity import serving_hosted
 from commons.store.connection import Connection, connect
+from commons.web.hooks_api import hook_routes
 
 ConnectionFactory = Callable[[], AbstractContextManager[Connection]]
 
@@ -30,8 +32,11 @@ DEFAULT_PORT = 8765
 LOCAL_HOSTNAMES = frozenset({"127.0.0.1", "localhost"})
 
 
-def build_app(connection: ConnectionFactory = connect) -> Starlette:
-    """Build the dashboard app. `connection` opens a database connection per request."""
+def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) -> Starlette:
+    """Build the app. `connection` opens a database connection per request.
+
+    Locally: the dashboard. Hosted: the hook API (decision 0018).
+    """
 
     def overview(request: Request) -> Response:
         with connection() as conn:
@@ -70,6 +75,8 @@ def build_app(connection: ConnectionFactory = connect) -> Starlette:
             return _back({"error": str(error)})
         return _back({"reviewed": str(review_request.entry_id)})
 
+    if hosted:
+        return Starlette(routes=hook_routes(connection))
     return Starlette(
         routes=[
             Route("/", overview),
@@ -124,9 +131,20 @@ def _retrieval_row(retrieval: RecentRetrieval) -> dict[str, Any]:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Serve the dashboard on localhost. There is no auth, so it never binds elsewhere."""
-    parser = argparse.ArgumentParser(prog="commons-dashboard", description=__doc__)
+    """Serve the dashboard on localhost, or the hosted app (`--hosted`) on any address.
+
+    The local dashboard has no auth, so it never binds anywhere but 127.0.0.1. The hosted app
+    authenticates every request with an API key.
+    """
+    parser = argparse.ArgumentParser(prog="commons-dashboard", description=main.__doc__)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--hosted", action="store_true", help="Serve hosted mode.")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind address (hosted mode only).")
     args = parser.parse_args(argv)
     port: int = args.port
-    uvicorn.run(build_app(), host="127.0.0.1", port=port)
+    if not args.hosted:
+        uvicorn.run(build_app(), host="127.0.0.1", port=port)
+        return
+    host: str = args.host
+    with serving_hosted():
+        uvicorn.run(build_app(hosted=True), host=host, port=port)

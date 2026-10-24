@@ -81,10 +81,33 @@ def read_config() -> dict[str, object]:
     except (FileNotFoundError, json.JSONDecodeError) as error:
         msg = f"No reporter identity at {path}. Run `commons init --pseudonym <handle>`."
         raise NotInitializedError(msg) from error
-    if not isinstance(config, dict) or not isinstance(config.get("pseudonym"), str):
+    if not isinstance(config, dict):
         msg = f"No reporter identity at {path}. Run `commons init --pseudonym <handle>`."
         raise NotInitializedError(msg)
     return config
+
+
+def hosted_server() -> tuple[str, str] | None:
+    """Return (server URL, API key) if `commons connect` set this machine up for hosted mode."""
+    config = read_config()
+    server, key = config.get("server"), config.get("key")
+    return (server, key) if isinstance(server, str) and isinstance(key, str) else None
+
+
+def save_server(url: str, key: str) -> Path:
+    """Point this machine's hooks at a hosted server, keeping any local identity."""
+    path = config_path()
+    try:
+        config = read_config()
+    except NotInitializedError:
+        config = {}
+    config.update({"server": url.rstrip("/"), "key": key})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(descriptor, 0o600)  # the mode above only applies to new files; this holds a key
+    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        file.write(json.dumps(config, indent=2) + "\n")
+    return path
 
 
 def configured_test_runners() -> list[str]:
@@ -100,7 +123,10 @@ def current_reporter(conn: Connection) -> UUID:
     if _HOSTED.get():
         msg = "This server needs an API key: send `Authorization: Bearer <key>`."
         raise NotInitializedError(msg)
-    pseudonym = str(read_config()["pseudonym"])
+    pseudonym = read_config().get("pseudonym")
+    if not isinstance(pseudonym, str):
+        msg = f"No local reporter identity in {config_path()}. Run `commons init`."
+        raise NotInitializedError(msg)
     reporter_id = find_reporter(conn, pseudonym)
     if reporter_id is None:
         msg = f"Reporter {pseudonym!r} is not in this database. Run `commons init` again."

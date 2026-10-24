@@ -12,7 +12,8 @@ from typing import Any, TextIO
 from commons.domain.errors import NotInitializedError
 from commons.domain.observations import ToolUse, exit_code_from_error
 from commons.service import hook_client
-from commons.service.hook_client import HookBackend, LocalBackend
+from commons.service.hook_client import HookBackend, LocalBackend, RemoteBackend, remote_client
+from commons.service.identity import hosted_server
 from commons.service.local_state import state_dir
 from commons.store.connection import connect
 
@@ -51,7 +52,10 @@ def _observe(use: ToolUse) -> None:
 
 
 def _backend() -> HookBackend:
-    return LocalBackend(connect)
+    server = hosted_server()
+    if server is None:
+        return LocalBackend(connect)
+    return RemoteBackend(remote_client(*server))
 
 
 def _tool_use(payload: Payload, *, failed: bool) -> ToolUse:
