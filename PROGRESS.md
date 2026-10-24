@@ -49,7 +49,7 @@ command and goes down through the layers.
 
 ### DESIGN Phase 2 (split into session-sized tasks when Phase 1 is done)
 
-- T21 Secret scanning and redaction in `privacy`, wired into propose and every write.
+- T21 done: secret scanning and redaction in `privacy`, wired into propose and every write.
 - T22 SessionStart hook (all hooks call `commons hook <event>`, decision 0006): mint task_id, set privacy mode.
 - T23 PostToolUse hooks: test-runner capture (Bash), file hashes (Edit/Write).
 - T24 Stop hook: `used` from diff matching, evidence assembly, outcome write, assessment prompt.
@@ -67,9 +67,7 @@ command and goes down through the layers.
 
 Raise new ones here. Do not resolve a question by guessing in code.
 
-1. **Secret scanning timing.** DESIGN §4 says propose scans before writing, but §10 puts secret
-   scanning in Phase 2. Plan: T08 returns an empty redaction report and T21 adds scanning. Fine
-   for a single local user; must land before hosted mode.
+None right now.
 
 Resolved 2026-10-24 by owner: review model (decision 0005), hook location (decision 0006),
 seed entries come from real use rather than a manual batch (T18), admin dashboard added (T19-T20),
@@ -148,3 +146,8 @@ being enough; whether anyone uses full_trace.
 - 2026-10-25: agent instructions moved from `client/CLAUDE.snippet.md` into the MCP server
   (decision 0015): cross-cutting rules in server instructions, per-tool guidance in tool
   descriptions, both under Claude Code's ~2,048-char silent truncation (tested).
+- 2026-10-25: T21 secret scanning (`privacy/secrets.py`): keys/tokens for common providers, JWTs,
+  bearer tokens, `*_KEY=`/`password:` assignments, credentialed URLs, private key blocks, emails,
+  home-dir usernames. Runs on proposals (report stored in `entries.redaction_report`,
+  migration 0003, shown in the dashboard queue), search queries as logged, reports, review
+  reasons.

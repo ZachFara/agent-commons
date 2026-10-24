@@ -88,6 +88,7 @@
       {% if e.repro %}<dt>repro</dt><dd class="mono">{{ e.repro }}</dd>{% endif %}
       <dt>environment</dt><dd class="mono">{{ e.environment | tojson }}</dd>
       <dt>domains</dt><dd>{{ e.domains | join(", ") }}</dd>
+      <dt>redacted</dt><dd>{% for f in e.redaction_report.findings %}{{ f.count }} {{ f.kind }} in {{ f.field }}{{ "" if loop.last else ", " }}{% else %}{{ "nothing" if e.redaction_report.scanned else "not scanned (proposed before secret scanning)" }}{% endfor %}</dd>
     </dl>
     <form class="review" method="post" action="/entries/{{ e.entry_id }}/review">
       <input name="reason" placeholder="Reason (required to reject)" aria-label="Reason">

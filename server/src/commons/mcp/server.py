@@ -221,6 +221,7 @@ def _pending_json(entry: PendingEntry) -> dict[str, Any]:
         "domains": entry.domains,
         "proposed_by_model": entry.proposed_by_model,
         "agent_reviews": entry.agent_reviews,
+        "redaction_report": entry.redaction_report,
     }
 
 

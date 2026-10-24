@@ -41,6 +41,7 @@ TABLES = {
         "privacy_mode",
         "trace_id",
         "task_id",
+        "redaction_report",
         "search_vector",
     },
     "reviews": {"entry_id", "reviewed_by", "decision", "reason", "source"},

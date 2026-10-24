@@ -30,7 +30,7 @@ def test_propose_creates_pending_entry(server: FastMCP, db: psycopg.Connection) 
     result = call(server, "propose", arguments)
 
     assert result["status"] == "pending"
-    assert result["redaction_report"] == {"scanned": False, "findings": []}
+    assert result["redaction_report"] == {"scanned": True, "findings": []}
     row = db.execute(
         "SELECT e.symptom, e.domains, e.repro, e.task_id::text, e.human_reviewed, m.name "
         "FROM entries e JOIN models m ON m.id = e.created_by_model WHERE e.id = %s",
@@ -112,3 +112,35 @@ def test_unexpected_failures_hide_details(server: FastMCP, monkeypatch: pytest.M
     assert result == {
         "error": {"code": "internal", "message": "Unexpected server error; see server logs."}
     }
+
+
+def test_secrets_are_redacted_before_writing_and_reported(
+    server: FastMCP, db: psycopg.Connection
+) -> None:
+    token = "ghp_" + "x" * 36
+    arguments = proposal(
+        symptom="401 from GitHub API in /Users/jdoe/work/deploy.py",
+        fix=f"Rotate the token; the old one was {token}. Set GITHUB_TOKEN={token} in CI.",
+        environment={"language": "python 3.12", "tool": "gh 2.40", "user": "jane@example.com"},
+    )
+    result = call(server, "propose", arguments)
+
+    assert result["redaction_report"] == {
+        "scanned": True,
+        "findings": [
+            {"field": "environment", "kind": "email", "count": 1},
+            {"field": "fix", "kind": "github_token", "count": 2},
+            {"field": "symptom", "kind": "username_path", "count": 1},
+        ],
+    }
+    row = db.execute(
+        "SELECT symptom, fix, environment, redaction_report FROM entries WHERE id = %s",
+        (result["entry_id"],),
+    ).fetchone()
+    assert row is not None
+    symptom, fix, environment, stored_report = row
+    assert symptom == "401 from GitHub API in /Users/<user>/work/deploy.py"
+    assert token not in fix
+    assert fix.count("[REDACTED:github_token]") == 2
+    assert environment["user"] == "[REDACTED:email]"
+    assert stored_report == result["redaction_report"]
