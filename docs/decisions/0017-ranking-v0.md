@@ -24,3 +24,8 @@ Decision:
 
 Consequences: scores are reproducible from outcomes. Self-report accuracy feeds weights but
 never the success signal itself, as DESIGN §7 requires.
+
+Amendment (2026-10-25, T26): hooks observe only `tests_passed` / `tests_failed`, while agents
+often claim `error_resolved` or `user_accepted`. A claim therefore matches an observation when
+both are successes or both are not (per `SUCCESS_OUTCOMES`), not on the exact label; claims of
+`unknown` are skipped.

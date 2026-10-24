@@ -2,17 +2,31 @@
 
 from datetime import UTC, datetime, timedelta
 
+from commons.ranking.reliability import reliability
 from commons.ranking.score import score
 from commons.store.connection import Connection
-from commons.store.ranking import entry_stats, latest_snapshot_at, outcome_samples, write_snapshot
+from commons.store.ranking import (
+    entry_stats,
+    latest_snapshot_at,
+    outcome_samples,
+    reliability_pairs,
+    set_reliabilities,
+    write_snapshot,
+)
 
 STALE_AFTER = timedelta(hours=24)
 
 
 def rank(conn: Connection) -> int:
-    """Snapshot every approved entry's score and stats; return how many were written."""
+    """Recompute reporter reliability, then snapshot every approved entry's score and stats.
+
+    Returns how many snapshots were written. Reliability comes first because self-reported
+    outcomes are weighted by it.
+    """
     computed_at = datetime.now(UTC)
     with conn.transaction():
+        pairs = reliability_pairs(conn)
+        set_reliabilities(conn, {reporter: reliability(p) for reporter, p in pairs.items()})
         samples = outcome_samples(conn)
         stats = entry_stats(conn)
         for entry_id, retrievals_30d, used_rate in stats:
