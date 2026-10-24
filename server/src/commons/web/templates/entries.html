@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, pct, meter %}
+{% block title %}Entries{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Entries</h1><div class="sub">{{ entries | length }} shown{% if query or status_filter %}, filtered{% endif %}.</div></div>
+  <form class="filters" method="get" action="/entries">
+    <input type="search" name="q" value="{{ query or '' }}" placeholder="Search entries or a domain" aria-label="Search">
+    <select name="status" aria-label="Status"><option value="">Any status</option>
+      {% for s in ["approved", "pending", "rejected", "retired"] %}<option value="{{ s }}" {{ "selected" if s == status_filter }}>{{ s }}</option>{% endfor %}</select>
+    <select name="order" aria-label="Order">{% for value, label in [("score", "Best score"), ("used", "Most retrieved"), ("newest", "Newest")] %}<option value="{{ value }}" {{ "selected" if value == order }}>{{ label }}</option>{% endfor %}</select>
+    <button class="primary">Apply</button>
+  </form></header>
+<section class="card">{% if entries %}<div class="table-wrap"><table>
+  <thead><tr><th>Symptom</th><th>Status</th><th class="num">Score</th><th class="num">Retrievals 30d</th><th class="num">Used</th><th class="num">Success</th><th>Proposed</th></tr></thead><tbody>
+  {% for e in entries %}<tr>
+    <td><div class="clip"><a href="/entries/{{ e.id }}">{{ e.symptom }}</a></div><div class="muted">{{ e.domains | join(" · ") }}</div></td>
+    <td>{{ status(e.status, e.human_reviewed) }}</td>
+    <td class="num">{{ meter(e.score) }}</td>
+    <td class="num">{{ e.retrieval_count_30d if e.retrieval_count_30d is not none else "–" }}</td>
+    <td class="num">{{ pct(e.used_rate) }}</td><td class="num">{{ pct(e.success_rate) }}</td>
+    <td class="muted" style="white-space: nowrap">{{ e.created_at.strftime("%b %d") }} · {{ e.proposed_by }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">No entries match.</div>{% endif %}</section>
+{% endblock %}

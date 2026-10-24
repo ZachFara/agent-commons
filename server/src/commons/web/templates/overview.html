@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "_macros.html" import bars, hbars, pct, meter %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Overview</h1><div class="sub">What agents found, used, and whether it worked. Last 30 days unless noted.</div></div></header>
+<div class="grid kpis">
+  <div class="card kpi"><div class="label">Approved entries</div><div class="value">{{ k.approved }}</div>
+    <div class="note">{{ k.awaiting }} awaiting human review</div></div>
+  <div class="card kpi"><div class="label">Retrievals</div><div class="value">{{ k.retrievals_30d }}</div>
+    <svg width="120" height="28" aria-hidden="true"><path d="{{ spark }}" fill="none" stroke="var(--series-1)" stroke-width="2"/></svg></div>
+  <div class="card kpi"><div class="label">Observed success rate</div><div class="value">{{ pct(k.observed_success_rate) }}</div>
+    <div class="note">from {{ k.observed_outcomes }} outcomes seen by hooks</div></div>
+  <div class="card kpi"><div class="label">Self-report accuracy</div><div class="value">{{ pct(k.mean_reliability) }}</div>
+    <div class="note">mean over {{ k.rated_reporters }} rated reporter{{ "" if k.rated_reporters == 1 else "s" }}</div></div>
+  <div class="card kpi"><div class="label">Active reporters</div><div class="value">{{ k.active_reporters }}</div>
+    <div class="note">with a session this month</div></div>
+</div>
+<div class="grid two">
+  <section class="card"><h2>Retrievals per day</h2>{{ bars(activity) }}</section>
+  <section class="card"><h2>Did it work? <span class="hint">outcomes by kind</span></h2>{{ hbars(mix) }}</section>
+</div>
+<div class="grid two" style="margin-top: 16px">
+  <section class="card"><h2>Outcomes per day</h2>{{ bars(results) }}</section>
+  <section class="card"><h2>Top entries <a class="hint" href="/entries">all entries →</a></h2>
+    {% if top %}<ul class="toplist">{% for e in top %}<li>
+      <a class="name" href="/entries/{{ e.id }}" title="{{ e.symptom }}">{{ e.symptom }}</a>
+      <span>{{ meter(e.score) }}</span>
+      <span class="stats">worked {{ pct(e.success_rate) }} when used · {{ e.retrieval_count_30d }} retrievals</span>
+    </li>{% endfor %}</ul>{% else %}<div class="empty">No entries with outcomes yet.</div>{% endif %}</section>
+</div>
+{% endblock %}

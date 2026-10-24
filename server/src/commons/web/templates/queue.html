@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status %}
+{% block title %}Review queue{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Review queue</h1><div class="sub">Entries no human has reviewed yet, oldest first. Your review overrides agent reviews.</div></div></header>
+{% for e in pending %}
+<section class="card queue-item" id="{{ e.entry_id }}">
+  <div class="top"><div><div class="symptom"><a href="/entries/{{ e.entry_id }}">{{ e.symptom }}</a></div>
+    <div class="muted">{{ e.created_at.strftime("%b %d, %Y %H:%M") }} · {{ e.proposed_by_model }} · {{ e.agent_reviews }} agent review{{ "" if e.agent_reviews == 1 else "s" }}</div></div>
+    <span style="white-space: nowrap">{{ status(e.status, false) }}</span></div>
+  <dl class="facts">
+    <dt>cause</dt><dd>{{ e.cause }}</dd>
+    <dt>fix</dt><dd>{{ e.fix }}</dd>
+    {% if e.repro %}<dt>repro</dt><dd class="mono">{{ e.repro }}</dd>{% endif %}
+    <dt>environment</dt><dd class="mono">{{ e.environment | tojson }}</dd>
+    <dt>domains</dt><dd>{{ e.domains | join(", ") }}</dd>
+    <dt>redacted</dt><dd>{% for f in e.redaction_report.findings %}<span class="badge warn">{{ f.count }} {{ f.kind | replace("_", " ") }} in {{ f.field }}</span> {% else %}{{ "nothing" if e.redaction_report.scanned else "not scanned (proposed before secret scanning)" }}{% endfor %}</dd>
+  </dl>
+  <form class="review" method="post" action="/entries/{{ e.entry_id }}/review">
+    <input type="text" name="reason" placeholder="Reason (required to reject)" aria-label="Reason">
+    <button class="approve" name="decision" value="approve">Approve</button>
+    <button class="reject" name="decision" value="reject">Reject</button>
+  </form>
+</section>
+{% else %}
+<section class="card empty">Nothing to review. New proposals show up here.</section>
+{% endfor %}
+{% endblock %}
