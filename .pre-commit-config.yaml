@@ -1,0 +1,20 @@
+# Install with: make setup
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: no-commit-to-branch
+        args: [--branch, main]
+  - repo: local
+    hooks:
+      - id: check
+        name: tools/check.py (the one check command)
+        entry: uv run python tools/check.py
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: conventional-commit
+        name: conventional commit message
+        entry: uv run python tools/check_commit_msg.py
+        language: system
+        stages: [commit-msg]
