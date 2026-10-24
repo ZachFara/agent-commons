@@ -4,6 +4,10 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from commons.domain.errors import NotPermittedError
+from commons.service import hooks
+from commons.service.identity import acting_as
+from commons.store.reporters import upsert_reporter
 from hook_env import HookEnv
 
 
@@ -69,3 +73,23 @@ def test_bad_payloads_never_break_the_session(env: HookEnv, payload: str) -> Non
     assert env.run("session-start", payload) is None
     assert "session-start hook failed" in env.log()
     assert "Traceback" in env.log()
+
+
+def test_a_session_belongs_to_one_reporter(db: psycopg.Connection) -> None:
+    alice = upsert_reporter(db, "alice-session", "entry")
+    mallory = upsert_reporter(db, "mallory-session", "entry")
+    session = str(uuid.uuid4())
+    with acting_as(alice):
+        hooks.session_start(db, session, None)
+    with acting_as(mallory):
+        with pytest.raises(NotPermittedError):
+            hooks.session_start(db, session, None)
+        hooks.record_tool_use(db, session, {"command": "pytest", "exit_code": 0}, None)
+        assert hooks.retrievals_to_judge(db, session) == []
+        assert hooks.finish_turn(db, session, "m", {}) is None
+    events = db.execute(
+        "SELECT count(*) FROM task_events e JOIN tasks t ON t.id = e.task_id "
+        "WHERE t.session_id = %s",
+        (session,),
+    ).fetchone()
+    assert events == (0,)

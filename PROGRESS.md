@@ -61,7 +61,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | T26 | done | Reporter reliability in `commons rank` | Tests: matches/pairs, NULL under 5 pairs, used as self-report weight |
 | T27a | done (with T27b) | Hosted identity: `reporters.is_admin`, `commons admin create-key`, key hashing, reporter from bearer key | Tests: key shown once, hash stored, lookup, admin flag |
 | T27b | done | `commons-mcp --http` with bearer auth; `local` reporters refused (0014) | In-process HTTP tests: no key 401, bad key 401, good key acts as that reporter; local refused |
-| T27c | todo | Hosted hook endpoints; `commons hook` posts to the server when the config has a server URL and key | Tests against the app with a test client; spool stays local |
+| T27c | doing (c1 done) | Hosted hook endpoints; `commons hook` posts to the server when the config has a server URL and key | Tests against the app with a test client; spool stays local |
 | T27d | todo | Hosted dashboard behind admin key (HTTPS); `compose.hosted.yml` with Caddy; INSTALL hosted section | Tests: non-admin 403; compose config validates (`docker compose config`) |
 
 ### DESIGN Phase 3 (after a month of data)
@@ -186,3 +186,7 @@ being enough; whether anyone uses full_trace.
   (SHA-256 stored, shown once, rotation), `commons-mcp --http` with FastMCP `TokenVerifier`;
   hosted identity only from the key (`serving_hosted`), `local`-privacy reporters get
   `forbidden`. vulture now ignores `@override` methods (owner-approved, 0003 amended).
+- 2026-10-25: T27c part 1 (refactor): hook logic split into `service/hook_client.py` (runs on the
+  user's machine: spool, runner matching, transcript model, `used`) and `service/hooks.py` (store
+  side), joined by a `HookBackend` protocol with a `LocalBackend`. Spool keyed by a hash of the
+  session id (`$XDG_STATE_HOME/agent-commons/sessions/`). Tasks are scoped to their reporter.

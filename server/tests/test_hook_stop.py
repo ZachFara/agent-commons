@@ -136,7 +136,7 @@ def test_stop_for_an_unknown_session_does_nothing(session: Session) -> None:
 
 
 def test_session_start_prunes_old_spools(session: Session) -> None:
-    old = session.env.state_dir / "tasks" / "old.jsonl"
+    old = session.env.state_dir / "sessions" / "old.jsonl"
     old.parent.mkdir(parents=True, exist_ok=True)
     old.write_text("{}\n", encoding="utf-8")
     month_ago = 1_000_000_000
