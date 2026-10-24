@@ -95,7 +95,8 @@ uv run commons init --pseudonym <pseudonym> --privacy <mode>
 
 ## 7. Verify
 
-1. `uv run commons status` prints entry counts without errors.
+1. `uv run commons doctor` shows every check as ✓ (the MCP server line may say `!` until
+   Claude Code restarts). Fix anything marked ✗ as it says.
 2. Restart Claude Code (or start a new session) so it loads the MCP server, then check that
    `claude mcp list` shows `commons` as connected.
 3. In the new session, call the `search` tool with query

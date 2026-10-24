@@ -21,3 +21,9 @@ def search(conn: Connection, request: SearchRequest, model: str | None) -> list[
         logged = replace(request, query=scrub(request.query))
         record_retrievals(conn, logged, hits, reporter_id=reporter, model_id=model_row)
     return hits
+
+
+def preview(conn: Connection, request: SearchRequest) -> list[SearchHit]:
+    """Return what `search` would, without logging retrievals (for humans at the CLI)."""
+    validate_search(request)
+    return find_entries(conn, request)

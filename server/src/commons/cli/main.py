@@ -9,14 +9,22 @@ from typing import cast
 from uuid import UUID
 
 from commons.cli.hooks import HANDLERS, run_hook
-from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
+from commons.domain.errors import (
+    InvalidInputError,
+    NotFoundError,
+    NotInitializedError,
+    StoreUnavailableError,
+)
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
-from commons.service import keys, ranking, reviews, seeds
+from commons.domain.search import MAX_LIMIT, SearchRequest
+from commons.service import doctor, keys, ranking, reviews, seeds
+from commons.service import search as search_service
 from commons.service import status as status_service
 from commons.service.hook_client import RemoteBackend, remote_client
 from commons.service.hook_install import default_settings_path, install_hooks
 from commons.service.identity import init_reporter, save_server
+from commons.store import insights
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
 
@@ -142,6 +150,73 @@ def _connect(args: argparse.Namespace) -> int:
     return 0
 
 
+_MARKS = {"ok": "✓", "warn": "!", "fail": "✗"}
+
+
+def _doctor(_args: argparse.Namespace) -> int:
+    def ping(url: str, key: str) -> None:
+        with remote_client(url, key) as client:
+            RemoteBackend(client).ping()
+
+    checks = doctor.run_checks(connect, ping)
+    for check in checks:
+        sys.stdout.write(f"{_MARKS[check.status]} {check.name:<11} {check.detail}\n")
+    failed = sum(check.status == "fail" for check in checks)
+    sys.stdout.write("all good\n" if not failed else f"{failed} problem(s) to fix\n")
+    return 1 if failed else 0
+
+
+def _search_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("query", help="Error text or problem, as an agent would search it.")
+    parser.add_argument("--language", help="Filter by language, e.g. python.")
+    parser.add_argument("--limit", type=int, default=5, help=f"1-{MAX_LIMIT} results.")
+
+
+def _search(args: argparse.Namespace) -> int:
+    environment = {"language": args.language} if args.language else None
+    request = SearchRequest(args.query, UUID(int=0), environment, args.limit)
+    with connect() as conn:
+        hits = search_service.preview(conn, request)
+    for rank, hit in enumerate(hits, start=1):
+        sys.stdout.write(
+            f"{rank}. {hit.symptom}\n   fix: {hit.fix}\n   {hit.provenance()}"
+            f" · score {hit.score:.2f} · {hit.entry_id}\n"
+        )
+    sys.stdout.write(f"{len(hits)} result(s); preview only, no retrieval logged\n")
+    return 0
+
+
+def _show_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("entry_id", type=UUID)
+
+
+def _show(args: argparse.Namespace) -> int:
+    with connect() as conn:
+        entry = insights.entry(conn, args.entry_id)
+    if entry is None:
+        msg = f"No entry {args.entry_id}."
+        raise NotFoundError(msg)
+    reviewed = "human-reviewed" if entry["human_reviewed"] else "not human-reviewed"
+    score = "none yet" if entry["score"] is None else f"{entry['score']:.2f}"
+    lines = [
+        entry["symptom"],
+        f"  status:      {entry['status']} ({reviewed})",
+        (
+            f"  proposed:    {entry['created_at']:%Y-%m-%d} by {entry['proposed_by']}"
+            f" ({entry['model']})"
+        ),
+        f"  score:       {score}",
+        f"  cause:       {entry['cause']}",
+        f"  fix:         {entry['fix']}",
+        f"  environment: {entry['environment']}",
+        f"  domains:     {', '.join(entry['domains'])}",
+    ]
+    if entry["repro"]:
+        lines.insert(6, f"  repro:       {entry['repro']}")
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
 def _rank(_args: argparse.Namespace) -> int:
     with connect() as conn:
         count = ranking.rank(conn)
@@ -197,6 +272,9 @@ COMMANDS: dict[str, Command] = {
     "status": Command("Show store statistics.", _status),
     "connect": Command("Send hook observations to a hosted server.", _connect, _connect_arguments),
     "admin": Command("Hosted mode administration.", _admin, _admin_arguments),
+    "doctor": Command("Check this machine's setup and say what to fix.", _doctor),
+    "search": Command("Preview search results (no retrieval logged).", _search, _search_arguments),
+    "show": Command("Show one entry.", _show, _show_arguments),
     "rank": Command("Write ranking snapshots (runs daily on its own).", _rank),
     "hook": Command("Run a Claude Code hook (used by hooks.json).", _hook, _hook_arguments),
     "install-hooks": Command(
@@ -220,6 +298,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     name: str = args.command
     try:
         return COMMANDS[name].handler(args)
-    except (InvalidInputError, NotFoundError, NotInitializedError) as error:
+    except (
+        InvalidInputError,
+        NotFoundError,
+        NotInitializedError,
+        StoreUnavailableError,
+    ) as error:
         sys.stderr.write(f"error: {error}\n")
         return 1
