@@ -108,12 +108,21 @@ def wording_search(args: argparse.Namespace) -> int:
     return run_jobs(jobs, args)
 
 
+# Stable names for `--config`, so a re-run keeps meaning the same thing after the text changes.
+# Both map to wording names, which the ledger and `effects` count.
+ALIASES = {
+    "shipped": agent_text.SHIPPED,
+    "original": agent_text.wording_name(dict.fromkeys(agent_text.SURFACES, 0)),
+}
+
+
 def plan_configs(named: list[str] | None, count: int, seed: int) -> list[str]:
     """Return the named configs to repeat, or the shipped text plus `count` balanced ones."""
     if named:
-        for name in named:
+        names = [ALIASES.get(name, name) for name in named]
+        for name in names:
             agent_text.resolve(name)  # fail before any session starts
-        return named
+        return names
     return [agent_text.SHIPPED, *balanced_configs(count, seed)]  # what ships, as the anchor
 
 
