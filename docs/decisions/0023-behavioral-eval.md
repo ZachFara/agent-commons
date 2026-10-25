@@ -46,3 +46,13 @@ in its own reasoning still did not propose.
 
 Consequences: a baseline number before anything is tuned, and a fixed procedure for measuring
 each change, so improvements are real rather than fitted to the scenarios.
+
+Amendment (2026-10-25, after the baseline): the owner pointed out that the scenario author and
+the eval model share training data, so an invented bug that feels surprising to the author is
+usually a pattern the eval model has seen many times, and the low attempt counts bear that out.
+Hold-out scenarios will therefore be built from **real breaking changes released after the
+models' training cutoff**, found on the web and reproduced with the real version pinned, so the
+fix cannot be recited by either side. Development scenarios for shaping conditions:
+`docs-retry-flag` and `version-silent-rename`; everything else is held out. Experiments run in
+this order, each a separate named condition at the baseline's run count: (a) worked examples in
+tool argument descriptions, (b) a Stop-hook propose nudge, (c) search-trigger wording.
