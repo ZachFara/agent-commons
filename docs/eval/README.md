@@ -14,6 +14,9 @@ Raw per-session results from `tools/agent_eval.py` (decision 0023). One JSON fil
 | `start` | 2026-10-25 | sonnet | 20 (hard set × 5) | SessionStart context asks for a search on the first failure |
 | `invite` | 2026-10-25 | sonnet | 20 (hard set × 5) | An empty search result points at `propose` |
 | `nudge` | 2026-10-25 | sonnet | 20 (hard set × 5) | **Invalid**: Stop hook could not see failing runs (piped output, PR #52) |
+| `start-invite` | 2026-10-25 | sonnet | 20 (hard set × 5) | Round two: `start` + `invite` |
+| `start-rule` | 2026-10-25 | sonnet | 20 (hard set × 5) | Round two: `start` + `rule` |
+| `start-all` | 2026-10-25 | sonnet | 20 (hard set × 5) | Round two: `start` + `invite` + `rule` + `examples` |
 
 Summarize with `uv run python tools/agent_eval.py report --condition <name>` after copying a
 condition's JSON files into `.scratch/eval/<name>/`.
@@ -96,3 +99,45 @@ Next: the surfaces act at different steps of the funnel, so they are combined on
 rather than picked between: `start` delivers the search, `invite` speaks at the empty result,
 `rule` removes the "routine" reason, and worked argument shapes keep a first propose from being
 rejected.
+
+## Round two: combinations on top of `start` (2026-10-25)
+
+Same hard set, 20 sessions each. Two `start-all` proposals were regraded after a grader fix (PR
+#55: a runtime version in `environment.language` counts as pinned); the ledger lines say so.
+
+| Condition | Search | Propose | 95% CI | Good | Fixed | Turns |
+|---|---|---|---|---|---|---|
+| `start` (round one) | 20/20 | 0/20 | 0-16% | 0 | 20/20 | 8.3 |
+| `start-invite` | 20/20 | 1/20 | 1-24% | 1 | 20/20 | 8.1 |
+| `start-rule` | 19/20 | **7/20** | 18-57% | 7 | 20/20 | 8.7 |
+| `start-all` | 20/20 | **9/20** | 26-66% | 9 | 20/20 | 8.8 |
+
+Proposals per scenario (of 5):
+
+| Scenario | `start-invite` | `start-rule` | `start-all` |
+|---|---|---|---|
+| SQLModel 0.0.45 legacy rows | 1 | 4 | 5 |
+| pandas 3.0 Copy-on-Write | 0 | 3 | 2 |
+| Python 3.14 deferred annotations | 0 | 0 | 2 |
+| SQLAlchemy 2.1 autoflush | 0 | 0 | 0 |
+
+- **The propose rule is the lever.** Changing the rule from "took more than one attempt" to "the
+  cause was outside this codebase … how many attempts it took does not matter" took propose
+  from 0/20 to 7/20 once a search had happened, and every one of the 16 proposals across the
+  three conditions was on-topic, correctly caused, and pinned. The `start-all` gain over
+  `start-rule` (9 vs 7) is inside the noise.
+- **The invite note alone barely helps** (1/20): it speaks at the right moment, but the old rule
+  still tells the agent a one-attempt fix is routine.
+- **SQLAlchemy 0/15 is a knowledge limit, not a wording failure.** The agent diagnoses
+  autoflush correctly but doesn't know that 2.1 changed when it fires, so it calls the cause
+  "standard SQLAlchemy autoflush behavior" or "this project's own logic" and skips, as the
+  rule says to. An agent can only share a version change it can recognize as one.
+- **Argument rejections still cost proposals.** 14 of 30 `propose` calls in `start-rule` and
+  `start-all` were rejected, and 2 of 19 sessions that tried gave up after the first rejection
+  ("I didn't retry"). 9 of the 14 were `environment.tool must include a version`: the worked
+  example omits `tool`, agents add `"tool": "pytest"` unversioned, and the server rejects it.
+  The remaining 5 were `libraries` given as a list.
+- Cost of the change: about 0.5 extra turns over `start` and none in fix rate (20/20 throughout).
+
+Not yet measured: false proposals on the controls under these variants, and the other hold-out
+and development scenarios. Both are required before anything is adopted (decision 0023).
