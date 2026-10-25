@@ -317,17 +317,22 @@ def grade_proposal(row: tuple[Any, ...], discovery: Discovery | None) -> Proposa
     if discovery is None:
         return Proposal(symptom=symptom, on_topic=False, cause_right=False, pinned=False)
     text = f"{cause} {fix}".lower()
-    libraries = environment.get("libraries", {}) if isinstance(environment, dict) else {}
+    environment = environment if isinstance(environment, dict) else {}
     pinned = any(
         discovery.library in name.lower() and any(ch.isdigit() for ch in str(version))
-        for name, version in libraries.items()
-    )
+        for name, version in environment.get("libraries", {}).items()
+    ) or _runtime_pinned(discovery.library, str(environment.get("language", "")))
     return Proposal(
         symptom=symptom,
         on_topic=any(word.lower() in symptom.lower() for word in discovery.symptom_words),
         cause_right=any(word.lower() in text for word in discovery.cause_words),
         pinned=pinned,
     )
+
+
+def _runtime_pinned(library: str, language: str) -> bool:
+    """Return whether `language` pins a runtime change (library "python"), e.g. "python 3.14"."""
+    return library in language.lower() and any(ch.isdigit() for ch in language)
 
 
 @dataclass(frozen=True)
