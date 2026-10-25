@@ -16,7 +16,7 @@ from uuid import UUID
 import httpx2
 
 from commons.domain.errors import NotInitializedError, NotPermittedError
-from commons.domain.observations import ToolUse, is_test_command
+from commons.domain.observations import ToolUse, is_test_command, observed_exit_code
 from commons.domain.outcomes import Usage
 from commons.domain.usage import compute_used
 from commons.privacy.redaction import scrub
@@ -187,8 +187,12 @@ def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
     if use.old_text:
         append_spool(use.session_id, {"tool": use.tool_name, "removed": scrub(use.old_text)})
     test_run: dict[str, object] | None = None
-    if use.command is not None and use.exit_code is not None and _is_test(use.command):
-        test_run = {"command": scrub(use.command), "exit_code": use.exit_code}
+    if use.command is not None and _is_test(use.command):
+        code = observed_exit_code(
+            use.command, use.exit_code, use.output or "", configured_test_runners()
+        )
+        if code is not None:
+            test_run = {"command": scrub(use.command), "exit_code": code}
     file_change: dict[str, object] | None = None
     if use.file_path is not None and use.new_text is not None:
         file_change = {

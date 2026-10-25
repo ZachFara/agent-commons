@@ -34,9 +34,21 @@ class Session:
             assert reporter is not None
             self.entry_id = factories.entry(conn, reporter, fix=FIX, symptom=self.word)
 
-    def tool(self, name: str, tool_input: dict[str, Any], *, error: str | None = None) -> None:
-        payload = {"session_id": self.session_id, "tool_name": name, "tool_input": tool_input}
+    def tool(
+        self,
+        name: str,
+        tool_input: dict[str, Any],
+        *,
+        error: str | None = None,
+        stdout: str = "",
+    ) -> None:
+        payload: dict[str, Any] = {
+            "session_id": self.session_id,
+            "tool_name": name,
+            "tool_input": tool_input,
+        }
         if error is None:
+            payload["tool_response"] = {"stdout": stdout, "stderr": "", "interrupted": False}
             self.env.run("post-tool-use", payload)
         else:
             self.env.run("post-tool-use-failure", {**payload, "error": error})

@@ -266,3 +266,7 @@ being enough; whether anyone uses full_trace.
   without a search). Agent-facing text moved to `service/agent_text.py` (both entrypoints
   consume it; the boundary check caught `cli` importing `mcp`). Mandatory-search-rule condition
   cut (owner). Owner's confidence-based rule noted for the wording phase.
+- 2026-10-25: structural screen finished; `nudge` never fired. Cause: 210 of 210 eval sessions
+  ran tests as `pytest -q 2>&1 | tail -n`, so the shell's exit code is tail's 0 and hooks
+  recorded failing runs as passes (also wrong for observed outcomes in production). Fixed: the
+  runner's summary line decides a masked 0; with no summary the run is unknown, never a pass.

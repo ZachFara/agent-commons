@@ -71,6 +71,19 @@ def test_nudge_fires_once_when_tests_were_fixed_without_a_search(nudge_session: 
     assert nudge_session.stop(active=True) is None  # never twice
 
 
+def test_nudge_fires_on_piped_test_runs(nudge_session: Session) -> None:
+    """Found by tools/agent_eval.py: the nudge never fired, since agents pipe through tail."""
+    piped = {"command": "uv run pytest -q 2>&1 | tail -20"}
+    nudge_session.tool("Bash", piped, stdout="FAILED t.py::x\n1 failed, 1 passed in 0.2s")
+    nudge_session.tool("Edit", {"file_path": "/p/app.py", "new_string": "fixed"})
+    nudge_session.tool("Bash", piped, stdout="2 passed in 0.2s")
+
+    output = nudge_session.stop()
+
+    assert output is not None
+    assert "went from failing to passing" in output["reason"]
+
+
 def test_nudge_stays_quiet_when_the_agent_searched(nudge_session: Session) -> None:
     nudge_session.tool("Bash", {"command": "pytest -q"}, error="Exit code 1\nFAILED")
     nudge_session.search()
