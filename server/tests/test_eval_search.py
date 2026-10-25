@@ -3,7 +3,7 @@
 from collections import Counter
 
 import pytest
-from tools.agent_eval import balanced_configs, option_of
+from tools.agent_eval import balanced_configs, option_of, plan_configs
 from tools.eval.runner import allowed_tools
 
 from commons.service import agent_text
@@ -40,3 +40,16 @@ def test_allowed_tools_follow_the_variant_names(variant: str, search: str, propo
     assert f"mcp__commons__{search}" in tools
     assert f"mcp__commons__{propose}" in tools
     assert "mcp__commons__report" in tools
+
+
+def test_named_configs_are_repeated_as_given_and_checked_first() -> None:
+    named = ["w-a0b2c2d1e0f1g1h0n0", "w-a0b0c2d0e0f0g0h0n0"]
+    assert plan_configs(named, 16, seed=1) == named
+    with pytest.raises(KeyError):
+        plan_configs(["w-a9b0c0d0e0f0g0h0n0"], 16, seed=1)
+
+
+def test_sampled_plans_start_with_todays_text() -> None:
+    plan = plan_configs(None, 4, seed=1)
+    assert agent_text.resolve(plan[0]) == agent_text.VARIANTS["baseline"]
+    assert plan[1:] == balanced_configs(4, seed=1)

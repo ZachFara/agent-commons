@@ -84,8 +84,7 @@ def run(args: argparse.Namespace) -> int:
 
 def wording_search(args: argparse.Namespace) -> int:
     """Run balanced random wording configs, each repeated on every scenario (decision 0023)."""
-    configs = [agent_text.wording_name(dict.fromkeys(agent_text.SURFACES, 0))]  # today's text
-    configs += balanced_configs(args.configs, args.seed)
+    configs = plan_configs(args.config, args.configs, args.seed)
     names = args.scenario or sorted(SCENARIOS)
     jobs = [
         runner.Job(SCENARIOS[name], 0, config)
@@ -99,6 +98,18 @@ def wording_search(args: argparse.Namespace) -> int:
     (transcripts / "configs.json").write_text(json.dumps(configs, indent=1), encoding="utf-8")
     print(f"{len(configs)} configs x {len(names)} scenarios x {args.runs} runs = {len(jobs)}")
     return run_jobs(jobs, args)
+
+
+def plan_configs(named: list[str] | None, count: int, seed: int) -> list[str]:
+    """Return the named configs to repeat, or today's text plus `count` balanced random ones."""
+    if named:
+        for name in named:
+            agent_text.resolve(name)  # fail before any session starts
+        return named
+    return [
+        agent_text.wording_name(dict.fromkeys(agent_text.SURFACES, 0)),  # today's text
+        *balanced_configs(count, seed),
+    ]
 
 
 def balanced_configs(count: int, seed: int) -> list[str]:
@@ -331,6 +342,9 @@ def main() -> int:
         "search", help="Balanced random wording configs, each repeated on every scenario."
     )
     search_parser.add_argument("--configs", type=int, default=16)
+    search_parser.add_argument(
+        "--config", action="append", help="Repeat these exact configs instead of sampling."
+    )
     search_parser.add_argument("--seed", type=int, default=1)
     search_parser.add_argument("--scenario", action="append", choices=sorted(SCENARIOS))
     search_parser.add_argument("--runs", type=int, default=2, help="Repeats per config, scenario.")
