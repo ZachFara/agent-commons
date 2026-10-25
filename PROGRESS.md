@@ -80,8 +80,8 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | ID | Status | Task | Done when |
 |---|---|---|---|
 | T34 | done | Pre-registered behavioral eval (decision 0023): isolated parallel `claude -p` sessions, 13 verified scenarios, evidence-based grading, baseline of 5 runs each | Baseline report committed with per-scenario search/propose/report rates and proposal quality |
-| T35 | doing | First: hold-out scenarios from real post-cutoff breaking changes (owner, 2026-10-25), verified by transcript. Then experiments on what the agent sees, one named condition at a time, developed on `docs-retry-flag` + `version-silent-rename`, measured on the hold-out set: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
-| T36 | todo | Eval report with charts (funnel per scenario and condition, rates with intervals, proposal quality) published as a shareable page; raw results committed under `docs/eval/` | Page link in PROGRESS; raw JSON in the repo |
+| T35 | done | First: hold-out scenarios from real post-cutoff breaking changes (owner, 2026-10-25), verified by transcript. Then experiments on what the agent sees, one named condition at a time, developed on `docs-retry-flag` + `version-silent-rename`, measured on the hold-out set: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
+| T36 | done | Eval report with charts (funnel per scenario and condition, rates with intervals, proposal quality) published as a shareable page; raw results committed under `docs/eval/` | Page link in PROGRESS; raw JSON in the repo |
 
 ### DESIGN Phase 3 (after a month of data)
 
@@ -291,3 +291,7 @@ being enough; whether anyone uses full_trace.
   ignored. Owner's hindsight rule is the biggest single lever. Found and fixed: a broken control
   (`control-documented-gotcha`), runner logging usage-limit errors as trials. Next: adopt B as
   the baseline (owner merges), chart page (T36), then Tom's invite.
+- 2026-10-25: T36 eval page published (private; share from its Share menu):
+  https://claude.ai/artifact/A5DmeFfK6wR23U5ujo5jwg. Charts: confirmation on unseen scenarios,
+  the hard-set journey across every condition, round-one option effects, and every condition as
+  a table, all computed from the ledger's valid trials.
