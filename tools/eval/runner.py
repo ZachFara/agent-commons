@@ -20,6 +20,7 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 from psycopg.types.json import Jsonb
 
+from commons.service import agent_text
 from commons.service.hook_install import commons_executable, commons_hooks
 from commons.store.migrate import apply_migrations
 from commons.store.models import model_id
@@ -91,6 +92,8 @@ class Result:
     turns: int
     cost_usd: float
     error: str | None
+    variant: str = "baseline"
+    text_fingerprint: str = ""
 
     def summary(self) -> str:
         """One line describing what the agent did."""
@@ -397,6 +400,8 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         turns=int(result_event.get("num_turns", 0)),
         cost_usd=float(result_event.get("total_cost_usd", 0.0)),
         error=str(result_event.get("result"))[:200] if result_event.get("is_error") else None,
+        variant=os.environ.get(VARIANT_KEY, "baseline"),
+        text_fingerprint=agent_text.fingerprint(agent_text.variant()),
     )
 
 

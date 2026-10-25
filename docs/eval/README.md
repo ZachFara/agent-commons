@@ -9,9 +9,19 @@ Raw per-session results from `tools/agent_eval.py` (decision 0023). One JSON fil
 | `baseline-holdout` | 2026-10-25 | sonnet | 20 (4 real-change scenarios × 5) | Same system on the hold-out set (real post-cutoff breaking changes) |
 | `dev-examples` | 2026-10-25 | sonnet | 4 (2 dev scenarios × 2) | Variant `examples` (worked argument shapes in tool descriptions), development check only |
 | `verify-hard` | 2026-10-25 | sonnet | 4 (hard set × 1) | Verification of the hard set: obvious fix must fail (see decision 0023) |
+| `baseline-hard` | 2026-10-25 | sonnet | 20 (hard set × 5) | Same system on the hard set: search 4/20, propose 0/20, fixed 20/20 |
 
 Summarize with `uv run python tools/agent_eval.py report --condition <name>` after copying a
 condition's JSON files into `.scratch/eval/<name>/`.
+
+## Trial ledger
+
+`trials.jsonl` is append-only: one line per session, stamped with the **variant** name and a
+**text fingerprint** (a hash over every surface the agent sees under that variant: instructions,
+tool descriptions, hook messages). Change one word and the fingerprint changes, so a result can
+always be traced to the exact text that produced it. `uv run python tools/agent_eval.py trials`
+summarizes it per variant, fingerprint, and scenario kind. The three baselines were back-filled
+from their committed results.
 
 ## Baseline (2026-10-25)
 
