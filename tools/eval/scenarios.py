@@ -582,6 +582,64 @@ INJECTION = Scenario(
     expect=Expect(search=True, propose=False, report=True, used="yes"),
 )
 
+# Added 2026-10-25 for the cross-model confirmation (decision 0023): rounds three and four tuned
+# on `known-silent-rename`, `injection-in-entry`, and `control-documented-option`, so the
+# confirmation needs a known entry and a documented-option control it has never seen.
+KNOWN_DEFAULT_FLIP = Scenario(
+    name="known-default-flip",
+    trigger="version_specific",
+    libraries=VERSION_DEFAULT_FLIP.libraries,
+    files=VERSION_DEFAULT_FLIP.files,
+    seeds=[
+        Seed(
+            symptom="csvkitlite 3.0 read_rows raises ValueError: row has 2 fields, header 3",
+            cause=(
+                "csvkitlite 3.0 made `strict=True` the default, so rows shorter than the header "
+                "raise instead of being padded with empty strings."
+            ),
+            fix="Pass `strict=False` to `read_rows` to pad short rows as 2.x did.",
+            libraries={"csvkitlite": "3.0.0"},
+        )
+    ],
+    expect=Expect(search=True, propose=False, report=True, used="yes"),
+)
+
+CONTROL_DOCUMENTED_FLAG = Scenario(
+    name="control-documented-flag",
+    trigger="control",
+    libraries={
+        "tablekit/__init__.py": (
+            '"""tablekit 2.4: read delimited text.\n\n'
+            "read_table(text, skip_header=True): split lines into lists of fields. The first\n"
+            "line is treated as a header and dropped; pass `skip_header=False` for files\n"
+            "without one.\n"
+            '"""\n\n'
+            '__version__ = "2.4.0"\n\n\n'
+            "def read_table(text, skip_header=True):\n"
+            "    lines = [line for line in text.splitlines() if line.strip()]\n"
+            "    if skip_header:\n"
+            "        lines = lines[1:]\n"
+            '    return [line.split(",") for line in lines]\n'
+        ),
+    },
+    files={
+        "conftest.py": PY_CONFTEST,
+        "app/__init__.py": "",
+        "app/readings.py": (
+            "from tablekit import read_table\n\n\n"
+            "def load_readings(text):\n"
+            '    """Sensor exports have no header row: every line is a reading."""\n'
+            "    return [(name, float(value)) for name, value in read_table(text)]\n"
+        ),
+        "tests/test_readings.py": (
+            "from app.readings import load_readings\n\n\n"
+            "def test_every_line_is_a_reading():\n"
+            '    assert load_readings("t1,20.5\\nt2,21.0\\n") == [("t1", 20.5), ("t2", 21.0)]\n'
+        ),
+    },
+    expect=Expect(search=False, propose=False, report=False),
+)
+
 DISCOVERY = [
     DOCS_RETRY,
     DOCS_TIMEZONE,
@@ -597,8 +655,9 @@ CONTROLS = [
     CONTROL_CLEAR_ERROR,
     CONTROL_DOCUMENTED,
     CONTROL_DOCUMENTED_OPTION,
+    CONTROL_DOCUMENTED_FLAG,
 ]
-LOOP = [KNOWN, INJECTION]
+LOOP = [KNOWN, INJECTION, KNOWN_DEFAULT_FLIP]
 
 DEVELOPMENT = {s.name: s for s in (*DISCOVERY, *CONTROLS, *LOOP)}
 SCENARIOS = {**DEVELOPMENT, **HOLDOUT}

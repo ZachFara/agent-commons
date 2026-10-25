@@ -15,10 +15,15 @@ from commons.domain.reporters import PrivacyDefault
 from commons.mcp.server import build_server
 from commons.service import agent_text
 
-# Claude Code silently truncates each at ~2,048 characters. Server instructions may share that
-# budget with other servers, so they get a tighter limit.
+# Claude Code cuts server instructions and each tool description at 4,096 characters, and at
+# 2,048 before v2.1.296 (code.claude.com/docs/en/mcp.md, "Tool search for MCP server authors"),
+# which people on older versions still run. Both limits stay under the older cut, instructions
+# with more room since they are the one text the model sees when tool search defers our tools.
 DESCRIPTION_LIMIT = 2000
 INSTRUCTIONS_LIMIT = 1500
+# Hook strings (SessionStart additionalContext, Stop reason) are cut at 10,000 characters
+# (code.claude.com/docs/en/hooks.md); ours stay far below.
+HOOK_LIMIT = 1000
 OTHER_WORDS = {"uuidgen"}
 
 
@@ -101,13 +106,44 @@ def test_each_wording_option_names_only_real_things_and_changes_one_surface(name
     assert agent_text.fingerprint(shown) != agent_text.fingerprint(baseline)
 
 
-def test_every_combination_of_instruction_surfaces_fits_the_limit() -> None:
-    keys = ("a", "b", "c")
-    for options in itertools.product(*(range(agent_text.SURFACES[k]) for k in keys)):
-        choice = {**dict.fromkeys(agent_text.SURFACES, 0), **dict(zip(keys, options, strict=True))}
-        assert len(agent_text.wording(choice).instructions) <= INSTRUCTIONS_LIMIT, choice
-    for text in (*agent_text.PROPOSE_DESCRIPTIONS, *agent_text.SEARCH_DESCRIPTIONS):
-        assert len(text) <= DESCRIPTION_LIMIT
+def every_combination(keys: tuple[str, ...]) -> list[dict[str, int]]:
+    """Every choice of options for `keys`, the other surfaces at 0."""
+    sizes = (range(agent_text.SURFACES[key]) for key in keys)
+    return [
+        {**dict.fromkeys(agent_text.SURFACES, 0), **dict(zip(keys, options, strict=True))}
+        for options in itertools.product(*sizes)
+    ]
+
+
+def test_every_combination_of_the_surfaces_fits_every_limit() -> None:
+    """Each text is checked under every combination of the surfaces that change its length."""
+    for choice in every_combination(("a", "b", "c", "s", "n")):
+        shown = agent_text.wording(choice)
+        assert len(shown.instructions) <= INSTRUCTIONS_LIMIT, choice
+    for choice in every_combination(("d", "e", "f", "s", "n")):
+        shown = agent_text.wording(choice)
+        for text in (shown.propose, shown.search, shown.report):
+            assert len(text) <= DESCRIPTION_LIMIT, choice
+        assert len(shown.invite_note or "") <= DESCRIPTION_LIMIT, choice
+    for line in agent_text.START_LINES:
+        task_line = f"Agent Commons task_id for this session: {'0' * 36}. Pass it as task_id ..."
+        assert len(f"{task_line} {line or ''}") <= HOOK_LIMIT
+
+
+def test_check_first_appears_where_the_option_puts_it() -> None:
+    base = dict.fromkeys(agent_text.SURFACES, 0)
+    in_rule = agent_text.wording({**base, "c": 2, "s": agent_text.CHECK_IN_INSTRUCTIONS})
+    assert agent_text.CHECK_FIRST_RULE in in_rule.instructions
+    assert agent_text.CHECK_FIRST_DESCRIPTION not in in_rule.propose
+    in_tool = agent_text.wording({**base, "s": agent_text.CHECK_IN_DESCRIPTION, "n": 1})
+    assert in_tool.propose.startswith("Call `find_known_fix` with the symptom first")
+    assert agent_text.CHECK_FIRST_RULE not in in_tool.instructions
+
+
+def test_names_from_before_a_surface_existed_still_mean_the_same_text() -> None:
+    old = "w-a0b2c2d1e0f1g1h0n0"  # round two's config B, named before surface `s`
+    assert agent_text.resolve(old) == agent_text.resolve(old + "s0")
+    assert agent_text.wording_name(dict.fromkeys(agent_text.SURFACES, 0)).endswith("n0")
 
 
 @pytest.mark.parametrize(
