@@ -176,8 +176,16 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
         mask_error_details=True,
         auth=ApiKeyVerifier(connection) if hosted else None,
         tools=[
-            Tool.from_function(propose, description=shown.propose),
-            Tool.from_function(search, description=shown.search),
+            _described(
+                Tool.from_function(propose, name=shown.propose_name, description=shown.propose),
+                "propose",
+                shown,
+            ),
+            _described(
+                Tool.from_function(search, name=shown.search_name, description=shown.search),
+                "search",
+                shown,
+            ),
             Tool.from_function(report, description=shown.report),
             approve,
             reject,
@@ -185,6 +193,18 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
             status,
         ],
     )
+
+
+def _described(tool: Tool, role: str, shown: agent_text.Variant) -> Tool:
+    """Apply a variant's argument descriptions for the tool playing `role` (search, propose)."""
+    overrides = {argument: text for owner, argument, text in shown.arguments if owner == role}
+    if not overrides:
+        return tool
+    properties = {
+        name: {**schema, "description": overrides.get(name, schema.get("description"))}
+        for name, schema in tool.parameters["properties"].items()
+    }
+    return tool.model_copy(update={"parameters": {**tool.parameters, "properties": properties}})
 
 
 def _status_json(result: StoreStatus) -> dict[str, Any]:

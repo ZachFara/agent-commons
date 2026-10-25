@@ -10,7 +10,8 @@ import os
 import subprocess
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -177,7 +178,9 @@ def write_files(root: Path, files: dict[str, str]) -> None:
         path.write_text(content, encoding="utf-8")
 
 
-def session_files(workdir: Path, url: str, *, hooks: bool) -> tuple[dict[str, str], Path, Path]:
+def session_files(
+    workdir: Path, url: str, variant: str, *, hooks: bool
+) -> tuple[dict[str, str], Path, Path]:
     """Write the eval identity, hooks, and MCP config; return (env, settings, mcp config)."""
     config = workdir / "commons-config.json"
     config.write_text(json.dumps({"pseudonym": "eval-agent"}), encoding="utf-8")
@@ -188,6 +191,7 @@ def session_files(workdir: Path, url: str, *, hooks: bool) -> tuple[dict[str, st
         "COMMONS_STATE_DIR": str(workdir / "state"),
         "PYTHONPATH": str(workdir / "site"),
         "NODE_PATH": str(workdir / "site"),
+        VARIANT_KEY: variant,  # read by the MCP server and the hooks alike
     }
     settings = workdir / "settings.json"
     hook_groups = commons_hooks(commons_executable()) if hooks else {}
@@ -203,17 +207,17 @@ def session_files(workdir: Path, url: str, *, hooks: bool) -> tuple[dict[str, st
 
 
 def run_session(
-    scenario: Scenario, project: Path, workdir: Path, url: str, model: str, *, hooks: bool
+    session: "Session", workdir: Path, model: str, *, hooks: bool
 ) -> list[dict[str, Any]]:
     """Run one headless Claude Code session; return its stream-json events.
 
     Retries with backoff when the session ends in a rate-limit error.
     """
-    env, settings, mcp = session_files(workdir, url, hooks=hooks)
+    env, settings, mcp = session_files(workdir, session.url, session.variant, hooks=hooks)
     command = [
         "claude",
         "-p",
-        scenario.prompt,
+        session.scenario.prompt,
         "--model",
         model,
         "--setting-sources",
@@ -229,12 +233,12 @@ def run_session(
         "stream-json",
         "--verbose",
         "--allowedTools",
-        *ALLOWED_TOOLS,
+        *allowed_tools(session.variant),
     ]
     for attempt in range(RATE_LIMIT_RETRIES + 1):
         completed = subprocess.run(
             command,
-            cwd=project,
+            cwd=session.project,
             env=env,
             capture_output=True,
             text=True,
@@ -248,6 +252,16 @@ def run_session(
             return events
         time.sleep(30 * (attempt + 1))
     return events
+
+
+def allowed_tools(variant: str) -> list[str]:
+    """Return the session's allowed tools, with search and propose under the variant's names."""
+    shown = agent_text.resolve(variant)
+    renamed = {
+        "mcp__commons__search": f"mcp__commons__{shown.search_name}",
+        "mcp__commons__propose": f"mcp__commons__{shown.propose_name}",
+    }
+    return [renamed.get(tool, tool) for tool in ALLOWED_TOOLS]
 
 
 def _events(stdout: str) -> list[dict[str, Any]]:
@@ -331,6 +345,16 @@ class Session:
     project: Path
     site: Path
     url: str
+    variant: str = "baseline"
+
+
+@dataclass(frozen=True)
+class Job:
+    """One session to run: which scenario, which run, and which variant of the text."""
+
+    scenario: Scenario
+    index: int
+    variant: str = "baseline"
 
 
 def grade(session: Session, events: list[dict[str, Any]]) -> Result:
@@ -340,7 +364,8 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
     results = tool_results(events)
     names = [str(call.get("name")) for call in calls]
     commands = " ".join(str(call.get("input", {}).get("command", "")) for call in calls)
-    searches = [call for call in calls if call.get("name") == "mcp__commons__search"]
+    shown = agent_text.resolve(session.variant)
+    searches = [call for call in calls if call.get("name") == f"mcp__commons__{shown.search_name}"]
     search_found = any('"data":[{' in results.get(str(call.get("id")), "") for call in searches)
     test_runs = [
         c
@@ -405,16 +430,16 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         turns=int(result_event.get("num_turns", 0)),
         cost_usd=float(result_event.get("total_cost_usd", 0.0)),
         error=str(result_event.get("result"))[:200] if result_event.get("is_error") else None,
-        variant=os.environ.get(VARIANT_KEY, "baseline"),
-        text_fingerprint=agent_text.fingerprint(agent_text.variant()),
+        variant=session.variant,
+        text_fingerprint=agent_text.fingerprint(shown),
     )
 
 
-def run_one(
-    scenario: Scenario, model: str, index: int, condition: str, transcripts: Path, *, hooks: bool
-) -> Result:
+def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: bool) -> Result:
     """Fresh database and project, one session, graded. Saves the transcript and result."""
-    db_name = f"commons_eval_{scenario.name}_{condition}_{index}".replace("-", "_")[:63]
+    scenario, index = job.scenario, job.index
+    # Condition and index first: a long scenario name may be cut at Postgres's 63 characters.
+    db_name = f"commons_eval_{condition}_{index}_{scenario.name}".replace("-", "_")[:63]
     url = fresh_database(db_name)
     try:
         seed(url, scenario)
@@ -424,13 +449,15 @@ def run_one(
             workdir.mkdir()
             write_files(project, scenario.files)
             write_files(workdir / "site", scenario.libraries)
-            events = run_session(scenario, project, workdir, url, model, hooks=hooks)
+            session = Session(
+                scenario, condition, index, project, workdir / "site", url, job.variant
+            )
+            events = run_session(session, workdir, model, hooks=hooks)
             transcripts.mkdir(parents=True, exist_ok=True)
             stem = f"{condition}-{scenario.name}-{index}"
             (transcripts / f"{stem}.jsonl").write_text(
                 "\n".join(json.dumps(e) for e in events), encoding="utf-8"
             )
-            session = Session(scenario, condition, index, project, workdir / "site", url)
             result = grade(session, events)
             (transcripts / f"{stem}.json").write_text(json.dumps(asdict(result), indent=1))
             return result
@@ -439,28 +466,27 @@ def run_one(
 
 
 def run_many(
-    jobs: list[tuple[Scenario, int]],
+    jobs: list[Job],
     model: str,
     condition: str,
     transcripts: Path,
     *,
     hooks: bool,
     concurrency: int,
-) -> list[Result]:
-    """Run sessions in parallel, printing each result as it finishes."""
-    results: list[Result] = []
+) -> Iterator[Result]:
+    """Run sessions in parallel, printing and yielding each result as it finishes."""
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futures = [
-            pool.submit(run_one, scenario, model, index, condition, transcripts, hooks=hooks)
-            for scenario, index in jobs
-        ]
-        for future in futures:
-            result = future.result()
-            results.append(result)
-            scenario = next(s for s, _ in jobs if s.name == result.scenario)
-            misses = result.failures(scenario)
+        futures = {
+            pool.submit(run_one, job, model, condition, transcripts, hooks=hooks): job
+            for job in jobs
+        }
+        for future in as_completed(futures):
+            job, result = futures[future], future.result()
+            misses = result.failures(job.scenario)
             verdict = "OK" if not misses else "MISSED: " + ", ".join(misses)
             print(
-                f"{result.scenario:<22} #{result.index}  {result.summary()}  {verdict}", flush=True
+                f"{result.scenario:<22} #{result.index} {job.variant}  {result.summary()}  "
+                f"{verdict}",
+                flush=True,
             )
-    return results
+            yield result

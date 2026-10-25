@@ -9,26 +9,36 @@ Usage:
   uv run python tools/agent_eval.py run [--scenario NAME ...] [--runs N] [--model MODEL]
                                          [--condition NAME] [--no-hooks] [--concurrency N]
   uv run python tools/agent_eval.py report [--condition NAME ...]
+  uv run python tools/agent_eval.py search [--configs N] [--runs N] [--scenario NAME ...]
+  uv run python tools/agent_eval.py effects [--condition NAME]
 
 Sessions use the signed-in Claude Code account (subscription usage, not API billing).
 """
 
 import argparse
+import hashlib
 import json
+import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from commons.service import agent_text
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
 from tools.eval import runner  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 RESULTS = REPO / ".scratch" / "eval"
 
@@ -62,19 +72,69 @@ def check() -> int:
 
 def run(args: argparse.Namespace) -> int:
     """Run the requested scenarios in parallel and print results as they finish."""
-    os.environ["COMMONS_INSTRUCTIONS_VARIANT"] = args.variant
+    agent_text.resolve(args.variant)  # fail before starting sessions, not inside each one
     names = args.scenario or sorted(SCENARIOS)
-    jobs = [(SCENARIOS[name], index) for name in names for index in range(1, args.runs + 1)]
+    jobs = [
+        runner.Job(SCENARIOS[name], index, args.variant)
+        for name in names
+        for index in range(1, args.runs + 1)
+    ]
+    return run_jobs(jobs, args)
+
+
+def wording_search(args: argparse.Namespace) -> int:
+    """Run balanced random wording configs, each repeated on every scenario (decision 0023)."""
+    configs = [agent_text.wording_name(dict.fromkeys(agent_text.SURFACES, 0))]  # today's text
+    configs += balanced_configs(args.configs, args.seed)
+    names = args.scenario or sorted(SCENARIOS)
+    jobs = [
+        runner.Job(SCENARIOS[name], 0, config)
+        for config in configs
+        for name in names
+        for _ in range(args.runs)
+    ]
+    jobs = [runner.Job(job.scenario, index, job.variant) for index, job in enumerate(jobs, 1)]
     transcripts = RESULTS / args.condition
-    results = runner.run_many(
+    transcripts.mkdir(parents=True, exist_ok=True)
+    (transcripts / "configs.json").write_text(json.dumps(configs, indent=1), encoding="utf-8")
+    print(f"{len(configs)} configs x {len(names)} scenarios x {args.runs} runs = {len(jobs)}")
+    return run_jobs(jobs, args)
+
+
+def balanced_configs(count: int, seed: int) -> list[str]:
+    """Return `count` wording names in which each option of a surface appears about equally.
+
+    Each surface's column of options is shuffled on its own, so combinations are random while
+    every option gets a near-equal share of sessions for the pooled comparison.
+    """
+    columns: dict[str, list[int]] = {}
+    for key, size in agent_text.SURFACES.items():
+        # A seeded shuffle: order positions by a hash of (seed, surface, position).
+        def rank(i: int, key: str = key) -> bytes:
+            return hashlib.sha256(f"{seed}:{key}:{i}".encode()).digest()
+
+        order = sorted(range(count), key=rank)
+        columns[key] = [order.index(i) % size for i in range(count)]
+    return [
+        agent_text.wording_name({key: columns[key][i] for key in agent_text.SURFACES})
+        for i in range(count)
+    ]
+
+
+def run_jobs(jobs: list[runner.Job], args: argparse.Namespace) -> int:
+    """Run jobs, appending each result to the ledger as it finishes; print a summary."""
+    transcripts = RESULTS / args.condition
+    results: list[runner.Result] = []
+    for result in runner.run_many(
         jobs,
         args.model,
         args.condition,
         transcripts,
         hooks=not args.no_hooks,
         concurrency=args.concurrency,
-    )
-    append_ledger(results)
+    ):
+        append_ledger([result])
+        results.append(result)
     failed = sum(bool(r.failures(SCENARIOS[r.scenario])) for r in results)
     cost = sum(r.cost_usd for r in results)
     errors = sum(r.error is not None for r in results)
@@ -121,7 +181,7 @@ def by_variant() -> int:
     if not LEDGER.exists():
         print("no trials logged yet")
         return 0
-    lines = [json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line]
+    lines = _ledger_lines()
     # A line marked `invalid` stays in the ledger as a record but is never counted.
     rows = [row for row in lines if not row.get("invalid")]
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -141,6 +201,74 @@ def by_variant() -> int:
             f"{_rate(group, 'tests_pass'):>6}"
         )
     return 0
+
+
+def _ledger_lines() -> list[dict[str, Any]]:
+    return [json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line]
+
+
+def effects(args: argparse.Namespace) -> int:
+    """Pool a wording search by option: each session counts for every option it showed."""
+    rows = [
+        row
+        for row in _ledger_lines()
+        if row["condition"] == args.condition
+        and row["variant"].startswith("w-")
+        and not row.get("invalid")  # kept in the ledger as a record, never counted
+    ]
+    if not rows:
+        print(f"no wording trials for condition {args.condition}")
+        return 0
+    header = (
+        f"{'':<22} {'n':>3} {'search':>16} {'good propose':>16}   "
+        f"{'controls':>8} {'search':>7} {'propose':>8}"
+    )
+    print("per option (pooled over every config that showed it)\n" + header)
+    for key, size in agent_text.SURFACES.items():
+        for option in range(size):
+            showing = [row for row in rows if option_of(row["variant"], key) == option]
+            print(_effect_line(f"{key}{option}", showing))
+    print("\nper config, best first\n" + header)
+    configs = {str(row["variant"]) for row in rows}
+
+    def good_rate(config: str) -> float:
+        mine = [r for r in rows if r["variant"] == config and r["trigger"] != "control"]
+        return sum(bool(r["good_proposals"]) for r in mine) / max(len(mine), 1)
+
+    for config in sorted(configs, key=good_rate, reverse=True):
+        print(_effect_line(config, [row for row in rows if row["variant"] == config]))
+    return 0
+
+
+def option_of(variant: str, key: str) -> int:
+    """Return which option of surface `key` a wording name shows, or -1 if it isn't one."""
+    match = re.search(rf"{key}(\d)", variant.removeprefix("w-"))
+    return int(match.group(1)) if match else -1
+
+
+def _effect_line(label: str, rows: list[dict[str, Any]]) -> str:
+    discovery = [row for row in rows if row["trigger"] != "control"]
+    controls = [row for row in rows if row["trigger"] == "control"]
+    searched = sum(bool(row["searched"]) for row in discovery)
+    good = sum(bool(row["good_proposals"]) for row in discovery)
+    return (
+        f"{label:<22} {len(discovery):>3} {_with_interval(searched, len(discovery)):>16} "
+        f"{_with_interval(good, len(discovery)):>16}   {len(controls):>8} "
+        f"{_rate(controls, 'searched'):>7} {_rate(controls, 'proposed'):>8}"
+    )
+
+
+def _with_interval(hits: int, total: int) -> str:
+    """Return `hits/total (low-high%)` with a 95% Wilson interval."""
+    if total == 0:
+        return "-"
+    z = 1.96
+    p = hits / total
+    denominator = 1 + z * z / total
+    centre = p + z * z / (2 * total)
+    spread = z * math.sqrt(p * (1 - p) / total + z * z / (4 * total * total))
+    low, high = (centre - spread) / denominator, (centre + spread) / denominator
+    return f"{hits}/{total} ({low:.0%}-{high:.0%})"
 
 
 Row = dict[str, Any]
@@ -203,19 +331,34 @@ def main() -> int:
     run_parser.add_argument(
         "--variant", default="baseline", help="COMMONS_INSTRUCTIONS_VARIANT for the sessions."
     )
+    search_parser = commands.add_parser(
+        "search", help="Balanced random wording configs, each repeated on every scenario."
+    )
+    search_parser.add_argument("--configs", type=int, default=16)
+    search_parser.add_argument("--seed", type=int, default=1)
+    search_parser.add_argument("--scenario", action="append", choices=sorted(SCENARIOS))
+    search_parser.add_argument("--runs", type=int, default=2, help="Repeats per config, scenario.")
+    search_parser.add_argument("--model", default="sonnet")
+    search_parser.add_argument("--condition", default="wording")
+    search_parser.add_argument("--no-hooks", action="store_true")
+    search_parser.add_argument("--concurrency", type=int, default=4)
+    effects_parser = commands.add_parser("effects", help="Pool a wording search by option.")
+    effects_parser.add_argument("--condition", default="wording")
     report_parser = commands.add_parser("report")
     report_parser.add_argument("--condition", action="append")
     commands.add_parser(
         "trials", help="Summarize docs/eval/trials.jsonl per variant and text hash."
     )
     args = parser.parse_args()
-    if args.command == "check":
-        return check()
-    if args.command == "run":
-        return run(args)
-    if args.command == "trials":
-        return by_variant()
-    return report(args)
+    commands_by_name: dict[str, Callable[[argparse.Namespace], int]] = {
+        "check": lambda _args: check(),
+        "run": run,
+        "trials": lambda _args: by_variant(),
+        "search": wording_search,
+        "effects": effects,
+        "report": report,
+    }
+    return commands_by_name[args.command](args)
 
 
 if __name__ == "__main__":
