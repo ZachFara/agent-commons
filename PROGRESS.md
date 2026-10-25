@@ -270,3 +270,7 @@ being enough; whether anyone uses full_trace.
   ran tests as `pytest -q 2>&1 | tail -n`, so the shell's exit code is tail's 0 and hooks
   recorded failing runs as passes (also wrong for observed outcomes in production). Fixed: the
   runner's summary line decides a masked 0; with no summary the run is unknown, never a pass.
+- 2026-10-25: screen results committed (docs/eval/README.md): `start` search 20/20 (CI 84-100%)
+  vs baseline 4/20; propose stayed 0-1/20 everywhere. Empty search was read as "nothing to
+  do". `rule` back-filled into the ledger; `nudge` trials marked invalid (PR #52). Next round:
+  combinations on top of `start` (invite, rule, worked argument shapes).
