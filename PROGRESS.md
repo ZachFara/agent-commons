@@ -73,7 +73,15 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | T30 | done | One hosted process: `/mcp`, hook API, dashboard in a single ASGI app with stateless HTTP (Cloud Run gives one URL per service) | In-process tests over the combined app; compose updated |
 | T31 | done | Terraform in `infra/` for Neon + Cloud Run + Artifact Registry + Secret Manager (decision record), GitHub Actions deploy, cost estimate | `terraform validate` passes; docs give the exact apply steps |
 | T32 | done | Friend onboarding: `uv tool install` from GitHub, hooks call the installed `commons` directly, `commons join`, `commons admin invite` prints a paste-ready message | Tests for join/invite; a fresh tool install joins a local hosted server |
-| T33 | doing | Staging and production (decision 0022): import the Neon project, staging branch, per-environment Cloud Run services and secrets, build → staging → approved production pipeline; apply with the owner | Both URLs answer `/healthz`; a friend can join production; staging redeploys on merge |
+| T33 | done | Staging and production (decision 0022): import the Neon project, staging branch, per-environment Cloud Run services and secrets, build → staging → approved production pipeline; apply with the owner | Both URLs answer `/healthz`; a friend can join production; staging redeploys on merge |
+
+### Behavioral eval (owner request, 2026-10-25)
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T34 | doing | Pre-registered behavioral eval (decision 0023): isolated parallel `claude -p` sessions, 13 verified scenarios, evidence-based grading, baseline of 5 runs each | Baseline report committed with per-scenario search/propose/report rates and proposal quality |
+| T35 | todo | Experiments on what the agent sees, one named condition at a time, measured on hold-out scenarios against the baseline: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
+| T36 | todo | Eval report with charts (funnel per scenario and condition, rates with intervals, proposal quality) published as a shareable page; raw results committed under `docs/eval/` | Page link in PROGRESS; raw JSON in the repo |
 
 ### DESIGN Phase 3 (after a month of data)
 
@@ -99,7 +107,7 @@ being enough; whether anyone uses full_trace.
 
 ## Next steps
 
-1. T33: apply infra/ with the owner, then `commons admin invite` the friend on production.
+1. T34 baseline, then T35 experiments; invite the friend once propose works reliably.
 2. Next: DESIGN Phase 3 after a month of data (DESIGN §10).
 
 ## Session log
@@ -243,3 +251,8 @@ being enough; whether anyone uses full_trace.
   staging https://agent-commons-staging-jzxq74etsa-uc.a.run.app, GitHub variables and environments
   (production needs the owner's approval). First apply hit a transient Cloud Run "internal error"
   on a fresh project; a retry succeeded. Fixed perpetual drift on Cloud Run's service-level scaling.
+- 2026-10-25: T33 done; production and staging live, owner's machine on production as `zach`.
+  Eval harness built (T34): 13 scenarios verified by transcript; two real, well-formed
+  proposals observed; `used` bug fixed from an eval finding (PR #44); grader fixed twice
+  (task-id check, compact JSON). Owner's standing request: experiment with everything the
+  agent sees (T35) if the baseline is low, without spamming evals.
