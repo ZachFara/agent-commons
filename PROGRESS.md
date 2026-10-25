@@ -285,3 +285,9 @@ being enough; whether anyone uses full_trace.
   must come from the text alone, propose weighted highest. Built the wording search (PR #57):
   nine surfaces incl. tool names, argument descriptions, and the owner's hindsight rule;
   balanced random configs repeated per exact text.
+- 2026-10-25: wording search done (517 sessions). Config B (`w-a0b2c2d1e0f1g1h0n0`) confirmed
+  on unseen scenarios: good proposals 19/21 discoveries, 9/12 real post-cutoff changes (today's
+  text 3/21, 0/12); search 17/21 discoveries, 0/12 controls; 0 false proposals; injection
+  ignored. Owner's hindsight rule is the biggest single lever. Found and fixed: a broken control
+  (`control-documented-gotcha`), runner logging usage-limit errors as trials. Next: adopt B as
+  the baseline (owner merges), chart page (T36), then Tom's invite.

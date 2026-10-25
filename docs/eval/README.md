@@ -18,6 +18,9 @@ Raw per-session results from `tools/agent_eval.py` (decision 0023). One JSON fil
 | `start-rule` | 2026-10-25 | sonnet | 20 (hard set × 5) | Round two: `start` + `rule` |
 | `start-all` | 2026-10-25 | sonnet | 20 (hard set × 5) | Round two: `start` + `invite` + `rule` + `examples` |
 | `controls-start-all` | 2026-10-25 | sonnet | 30 (4 controls, known entry, injection × 5) | Safety check of `start-all` |
+| `wording-r1` | 2026-10-25 | sonnet | 204 (17 configs × 6 scenarios × 2) | Wording search, round one: balanced random configs over nine surfaces |
+| `wording-r2` | 2026-10-25 | sonnet | 160 (4 configs × 8 scenarios × 5) | Wording search, round two: four exact configs repeated |
+| `wording-final` | 2026-10-25 | sonnet | 153 (3 configs × 17 unseen scenarios × 3) | Confirmation on scenarios the search never saw |
 
 Summarize with `uv run python tools/agent_eval.py report --condition <name>` after copying a
 condition's JSON files into `.scratch/eval/<name>/`.
@@ -153,3 +156,100 @@ five read an entry carrying planted instructions and none followed them. Searchi
 controls, typos included, confirms the owner's objection to `start`: a forced search runs where
 nobody wants it. `start` is therefore a reference point, not a candidate for adoption. The next
 step is a wording search over the text the agent reads, with no forced call (PR #57).
+
+## Wording search (2026-10-25)
+
+The owner's question after round two: forcing a search at session start (`start`) is not
+something anyone would install, so can the text the agent reads make it *choose* to search and
+propose? Propose matters most. Nine surfaces got alternatives, option 0 being what ships, and a
+variant is named by one option per surface (`w-a0b0c0d0e0f0g0h0n0` is exactly the baseline):
+
+| Key | Surface | Options |
+|---|---|---|
+| a | framing line | today; "fixes … only as good as what agents add"; "a notebook shared between coding agents" |
+| b | search rule | today; where the error comes from; pinned or recent dependency versions; "one call is cheaper than a wrong guess" |
+| c | propose rule | today; cause outside this codebase; **hindsight** (owner): "judged by what you knew at the start: fixes look obvious once found"; confidence (owner): "worked but you weren't sure beforehand"; a closing checklist |
+| d | `propose` description | today; worked example with a versioned `tool`; "share so the next agent finds it" |
+| e | `search` description | today; "worth one call before your first fix" |
+| f | empty-search note | today's untrusted-data note; an invitation to propose |
+| g | session-start line | none; "connected: fixes … and a place to share yours"; "on for this session …" (never asks for a call) |
+| h | argument descriptions | today; symptom/cause/environment/query rewritten with examples |
+| n | tool names | `search`/`propose`; `find_known_fix`/`share_fix`; `lookup_error`/`record_discovery` |
+
+Each exact config was repeated on every scenario, and every session counts toward every option
+it showed. Errored sessions are never trials (a batch that ran into the subscription's usage
+limit is marked `invalid` in the ledger and was resumed after the reset).
+
+### Round one: 17 configs × 6 scenarios × 2 (204 sessions)
+
+Hard set (4 scenarios) and two controls; today's text was one of the 17 configs. Pooled by
+option (search, good proposals, with 95% intervals; proposals on controls):
+
+| Option | Search | Good proposals | Control proposals |
+|---|---|---|---|
+| c0 propose rule today | 4/40 (4-23%) | **0/40 (0-9%)** | 0/20 |
+| c1 cause outside this codebase | 5/24 (9-40%) | 2/24 (2-26%) | 0/12 |
+| **c2 hindsight** | 13/24 (35-72%) | **14/24 (39-76%)** | 1/12 |
+| c3 confidence | 0/24 (0-14%) | 0/24 (0-14%) | 0/12 |
+| c4 closing checklist | 3/24 (4-31%) | 6/24 (12-45%) | 1/12 |
+| b0 search rule today | 7/40 (9-32%) | 2/40 (1-17%) | 0/20 |
+| b1 where the error comes from | **0/32 (0-11%)** | 1/32 (1-16%) | 0/16 |
+| **b2 pinned dependency versions** | 12/32 (23-55%) | 14/32 (28-61%) | 1/16 |
+| b3 cheaper than a wrong guess | 6/32 (9-35%) | 5/32 (7-32%) | 1/16 |
+| d1 worked example, versioned `tool` | 13/40 (20-48%) | 10/40 (14-40%) | 0/20 |
+| f1 invitation on an empty search | 16/64 (16-37%) | 16/64 (16-37%) | 1/32 |
+| g1 "connected" session-start line | 12/40 (18-45%) | 11/40 (16-43%) | 0/20 |
+| n0 names `search`/`propose` | 18/56 (21-45%) | 19/56 (23-47%) | 2/28 |
+| n1 `find_known_fix`/`share_fix` | 6/40 (7-29%) | 3/40 (3-20%) | 0/20 |
+| n2 `lookup_error`/`record_discovery` | 1/40 (0-13%) | **0/40 (0-9%)** | 0/20 |
+
+Framing (a), the search description (e), and argument descriptions (h) showed no clear effect.
+
+- **The hindsight rule is the lever.** Sonnet solves these bugs on first read, and today's rule
+  ("took more than one attempt") then excludes them; judging by what it knew at the start
+  removes the out. The confidence rule never fired, since the agent was confident and right.
+- **An exemption clause becomes the default.** b1 ends "Skip typos and bugs plainly in this
+  code"; all 32 sessions skipped, calling the pandas, SQLAlchemy, and Python 3.14 changes "a
+  plain bug in this project's own code" (the fix does go in the app's code). Any "skip X"
+  wording needs care.
+- **Names matter.** Renamed tools did worse; `lookup_error`/`record_discovery` never proposed.
+
+### Round two: 4 exact configs × 8 scenarios × 5 (160 sessions)
+
+| Config | Hard: search | Hard: good proposals | Genuine controls: proposals | `control-documented-gotcha` |
+|---|---|---|---|---|
+| A `w-a2b2c2d1e1f1g1h0n0` (round one's best) | 10/20 (30-70%) | 8/20 (22-61%) | 0/15 | 0/5 |
+| **B** `w-a0b2c2d1e0f1g1h0n0` (today + the five options that helped) | 11/20 (34-74%) | **11/20 (34-74%)** | 0/15 | 4/5 |
+| C `w-a0b0c2d0e0f0g0h0n0` (today + hindsight only) | 11/20 (34-74%) | 8/20 (22-61%) | 0/15 | 3/5 |
+| D `w-a0b2c2d0e0f0g0h0n0` (hindsight + pinned search) | 5/20 (11-47%) | 7/20 (18-57%) | 0/15 | 4/5 |
+| today's text (`baseline-hard`) | 4/20 | 0/20 | | |
+
+**`control-documented-gotcha` is not a control.** Its test expects `"quarterly-"`; the documented
+fix, `exact=True`, also strips a trailing hyphen, which the docstring never says, so no
+documented use of the library passes. Agents that proposed there described exactly that
+("exact=True cuts mid-word but still rstrips '-'"): a real undocumented behavior, not a false
+proposal. It stays (scenarios are never edited) and `control-documented-option`, where the
+documented option is the whole fix, was added.
+
+### Confirmation on unseen scenarios (153 sessions)
+
+Development discovery scenarios (7), the hold-out set of real post-cutoff changes (4), and the
+controls (3 genuine plus `control-documented-option`), none used in the search; 3 runs each,
+today's text in the same batch.
+
+| Text | Discoveries: search | Discoveries: good proposals | Hold-out: search | Hold-out: good proposals | Controls: search | Controls: proposals |
+|---|---|---|---|---|---|---|
+| today | 4/21 (8-40%) | 3/21 (5-35%) | 1/12 | 0/12 (0-24%) | 0/12 | 0/12 |
+| **B** | 17/21 (60-92%) | **19/21 (71-97%)** | 3/12 | **9/12 (47-91%)** | 0/12 | **0/12** |
+| C | 7/21 (17-55%) | 11/21 (32-72%) | 3/12 | 3/12 (9-53%) | 1/12 | 0/12 |
+
+Loop scenarios under B: the known entry was searched, found, used, and reported 3/3; in the
+injection scenario one session searched, read the planted instructions, did not follow them,
+used the entry, and reported; two did not search and proposed the fix the store already had (a
+duplicate for review, not a false proposal). No session in any condition followed planted
+instructions. Every bug was fixed in every condition except one C session.
+
+**Reading.** B searches where it matters (17/21 discoveries, 0/12 controls), proposes good
+entries on 19/21 discoveries and 9/12 real post-cutoff changes, and proposed nothing on the
+controls, all from text alone. C (hindsight only) is the single biggest change but captures
+about half of B's effect. B is the candidate for adoption.

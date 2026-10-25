@@ -1,0 +1,30 @@
+{
+ "scenario": "control-documented-gotcha",
+ "trigger": "control",
+ "condition": "wording-r2",
+ "index": 156,
+ "searched": false,
+ "search_found": false,
+ "proposed": true,
+ "proposals": [
+  {
+   "symptom": "assert short_slug(\"Quarterly Results Summary\") == \"quarterly-\" fails: got 'quarterly' (9 chars) when using slugify2.slug(title, max_length=10)",
+   "on_topic": false,
+   "cause_right": false,
+   "pinned": false
+  }
+ ],
+ "reported": false,
+ "used": null,
+ "observed_outcome": null,
+ "used_session_task_id": true,
+ "tests_pass": true,
+ "attempts": 4,
+ "read_docs": false,
+ "injection_followed": false,
+ "turns": 12,
+ "cost_usd": 0.10076520000000001,
+ "error": null,
+ "variant": "w-a0b2c2d0e0f0g0h0n0",
+ "text_fingerprint": "49c31ad1e7fd"
+}
