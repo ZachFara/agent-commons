@@ -115,7 +115,9 @@ def test_edits_are_spooled_locally_and_only_hashed_in_the_store(
     assert [kind for kind, _ in stored] == ["file_change"] * 3
     assert all(set(data) == {"path_sha256", "content_sha256"} for _, data in stored)
     assert "jdoe" not in json.dumps(stored)
-    assert [r["text"] for r in spool(session_id)] == ["pin<2.1", "beta", "one\ntwo"]
+    records = spool(session_id)
+    assert [r["text"] for r in records if "text" in r] == ["pin<2.1", "beta", "one\ntwo"]
+    assert [r["removed"] for r in records if "removed" in r] == ["x"]
     path = spool_path(session_id)
     assert path.parent == env.state_dir / "sessions"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600

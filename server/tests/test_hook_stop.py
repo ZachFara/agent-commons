@@ -143,3 +143,29 @@ def test_session_start_prunes_old_spools(session: Session) -> None:
     os.utime(old, (month_ago, month_ago))
     session.env.run("session-start", {"session_id": str(uuid.uuid4())})
     assert not old.exists()
+
+
+RENAME_FIX = "Rename `ttl=` to `expire_after=` where you construct `CacheConfig`."
+
+
+def test_a_minimal_edit_that_removes_what_the_fix_names_counts_as_used(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Found by tools/agent_eval.py: the edit adds only `expire_after=`; `ttl=` is removed."""
+    env = HookEnv(database_url, tmp_path, monkeypatch)
+    env.init()
+    session = Session(env, database_url, tmp_path)
+    with psycopg.connect(database_url) as conn:
+        conn.execute("UPDATE entries SET fix = %s WHERE id = %s", (RENAME_FIX, session.entry_id))
+    session.search()
+    session.tool(
+        "Edit",
+        {
+            "file_path": "/p/app/settings.py",
+            "old_string": "ttl=60",
+            "new_string": "expire_after=60",
+        },
+    )
+    session.stop()
+    used, _outcome, _evidence, _model = session.outcome()
+    assert used == "yes"

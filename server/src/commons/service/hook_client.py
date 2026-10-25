@@ -179,6 +179,8 @@ def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
         append_spool(use.session_id, {"tool": use.tool_name, "command": scrub(use.command)})
     if use.new_text is not None:
         append_spool(use.session_id, {"tool": use.tool_name, "text": scrub(use.new_text)})
+    if use.old_text:
+        append_spool(use.session_id, {"tool": use.tool_name, "removed": scrub(use.old_text)})
     test_run: dict[str, object] | None = None
     if use.command is not None and use.exit_code is not None and _is_test(use.command):
         test_run = {"command": scrub(use.command), "exit_code": use.exit_code}
@@ -207,7 +209,9 @@ def _is_test(command: str) -> bool:
 
 
 def _session_text(session_id: str) -> str:
-    parts = (record.get("command") or record.get("text") for record in read_spool(session_id))
+    # Commands run, text added, and text removed: a fix often names what to take out.
+    keys = ("command", "text", "removed")
+    parts = (record.get(key) for record in read_spool(session_id) for key in keys)
     return "\n".join(str(part) for part in parts if part)
 
 
