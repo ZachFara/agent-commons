@@ -8,6 +8,7 @@ Raw per-session results from `tools/agent_eval.py` (decision 0023). One JSON fil
 | `baseline` | 2026-10-25 | sonnet | 65 (13 scenarios × 5) | The system as shipped, before any change to what the agent sees |
 | `baseline-holdout` | 2026-10-25 | sonnet | 20 (4 real-change scenarios × 5) | Same system on the hold-out set (real post-cutoff breaking changes) |
 | `dev-examples` | 2026-10-25 | sonnet | 4 (2 dev scenarios × 2) | Variant `examples` (worked argument shapes in tool descriptions), development check only |
+| `verify-hard` | 2026-10-25 | sonnet | 4 (hard set × 1) | Verification of the hard set: obvious fix must fail (see decision 0023) |
 
 Summarize with `uv run python tools/agent_eval.py report --condition <name>` after copying a
 condition's JSON files into `.scratch/eval/<name>/`.

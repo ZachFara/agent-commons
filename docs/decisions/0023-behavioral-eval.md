@@ -74,3 +74,30 @@ routine." The agent recognizes version-specific breaking changes and classifies 
 The sqlite3 change was fixed as a plain caller bug without noticing the version dependence. The
 first experiment therefore targets the "routine" judgement: name the signal rather than ask the
 agent to judge difficulty.
+
+Hard set (2026-10-25, `tools/eval/holdout.py` `HARD`): the first hold-outs were solved in 1-3
+attempts because each error message named its own fix. The owner asked for scenarios that are
+non-trivial on sight. New rule: **the obvious fix must fail**, enforced by giving every scenario
+one test the first fix passes and one it does not. Four scenarios, each on a real post-cutoff
+change confirmed by running it, with the misleading signal noted: pandas 3.0 Copy-on-Write
+(filtered-subset assignment silently leaves the parent unchanged; `.copy()` does nothing),
+SQLAlchemy 2.1 unconditional autoflush (a Core lookup now sees pending rows, so a
+get-or-create skips a row the app's test expects), SQLModel 0.0.45 reading legacy naive rows as
+UTC-aware (`TypeError: can't compare offset-naive and offset-aware` raised in app code, far
+from the database), Python 3.14 deferred annotations (a TYPE_CHECKING-only import passes
+construction and fails only in `get_type_hints`; the runtime import is circular for one model).
+PyTorch and PySpark were considered and set aside: no silent change could be pinned to a
+version runnable on this machine, and a 127 MB wheel or a JVM per session is a poor fit for
+20-session batches.
+
+Verification (one session each, Sonnet): all four fixed, three in **one attempt and four
+turns**. The agent diagnosed each correctly on first read ("The cause was SQLAlchemy's
+autoflush", fixed with `session.no_autoflush`). It then declined to share and said why: "I
+didn't search or report to Agent Commons. It was a one-attempt fix." Two conclusions. Attempt
+count cannot be the difficulty signal: these are hard for a human and easy for Sonnet. And the
+propose rule's own wording ("took more than one attempt") is the bottleneck, applied literally
+by the agent to exclude exactly the cases the commons exists to collect. The signal the agent
+states in every transcript, and the one the next conditions key on, is whether the cause was
+a library or version behavior rather than the app's own logic. The owner's confidence-based
+rule is kept as a wording variant but is unlikely to fire here: the agent was confident and
+right.
