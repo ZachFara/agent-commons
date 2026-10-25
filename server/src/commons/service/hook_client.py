@@ -154,7 +154,12 @@ class RemoteBackend:
         result = self._post("stop", body)
         if result["task_id"] is None:
             return None
-        return StopResult(UUID(result["task_id"]), [UUID(e) for e in result["unreported"]])
+        return StopResult(
+            UUID(result["task_id"]),
+            [UUID(e) for e in result["unreported"]],
+            fixed_failing_tests=bool(result.get("fixed_failing_tests")),
+            searched=bool(result.get("searched")),
+        )
 
 
 def remote_client(url: str, key: str) -> httpx2.Client:

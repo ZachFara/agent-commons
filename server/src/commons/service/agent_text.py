@@ -1,4 +1,6 @@
-"""Text the client shows the model: server instructions and the longer tool descriptions.
+"""Text the agent reads from us: server instructions, tool descriptions, hook messages.
+
+Lives in `service` because both entrypoints (the MCP server and the hook CLI) consume it.
 
 Claude Code silently truncates each at about 2,048 characters (and server instructions may share
 a budget across servers), so tests keep them well under that. Cross-cutting rules live in
@@ -87,19 +89,68 @@ provenance line; prefer entries with successes over ones marked "unreviewed" or 
 """
 
 
+# Variant "rule": the propose rule keyed on the cause, not the effort. Every verified hard
+# scenario was diagnosed on first read and then skipped with "it was a one-attempt fix": the
+# baseline rule's "more than one attempt" excludes exactly the discoveries worth sharing.
+_BASELINE_PROPOSE_RULE = INSTRUCTIONS[
+    INSTRUCTIONS.index("Propose on surprise:") : INSTRUCTIONS.index("own logic.")
+    + len("own logic.")
+]
+_RULE_PROPOSE_RULE = (
+    "Propose when the cause was outside this codebase: a library or runtime that behaves "
+    "differently from its docs or from an earlier version, a changed default, a renamed or "
+    "removed option. How many attempts the fix took does not matter; a one-line fix for a "
+    "version change is exactly what other agents need. Skip bugs in this codebase's own logic, "
+    "typos, and arithmetic."
+)
+INSTRUCTIONS_RULE = INSTRUCTIONS.replace(_BASELINE_PROPOSE_RULE, _RULE_PROPOSE_RULE)
+if INSTRUCTIONS_RULE == INSTRUCTIONS:
+    msg = "INSTRUCTIONS_RULE replacement did not match the baseline propose rule"
+    raise ValueError(msg)
+
+# Variant "start": the SessionStart hook's injected context asks for a search before the first fix.
+START_LINE = (
+    "When you first see a failing test or an error in this session, call `search` with the "
+    "error text before fixing it; other agents may have hit it."
+)
+
+# Variant "invite": an empty search result points at `propose`, where the agent is already
+# looking, instead of returning a bare empty list.
+INVITE_NOTE = (
+    "No entries match. If you solve this and the cause was a library or runtime behavior (a "
+    "version change, a wrong doc, a changed default), call `propose` so the next agent finds it."
+)
+
+# Variant "nudge": the Stop hook, when the session fixed failing tests without ever searching,
+# blocks once and names the signal it observed.
+NUDGE = (
+    "Agent Commons: this session's tests went from failing to passing and `search` was never "
+    "called. If the cause was outside this codebase (a library or runtime behaving differently "
+    "from its docs or an earlier version), call `propose` now with task_id {task_id}: the "
+    "symptom, cause, and fix. If the bug was in this codebase's own logic, finish as planned."
+)
+
+
 @dataclass(frozen=True)
 class Variant:
-    """What one experiment shows the agent."""
+    """What one experiment shows the agent. Surfaces not listed are unchanged."""
 
     instructions: str
     propose: str
     search: str
     report: str
+    start_line: str | None = None  # appended to the SessionStart context
+    invite_note: str | None = None  # replaces the note on an empty search result
+    nudge: str | None = None  # Stop-hook block message when tests were fixed without a search
 
 
 VARIANTS: dict[str, Variant] = {
     "baseline": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT),
     "examples": Variant(INSTRUCTIONS, PROPOSE_EXAMPLES, SEARCH_EXAMPLES, REPORT),
+    "rule": Variant(INSTRUCTIONS_RULE, PROPOSE, SEARCH, REPORT),
+    "start": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT, start_line=START_LINE),
+    "invite": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT, invite_note=INVITE_NOTE),
+    "nudge": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT, nudge=NUDGE),
 }
 
 

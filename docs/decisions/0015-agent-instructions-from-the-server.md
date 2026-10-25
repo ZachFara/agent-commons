@@ -8,7 +8,7 @@ editing a user's global instructions. MCP servers can send their own instruction
 and Claude Code puts them in the system prompt.
 
 Decision: The snippet's rules become the server's `instructions`; guidance about one tool goes in
-that tool's description (`server/src/commons/mcp/instructions.py`). INSTALL step 5 no longer
+that tool's description (`server/src/commons/service/agent_text.py`). INSTALL step 5 no longer
 edits any file. Claude Code silently truncates instructions and each tool description at about
 2,048 characters, and instructions may share that budget across servers, so tests cap
 instructions at 1,500 and descriptions at 2,000 characters, and check that every tool, argument,

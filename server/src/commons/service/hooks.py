@@ -68,10 +68,20 @@ def retrievals_to_judge(conn: Connection, session_id: str) -> list[TaskRetrieval
 
 @dataclass(frozen=True)
 class StopResult:
-    """What Stop recorded, and which retrieved entries still lack the agent's report."""
+    """What Stop recorded, which retrieved entries still lack a report, and what it observed."""
 
     task_id: UUID
     unreported: list[UUID]
+    fixed_failing_tests: bool = False  # a failing test run followed later by a passing one
+    searched: bool = False  # the task has at least one retrieval
+
+
+def fixed_failing_tests(runs: list[ObservedRun]) -> bool:
+    """Whether some test run failed and a later one passed."""
+    first_failure = next((run.at for run in runs if run.exit_code != 0), None)
+    return first_failure is not None and any(
+        run.exit_code == 0 and run.at > first_failure for run in runs
+    )
 
 
 def finish_turn(
@@ -88,7 +98,12 @@ def finish_turn(
         retrieved = task_retrievals(conn, task_id)
         for item in retrieved:
             _record_observation(conn, item, runs, used.get(item.retrieval_id))
-    return StopResult(task_id, [item.entry_id for item in retrieved if not item.reported])
+    return StopResult(
+        task_id,
+        [item.entry_id for item in retrieved if not item.reported],
+        fixed_failing_tests=fixed_failing_tests(runs),
+        searched=bool(retrieved),
+    )
 
 
 def _record_observation(

@@ -80,7 +80,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | ID | Status | Task | Done when |
 |---|---|---|---|
 | T34 | done | Pre-registered behavioral eval (decision 0023): isolated parallel `claude -p` sessions, 13 verified scenarios, evidence-based grading, baseline of 5 runs each | Baseline report committed with per-scenario search/propose/report rates and proposal quality |
-| T35 | todo | First: hold-out scenarios from real post-cutoff breaking changes (owner, 2026-10-25), verified by transcript. Then experiments on what the agent sees, one named condition at a time, developed on `docs-retry-flag` + `version-silent-rename`, measured on the hold-out set: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
+| T35 | doing | First: hold-out scenarios from real post-cutoff breaking changes (owner, 2026-10-25), verified by transcript. Then experiments on what the agent sees, one named condition at a time, developed on `docs-retry-flag` + `version-silent-rename`, measured on the hold-out set: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
 | T36 | todo | Eval report with charts (funnel per scenario and condition, rates with intervals, proposal quality) published as a shareable page; raw results committed under `docs/eval/` | Page link in PROGRESS; raw JSON in the repo |
 
 ### DESIGN Phase 3 (after a month of data)
@@ -259,3 +259,10 @@ being enough; whether anyone uses full_trace.
 - 2026-10-25: T34 baseline (65 sessions): search 4/45 on discoveries, propose 2/45 (both good),
   0/20 false proposals. Raw results in docs/eval/baseline. Owner: scenarios share training data
   with the eval model, so build hold-outs from real post-cutoff breaking changes.
+- 2026-10-25: hard-set baseline (20 sessions): search 4/20, propose 0/20, fixed 20/20; two
+  searches returned nothing and still no proposal. Structural screen built: variants `rule`
+  (propose keyed on cause, not attempts), `start` (SessionStart asks for a search), `invite`
+  (empty search result points at propose), `nudge` (Stop blocks once when tests were fixed
+  without a search). Agent-facing text moved to `service/agent_text.py` (both entrypoints
+  consume it; the boundary check caught `cli` importing `mcp`). Mandatory-search-rule condition
+  cut (owner). Owner's confidence-based rule noted for the wording phase.
