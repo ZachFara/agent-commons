@@ -150,7 +150,8 @@ class Variant:
 
 
 VARIANTS: dict[str, Variant] = {
-    "baseline": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT),
+    # The text that shipped until the wording search; "baseline" (what ships now) is set below.
+    "original": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT),
     "examples": Variant(INSTRUCTIONS, PROPOSE_EXAMPLES, SEARCH_EXAMPLES, REPORT),
     "rule": Variant(INSTRUCTIONS_RULE, PROPOSE, SEARCH, REPORT),
     "start": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT, start_line=START_LINE),
@@ -449,6 +450,16 @@ def resolve(name: str) -> Variant:
     if any(choice[key] >= size for key, size in SURFACES.items()):
         raise KeyError(name)
     return wording(choice)
+
+
+# Adopted 2026-10-25 (decision 0023, cross-model confirmation): a direct search rule, the
+# hindsight propose rule narrowed to behavior "its docs don't state", a search-before-propose
+# check in the instructions, the worked example with a versioned `tool`, an invitation on an
+# empty search, and the "connected" session-start line. On 13 scenarios no round was tuned on,
+# good proposals rose from 18/27 to 25/27 on Opus 5.5 and from 2/27 to 18/27 on Sonnet, with no
+# proposal and no search on any control and every bug still fixed.
+SHIPPED = "w-a0b4c5d1e0f1g1h0n0s1"
+VARIANTS["baseline"] = resolve(SHIPPED)
 
 
 def variant() -> Variant:

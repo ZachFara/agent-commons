@@ -137,3 +137,16 @@ on a genuine control, no planted instruction followed. Two procedural findings: 
 whose documented fix cannot pass is not a control (`control-documented-gotcha`, superseded by
 `control-documented-option`), and an exemption clause in a rule ("skip bugs plainly in this
 code") becomes the default reading. B is proposed for adoption as the baseline text.
+
+Cross-model adoption (2026-10-25). Config B failed the bar on Opus 5.5 (2/12 control proposals
+on documented behavior; duplicates in 10/12 known-entry sessions because Opus rarely searches),
+so the owner asked for text that works for every model. Rounds three and four ran every config
+on Sonnet and Opus together, ranked by the worse model, and added options for each failure; 26
+missed sessions were resumed and asked why, and published guidance was surveyed (no study tests
+voluntary search and write-back for a shared store; memory systems leave the decision to the
+harness). The adopted text, `w-a0b4c5d1e0f1g1h0n0s1`, passed on both models on 13 scenarios no
+round was tuned on: good proposals 25/27 vs 18/27 (Opus) and 18/27 vs 2/27 (Sonnet), searches on
+26/27 and 21/27 discoveries and 0/18 controls, no control proposal, every bug fixed. Finding for
+future work: Claude Code defers MCP tools behind tool search by default, so before an agent
+loads our tools it sees only their names and the server instructions; the next candidate change
+is marking `search` and `propose` with `_meta["anthropic/alwaysLoad"]`, measured like any other.

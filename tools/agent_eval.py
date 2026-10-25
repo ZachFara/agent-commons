@@ -109,15 +109,12 @@ def wording_search(args: argparse.Namespace) -> int:
 
 
 def plan_configs(named: list[str] | None, count: int, seed: int) -> list[str]:
-    """Return the named configs to repeat, or today's text plus `count` balanced random ones."""
+    """Return the named configs to repeat, or the shipped text plus `count` balanced ones."""
     if named:
         for name in named:
             agent_text.resolve(name)  # fail before any session starts
         return named
-    return [
-        agent_text.wording_name(dict.fromkeys(agent_text.SURFACES, 0)),  # today's text
-        *balanced_configs(count, seed),
-    ]
+    return [agent_text.SHIPPED, *balanced_configs(count, seed)]  # what ships, as the anchor
 
 
 def finished(transcripts: Path, condition: str, job: runner.Job) -> bool:

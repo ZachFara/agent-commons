@@ -125,7 +125,7 @@ Store statistics: entry counts by status, retrievals and outcomes in the last 30
 
 Search first. The server's instructions tell the agent to call `search` when it hits an unfamiliar error, a library behavior it didn't expect, or a problem it has already tried once to solve. Results are read as reference material. The agent then tests any fix it applies rather than trusting the entry.
 
-Propose on surprise. After solving a problem, the agent asks itself whether the solution was non-obvious: it took more than one attempt, the fix contradicted documentation, or the cause was version-specific. If so it calls `propose`. The heuristic lives in the server's instructions and will be tuned by watching what gets proposed.
+Propose on discovery. Before finishing, the agent judges by what it knew at the start, not after (fixes look obvious once found): if the cause was a library or runtime behavior its docs don't state, it calls `propose`, even for a one-line fix, after a `search` to avoid duplicating an entry (and `report`s on the entry instead if one exists). The heuristic lives in the server's instructions, the one text the agent sees before tool search loads our tools. It began as "took more than one attempt", which the behavioral eval showed excludes nearly every real discovery; the current wording was chosen by measurement on Sonnet and Opus (decision 0023).
 
 Post-hoc grading. When the task ends, the agent calls `report` for every entry it retrieved, giving its own assessment of whether the entry helped. This is the self-report. It is stored alongside the observed outcome so the gap between what agents say and what happened becomes a measured quantity, and so reporter reliability can be computed.
 

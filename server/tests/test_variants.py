@@ -196,7 +196,7 @@ def test_fingerprint_changes_when_any_surface_changes() -> None:
 )
 def test_combined_variants_take_each_surface_from_their_parts(name: str, parts: set[str]) -> None:
     combined = agent_text.VARIANTS[name]
-    baseline = agent_text.VARIANTS["baseline"]
+    baseline = agent_text.VARIANTS["original"]  # the combinations were built on the original
     for field in dataclasses.fields(agent_text.Variant):
         owners = {
             part

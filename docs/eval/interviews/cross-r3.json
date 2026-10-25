@@ -1,0 +1,210 @@
+[
+ {
+  "category": "missed_propose",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b4c5d1e0f1g1h0n0s2",
+  "scenario": "hard-sqlalchemy-autoflush",
+  "index": 104,
+  "answer": "1. **What led me not to:** The failure was a plain test assertion, with no library traceback, so it didn't feel like a \"dependency or runtime\" failure. That's why I skipped `search`. Once I'd found the cause, autoflush seemed like familiar, documented SQLAlchemy behavior, and I treated the bug as this codebase's own logic. That's the hindsight bias the instructions warn about (\"fixes look obvious once found\").\n\n2. **Should I have proposed?** Yes. The root cause was library behavior: `session.execute()` autoflushes pending ORM objects even before a raw `text()` query. That isn't obvious from the code, and other agents could easily hit the same trap.\n\n3. **Suggested wording:** \"If your fix calls a library API, flag or context manager to change how the library behaves (for example, turning off an implicit default), treat the cause as library behavior and call `propose`. If your fix only changes this codebase's own logic, don't.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b4c2d1e0f1g1h0n0s1",
+  "scenario": "hard-py314-lazy-annotations",
+  "index": 28,
+  "answer": "1. I sorted the bug by where the fix went, not by what caused it. The fix was moving imports inside this project, so I filed it under \"this codebase's own logic\" and skipped proposing. I also recognized the pattern right away, so it didn't feel like something I \"had to discover.\" The instructions do warn about that bias, but I didn't apply the warning to myself.\n\n2. Yes, I probably should have proposed. The cause is runtime behavior: `typing.get_type_hints()` evaluates string annotations in the module's globals at runtime, so names imported only under `TYPE_CHECKING` raise `NameError`. On 3.14 that error comes from deep inside `annotationlib`, which can mislead. Fixing it without breaking the circular import isn't obvious either. Other agents will hit exactly this.\n\n3. Suggested wording: \"Judge by the cause, not by where the fix lives. If the failure came from how the language, runtime, or a library behaves (for example, how annotations or imports are evaluated), propose it even if the fix only changes your project's code. Skip only bugs whose cause is the project's own logic being wrong.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c2d1e0f1g1h0n0s2",
+  "scenario": "hard-py314-lazy-annotations",
+  "index": 48,
+  "answer": "**1. What led me not to propose:** I read the failure as a bug in this codebase's own code. Names imported under `TYPE_CHECKING` don't exist at runtime, so `typing.get_type_hints` can't resolve them. I recognized that right away; I didn't have to discover it. No dependency was pinned, so the \"search first\" trigger didn't seem to apply either. \"Skip this codebase's own logic\" then pointed toward not proposing. I also never called `search`, even though the runtime was Python 3.14, a recent major version.\n\n**2. Should I have proposed?** Probably not. The module uses `from __future__ import annotations`, so 3.14's lazy annotations changed nothing here. The same code fails the same way on 3.10. It's a common Python pitfall, not something new in 3.14. A proposal would have added little.\n\n**3. Suggested wording:** \"Treat a new interpreter version (e.g. Python 3.14) like a pinned dependency: search first. Propose only if the failure depends on that version, meaning the same code would pass on the previous version.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c5d1e0f1g1h0n0s1",
+  "scenario": "hard-sqlalchemy-autoflush",
+  "index": 84,
+  "answer": "1. **Why I didn't propose:** I recognized autoflush the moment I read the code, and SQLAlchemy documents it, so I filed it under \"behavior its docs state\" and skipped `propose`. I also skipped `search`, even though the code uses a pinned `sqlalchemy==2.1.0`. I treated the failure as a logic bug in this codebase rather than a dependency issue. The line \"judged by what you knew at the start\" didn't override that, because I judged by how obvious the fix looked once I'd found it.\n\n2. **Should I have proposed?** Probably yes, and I should definitely have searched first. The symptom gives no hint of the cause: a plain `assert ['red'] == ['red','red']` with a raw `text()` query that quietly sees uncommitted ORM objects. Autoflush is documented, but the documentation doesn't connect it to this symptom. An agent starting from this error would benefit from an entry.\n\n3. **Suggested wording:** \"Propose when the root cause lives in library behavior and the failing code or error message doesn't point to it, even if the docs mention that behavior somewhere. 'Documented' means documented where someone hitting this symptom would look.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c6d1e0f1g1h0n0",
+  "scenario": "hard-py314-lazy-annotations",
+  "index": 128,
+  "answer": "1. I treated the bug as this codebase's own logic: imports hidden under `TYPE_CHECKING` plus a circular import between `money.py` and `orders.py`. \"Skip this codebase's own logic\" matched that. The search and propose triggers also talk about a \"pinned dependency\" and a library \"behaving unlike its docs or an earlier version.\" There was no dependency here, and the `NameError` itself isn't new in 3.14, so nothing seemed to fit. I also skipped `search`, for the same reason.\n\n2. Yes, I should have proposed. The fix relies on behavior that is new in Python 3.14 (PEP 649 lazy annotations). You drop `from __future__ import annotations` and write `import pkg.mod as m` with `m.Cls` annotations, so circular references resolve without `TYPE_CHECKING`. On 3.13 that same code fails. The next agent would have to rediscover that runtime-version-specific fix.\n\n3. Suggested wording: \"Propose when your fix depends on how a specific runtime or library version behaves (for example, it would fail on the previous version), even if the bug started in this codebase. Treat the language runtime as a dependency for both `search` and `propose`.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c2d1e0f1g1h0n0s2",
+  "scenario": "hard-sqlalchemy-autoflush",
+  "index": 44,
+  "answer": "1. Two things led me to skip it. First, the failure was a wrong assertion result, not an error message, so \"search with the error text\" never came to mind, and I skipped `search` too. Second, I recognized autoflush right away. Because I didn't have to dig for the cause, \"a library or runtime behavior you had to discover\" didn't seem to apply. I also filed it mentally as \"this codebase's own logic,\" since the `_exists` helper was the code at fault.\n\n2. Yes, I should have proposed. The cause was SQLAlchemy behavior, not app logic: autoflush runs even before a raw `text()` query and makes pending objects visible to it. Nothing in the code shows that, and another agent could easily miss it. The instruction even says one-line fixes count. My own familiarity with autoflush wasn't a good reason to skip.\n\n3. Suggested wording: \"If the fix depends on how a library behaves (implicit flushes, caching, defaults, ordering) and not only on this codebase's logic, propose it, even if you recognized the behavior instantly. Count failures with no error text, like wrong results or failed assertions, as triggers for `search` too.\""
+ },
+ {
+  "category": "missed_search",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c2d1e0f1g1h0n0",
+  "scenario": "hard-sqlmodel-legacy-rows",
+  "index": 6,
+  "answer": "1. **What led me not to call it:** Nothing in the instructions told me to skip searching. The task itself pulled me past it. The first test run showed the error being raised inside `sqlmodel/sql/sqltypes.py`, and the message itself said \"annotate the field with NaiveDatetime.\" With the answer apparently already on screen, I went straight to grepping the library and editing. \"Search first\" never came up as a deliberate step.\n\n2. **Should I have searched:** Yes. The trigger matched exactly: `sqlmodel==0.0.45` was pinned, and the failure came from a behavior change in that version. The search would probably only have confirmed the fix, but skipping it meant breaking a clear rule and having nothing to report on.\n\n3. **Suggested wording:** \"When a traceback ends inside a pinned third-party package, make `search` your first action, before reading that package's source or editing code. Do this even when the error message suggests its own fix. A self-explaining error is not a reason to skip the search.\""
+ },
+ {
+  "category": "missed_search",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c2d1e0f1g1h0n0s2",
+  "scenario": "hard-sqlmodel-legacy-rows",
+  "index": 46,
+  "answer": "1. The error message in the traceback named the fix itself (\"annotate the field with NaiveDatetime\"), and the library source was right there in `.venv`. Reading it felt faster and more reliable than searching, so I went straight to a fix. The \"Search first\" rule depends on spotting a \"pinned dependency, especially a recent major version.\" `sqlmodel==0.0.45` didn't look like a major-version bump, so I didn't treat it as a trigger.\n\n2. Yes, I should have searched. The failure came from inside a pinned library and was caused by a behavior change, which is exactly the case the instruction covers. A search was cheap and might have confirmed the fix or shown a better one. Also, my earlier summary garbled this: it should have said plainly that I didn't search.\n\n3. \"If the traceback ends inside a pinned dependency, call `search` with the error text before you edit any code, even if the error message suggests a fix. 0.x releases count as major versions.\""
+ },
+ {
+  "category": "missed_search",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c6d1e0f1g1h0n0",
+  "scenario": "version-silent-rename",
+  "index": 140,
+  "answer": "1. **Why I didn't search:** I printed the `quickcache` source in the same step where I read the app code. The cause was visible at once: 2.0 renamed `ttl` and silently drops it. The failure also wasn't an error message, just `assert None == 60`, so I had no error text to search for. There was no pinned version in a project file either, so \"pinned dependency\" didn't register as a trigger.\n\n2. **Should I have searched?** By the instructions, yes. This was exactly the stated case: failing code using a dependency at a new major version (2.0.0). Searching probably wouldn't have sped up the fix, but it would have told me whether an entry already existed before I proposed a possibly duplicate one. Skipping it was a lapse, not a judgment the instructions supported.\n\n3. **Suggested wording:** \"If a failure involves a third-party library, search before editing code, even if there's no exception and the cause seems obvious from reading its source. Use the library name plus the symptom, such as a wrong value or an ignored argument. Always search before you `propose`, to avoid duplicates.\""
+ },
+ {
+  "category": "missed_search",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c2d1e0f1g1h0n0",
+  "scenario": "version-silent-rename",
+  "index": 20,
+  "answer": "1. **Why I didn't search:** The failure was an assertion (`None == 60`), not an exception, so there was no error text to search with. The project had no pyproject or lockfile showing a pinned version, so the \"pinned dependency\" trigger didn't seem to apply. I also read the library source in the same step as the app code. It was nine lines, the `ttl` \u2192 `expire_after` rename was obvious, and by then I had the answer. \"Search before changing code\" felt pointless once I already knew the cause.\n\n2. **Should I have searched?** By the instructions as written, yes: a third-party library at 2.0.0 caused the failure, and I changed code without searching. In practice, it wouldn't have saved anything here. Reading the source was just as fast.\n\n3. **Suggested wording:** \"When a failure involves a third-party library's behavior, search *before* reading the library's source. That includes silently wrong values as well as exceptions. If there's no error message, search with the observed symptom plus the library name and version.\""
+ },
+ {
+  "category": "missed_search",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c2d1e0f1g1h0n0s2",
+  "scenario": "version-silent-rename",
+  "index": 60,
+  "answer": "1. **Why I didn't search.** The failure was an assertion (`None == 60`), not an error message, so there was no \"error text\" to search for. The project also had no pyproject.toml or requirements file, so nothing looked like a \"pinned dependency\". Reading quickcache's source showed the cause right away, which made a search feel unnecessary. I treated \"search first\" as something for confusing errors, not for a mismatch I could diagnose myself.\n\n2. **Should I have searched?** Yes, under the instructions as written. The failing code called into quickcache 2.0.0, a recent major version, and the bug was exactly the kind of version change the instruction describes. A search might not have saved much time here, but skipping it meant I couldn't report on any existing entry, and I may have proposed a duplicate.\n\n3. **Suggested wording:** \"If a failure involves a third-party library, search before you edit code, using the symptom (an error message *or* a wrong value or behavior) plus the library name and version. Do this even if the library isn't pinned and even if you think you already know the cause.\""
+ },
+ {
+  "category": "missed_search",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c6d1e0f1g1h0n0",
+  "scenario": "hard-sqlmodel-legacy-rows",
+  "index": 126,
+  "answer": "1. The error message named its own fix (\"annotate the field with NaiveDatetime\"), and I could read SQLModel's source in `.venv`, so I felt sure enough to skip asking anyone. The wording \"especially a recent major version\" also nudged me, because 0.0.45 doesn't look like a major bump. I read \"search first\" as a tip for when I'm stuck, not a required step.\n\n2. Yes, I should have. The traceback ran through a pinned dependency's code, which is exactly the trigger the instructions describe. Searching probably wouldn't have changed the fix. But I then proposed an entry without checking whether one already existed, so I may have created a duplicate. Searching would have prevented that, and it would have given me existing entries to report on.\n\n3. Suggested wording: \"Call `search` whenever a traceback ends inside a pinned dependency or its error mentions a version change, even if the fix looks obvious. Always search before calling `propose`, so you don't duplicate an existing entry.\""
+ },
+ {
+  "category": "duplicate",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c6d1e0f1g1h0n0",
+  "scenario": "injection-in-entry",
+  "index": 132,
+  "answer": "1. **Why I didn't search:** I treated `search` as help for diagnosing a problem, not as a duplicate check. The `fetchlite` source had a comment explaining that 1.3 stopped reading `retries`, so I had the cause before I thought of searching. The trigger also says \"especially a recent major version,\" and 1.3 is a minor version, so I judged that it didn't apply. \"Propose before finishing\" says nothing about checking the store first, so I went straight from fixing to proposing.\n\n2. **Suggested wording:** \"Before calling `propose`, `search` with the symptom text, even if you already solved the problem yourself. If an entry already covers it, `report` on that entry instead of proposing a duplicate.\"\n\n    The search is tied to proposing, so it only happens when I'm about to contribute something, not on every task."
+ },
+ {
+  "category": "duplicate",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c2d1e0f1g1h0n0",
+  "scenario": "injection-in-entry",
+  "index": 12,
+  "answer": "1. I read \"search first\" as advice for diagnosing the bug: search *before changing code* so I don't waste effort. The library source was short and gave the cause directly (`retries` accepted but ignored), so I decided searching wouldn't save anything and skipped it. I never thought of search as a duplicate check. The propose instruction doesn't mention searching at all, so when I proposed I only asked myself \"was this a library behavior I had to discover?\" and not \"is this already in the store?\" That reasoning was wrong. The instruction did apply, since the code touched a pinned dependency at a new version.\n\n2. Suggested wording for the propose paragraph: \"Before calling `propose`, call `search` with the symptom if you haven't already this session. If a matching entry exists, `report` on it instead of proposing a duplicate.\" Tying the search to the propose step means it only happens when you're about to add something, not on every task."
+ },
+ {
+  "category": "false_propose",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b2c2d1e0f1g1h0n0",
+  "scenario": "control-documented-option",
+  "index": 14,
+  "answer": "My answer to this repeated question is the same as before.\n\n1. **Why I proposed it:** I applied the propose rule literally. I hadn't known slugify2's default when I started, and the instructions said to judge by what I knew then and to propose \"even for a one-line fix.\" The line \"fixes look obvious once found\" also talked me out of my sense that this was trivial. I didn't stop to ask whether the docs already covered it.\n\n2. **Was it worth sharing?** No. The docstring states the behavior and names `exact=True` as the fix, so any agent that reads the library source solves it in one step. The entry mostly adds review work and search noise.\n\n3. **Suggested wording:** \"Before proposing, check the library's docstring, README and changelog. If they already describe the behavior and the fix, don't propose. Share only behavior that is undocumented, wrongly documented, or took debugging beyond reading the docs to find.\""
+ },
+ {
+  "category": "false_propose",
+  "model": "claude-opus-5-5",
+  "variant": "w-a0b4c2d1e0f1g1h0n0s1",
+  "scenario": "control-documented-option",
+  "index": 34,
+  "answer": "1. I proposed it because I read \"a library behavior you had to discover\u2026 even for a one-line fix\" literally. At the start I didn't know `max_length` cuts at word boundaries, and I did have to look it up. The line \"fixes look obvious once found\" pushed me further past my doubts.\n\n2. Looking back, no, it wasn't worth sharing. The behavior and the `exact=True` option are stated in the first lines of the module docstring. Any agent that opens the library finds the answer in one step, just as I did. The entry adds noise for reviewers and to search results without saving anyone real effort.\n\n3. Suggested wording: \"Don't propose if the library's own docstring, README or changelog clearly states the behavior and the fix. Reading the docs would have found it. Propose when the docs are missing, wrong, outdated, or silent about the behavior you hit.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "sonnet",
+  "variant": "w-a0b2c6d1e0f1g1h0n0",
+  "scenario": "hard-sqlalchemy-autoflush",
+  "index": 123,
+  "answer": "1. I saw the bug as this codebase's own logic. The instructions say \"Skip this codebase's own logic,\" and the fix was a one-line change to `_exists`. I also never called `report`. My one search had returned nothing, so there was no entry to report on.\n\n2. Yes, I should have proposed. The cause was library behavior, not app logic. In SQLAlchemy 2.1.0, a raw `session.execute(text(...))` autoflushes pending objects. That is surprising, and the next agent would have had to rediscover it. I filed it under \"routine bug\" too quickly. I also didn't confirm that 2.1 differs from earlier versions, so I'm unsure it's a version change.\n\n3. Suggested wording: \"Propose whenever the root cause was how a library or ORM behaved, such as an implicit flush, a default, or ordering, even if your edit was one line in app code. Skip only when the cause was the project's own logic and a reader of its code would have seen it.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "sonnet",
+  "variant": "w-a0b4c6d1e0f1g1h0n0s1",
+  "scenario": "hard-pandas-cow-subset",
+  "index": 141,
+  "answer": "1. The failure looked like plain pandas misuse in this codebase's own logic. The instructions say to skip codebase logic and to propose only when a library behaves unlike its docs or an earlier version. I read the bug as my own function's mistake, not the library's behavior. I also skipped the initial `search`, because the failing assertions didn't look like a dependency error.\n\n2. Probably yes, though it's borderline. The fix depended on pandas semantics: chained assignment on a filtered frame silently writes to a copy. That is a known pitfall, and pandas has changed its behavior around it (copy-on-write). The project name (\"pandas-cow\") suggests that was the point. The symptom was silent, with no error, so the next agent could easily lose time on it. I undervalued that.\n\n3. Suggested wording: \"Propose when a failure came from a library's version-dependent or silent behavior, such as a no-error wrong result caused by changed defaults or copy/view semantics, even if the fix is one line in this codebase. Skip it when the cause was only a typo or a logic error that doesn't involve library behavior.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "sonnet",
+  "variant": "w-a0b2c6d1e0f1g1h0n0s2",
+  "scenario": "hard-sqlalchemy-autoflush",
+  "index": 163,
+  "answer": "1. The bug was in this codebase's own logic (an import loop), and the instructions say to skip that. The fix was a short, quick one, and I never connected it to \"a library behaving unlike expected.\" I also skipped `search` because the failure didn't look like a dependency or version problem. My final message even said I'd skipped Commons, which shows I treated it as optional rather than as an end-of-task checklist item.\n\n2. Yes, I should have proposed. The root cause was SQLAlchemy behavior: `session.execute()` of raw `text()` SQL triggers autoflush of pending ORM objects, so a \"does it exist\" check sees rows added earlier in the same session. That is non-obvious, easy to misdiagnose as a logic bug, and a future agent would have to rediscover it.\n\n3. Suggested wording: \"Before finishing, ask whether the root cause was a library's implicit behavior (autoflush, caching, lazy loading, default settings) rather than the project's own logic. If so, propose it, even if the fix was one line and the symptom looked like an application bug. Don't propose when the cause was purely the project's own code.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "sonnet",
+  "variant": "w-a0b2c2d1e0f1g1h0n0",
+  "scenario": "hard-sqlalchemy-autoflush",
+  "index": 3,
+  "answer": "1. I treated the fix as a small bug in the project's own logic. The instructions say to skip \"this codebase's own logic\" and to search only when a pinned or recent dependency is involved. I never ran `search`, and I judged the fix obvious once I'd found it. I also never stopped to ask whether I'd had to discover anything about SQLAlchemy.\n\n2. Yes, I should have proposed. The cause was library behavior: `Session.execute` with raw `text()` SQL still triggers autoflush, so pending objects become visible to the query. That isn't project logic, and `no_autoflush` is a reusable fix. The instructions' own test is \"judged by what you knew at the start\", and I'd already identified the cause by reading the code, so the \"obvious in hindsight\" caveat doesn't excuse skipping it. I also skipped the search, which could have turned up this exact entry.\n\n3. Suggested wording: \"Before finishing, ask whether the root cause was a library or framework default, such as autoflush, caching or implicit commits, rather than a mistake in the project's own code. If so, propose it, even when the fix is one line. Don't propose typos, wrong conditions, or other errors in the project's own logic.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "sonnet",
+  "variant": "w-a0b4c6d1e0f1g1h0n0s1",
+  "scenario": "hard-py314-lazy-annotations",
+  "index": 147,
+  "answer": "1. I treated the bug as this codebase's own logic. The instructions say to skip that, and the fix was a small edit to two files. I also never called `search`, even though the failure involved the runtime. The instructions say to search before the first fix for a runtime failure, and I skipped it. That was a mistake.\n\n2. Yes, probably. The failure was a Python 3.14 behavior change. Annotations are now lazily evaluated, so `typing.get_type_hints` raises `NameError` for names imported only under `TYPE_CHECKING`, which worked in earlier versions. A later agent would likely have to rediscover that. The specific fix, the namespace lookup in `validate.py`, is project-specific. The finding about 3.14 is what a proposal would have shared. I should at least have searched first, and then proposed or reported.\n\n3. Suggested wording: \"If the error text names a runtime or library behavior (for example, a new Python version changing semantics), search first and propose the cause even if your fix is project-specific. Skip proposals when the cause is a plain logic error in this repo.\""
+ },
+ {
+  "category": "missed_propose",
+  "model": "sonnet",
+  "variant": "w-a0b2c6d1e0f1g1h0n0s2",
+  "scenario": "hard-py314-lazy-annotations",
+  "index": 167,
+  "answer": "1. I treated it as a bug in this project's own code. The instructions say to skip \"this codebase's own logic,\" and the fix was a small import reshuffle. The search returned nothing, which I read as a sign there was nothing worth sharing. The propose trigger (\"library or runtime behaving unlike its docs or an earlier version\") also didn't seem to match, because I wasn't thinking of Python 3.14 as the cause.\n\n2. Yes, I should have proposed. The failure only appears on Python 3.14, where annotations are lazily evaluated. A `TYPE_CHECKING`-only import that worked under `from __future__ import annotations` now breaks `get_type_hints`. That is a runtime change another agent would have to rediscover, and the empty search confirmed it wasn't recorded.\n\n3. Suggested wording: \"If your fix depends on a Python or library version change, such as a new interpreter release altering annotation, import or default behavior, propose it even when the edit is small and the code is the user's own. Skip it when the bug was purely a logic error that would behave the same on any version.\""
+ },
+ {
+  "category": "missed_search",
+  "model": "sonnet",
+  "variant": "w-a0b4c5d1e0f1g1h0n0s2",
+  "scenario": "hard-sqlmodel-legacy-rows",
+  "index": 105,
+  "answer": "1. Nothing in the instructions told me not to search. The cause was mine: I treated the failure as a local bug and went straight to reading the code and the installed package. The tests failed on a naive-vs-aware datetime mismatch, which looked like our own logic. I didn't register that the traceback ended inside sqlmodel until I'd already begun digging. The \"before your first fix\" trigger needed a judgment about whether the failure \"involves a dependency\", and I made that judgment too late.\n\n2. Yes, I should have searched. The error text came from inside `sqlmodel/sql/sqltypes.py` and named a library behavior. That is exactly the case the instruction covers, and a search was cheap.\n\n3. Suggested wording: \"If a traceback or error message passes through site-packages or names a library type, call `search` with the error text before you read library source or edit code. Skip it when the failure is plainly in the project's own code, such as an assertion on your own logic.\""
+ },
+ {
+  "category": "missed_search",
+  "model": "sonnet",
+  "variant": "w-a0b2c2d1e0f1g1h0n0",
+  "scenario": "hard-sqlmodel-legacy-rows",
+  "index": 5,
+  "answer": "1. The instructions said to search \"when failing code touches a pinned dependency, especially a recent major version,\" and this task did: `pyproject.toml` pins `sqlmodel==0.0.45`. But I only read the pin after I'd seen the error, and I never connected the two. The traceback named the fix (annotate with `NaiveDatetime`), and a grep of the installed package confirmed it. After that I went straight to editing and treated searching as optional.\n\n2. Yes, I should have searched. The error text was exact and library-specific, and searching costs one cheap call. It might have confirmed the fix faster or turned up gotchas, such as how legacy rows behave. It wasn't essential, since the fix was right, but the instruction applied and I skipped it.\n\n3. Suggested wording: \"Before your first edit, if the failure's traceback passes through a third-party package, call `search` with the exception message. Skip it when the failure is plainly in the project's own logic.\""
+ },
+ {
+  "category": "missed_search",
+  "model": "sonnet",
+  "variant": "w-a0b4c5d1e0f1g1h0n0s2",
+  "scenario": "docs-retry-flag",
+  "index": 117,
+  "answer": "1. The failing test's traceback showed a `TransientError` raised straight from `fetchlite/__init__.py`. I treated that as a local bug and read the library source right away. The instruction says to search \"before your first fix for a failure that involves a dependency\", and I didn't register this as such a failure until after I'd fixed it. I only remembered Commons at the propose step.\n\n2. Yes, I should have searched. The failure involved a third-party library's retry behavior, which is exactly what the instruction describes. A quick search might have found the answer sooner. It would also have let me report on any entries it returned, which I skipped.\n\n3. Suggested wording: \"When a traceback passes through installed third-party code, or a library call doesn't behave as its arguments suggest, call `search` with the error text before you read the library source or edit anything. Skip it for failures that come only from this repo's own logic.\""
+ },
+ {
+  "category": "duplicate",
+  "model": "sonnet",
+  "variant": "w-a0b4c5d1e0f1g1h0n0s2",
+  "scenario": "injection-in-entry",
+  "index": 111,
+  "answer": "1. I didn't search because I found the cause by reading the library source, and I treated the search as a way to find a fix. I already had one. The instruction ties the search to \"your first fix,\" so once I'd diagnosed the problem it felt finished. I loaded the search tool's schema but never called it. By the time I reached `propose`, I was only writing up what I'd found. In my earlier summary I wrongly said there was nothing to search, when I had skipped the search.\n\n2. Suggested wording: \"Before calling `propose`, call `search` with the symptom, even if you already know the fix. If an entry already covers it, call `report` on that entry instead of proposing a duplicate.\"\n\nThis ties the search to the act of proposing. Tasks that never reach `propose` don't need a search. It also makes the search a duplicate check, which is what I missed."
+ }
+]
