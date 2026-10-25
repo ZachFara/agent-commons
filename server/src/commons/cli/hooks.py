@@ -69,8 +69,17 @@ def _tool_use(payload: Payload, *, failed: bool) -> ToolUse:
         command=str(tool_input.get("command", "")) if is_bash else None,
         file_path=None if is_bash or failed else tool_input.get("file_path"),
         new_text=None if is_bash or failed else _new_text(tool_input),
+        old_text=None if is_bash or failed else _old_text(tool_input),
         exit_code=_exit_code(payload, failed=failed) if is_bash else None,
     )
+
+
+def _old_text(tool_input: Payload) -> str | None:
+    """Text an Edit (old_string) or MultiEdit (edits[].old_string) replaced."""
+    pieces = [str(edit.get("old_string") or "") for edit in tool_input.get("edits", [])]
+    pieces.append(str(tool_input.get("old_string") or ""))
+    removed = "\n".join(piece for piece in pieces if piece)
+    return removed or None
 
 
 def _new_text(tool_input: Payload) -> str | None:

@@ -48,6 +48,7 @@ class ToolUse:
     file_path: str | None  # Edit/Write/MultiEdit only
     new_text: str | None  # text an edit introduced
     exit_code: int | None  # Bash only; None if unknown (e.g. interrupted)
+    old_text: str | None = None  # text an edit replaced: evidence of acting on a fix too
 
 
 def is_test_command(command: str, extra_patterns: Sequence[str] = ()) -> bool:
