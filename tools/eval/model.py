@@ -37,7 +37,7 @@ class Discovery:
 
     symptom_words: tuple[str, ...]  # at least one must appear in the proposal's symptom
     cause_words: tuple[str, ...]  # at least one must appear in cause or fix
-    library: str  # must appear, pinned, in environment.libraries
+    library: str  # must appear, pinned, in environment.libraries (or .language for a runtime)
 
 
 @dataclass(frozen=True)

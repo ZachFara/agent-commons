@@ -80,6 +80,7 @@ ignore_decorators = ["@override"]
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
 testpaths = ["server/tests"]
+pythonpath = ["."]  # tests for the eval grader import `tools.eval`
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 xfail_strict = true
 filterwarnings = ["error"]
