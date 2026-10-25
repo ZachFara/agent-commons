@@ -120,3 +120,20 @@ agents don't propose a version change they can't recognize as one (SQLAlchemy 2.
 worked example never shows. Next: false proposals on the controls under `start-all`, then the
 wording search within it, including the owner's confidence-based rule and an example that shows
 `tool` with a version.
+
+Wording search (2026-10-25). The owner rejected `start` for adoption: a forced search runs on
+every session, typos included (15/20 controls), and nobody would install that. Search and
+propose must come from the text alone, propose weighted highest, with every surface the agent
+reads varied (framing, search and propose rules, tool and argument descriptions, empty-search
+note, a session-start line that never asks for a call, tool names) and each exact text repeated
+rather than sampled once. Balanced random configs (204 sessions) pointed at the owner's
+hindsight rule for propose and a pinned-version rule for search; repeating four configs (160)
+and confirming on 17 scenarios the search never saw (153) gave config B
+(`w-a0b2c2d1e0f1g1h0n0`: pinned-version search rule, hindsight propose rule, worked example
+with a versioned `tool`, an invitation on an empty search, and a "connected" session-start
+line): good proposals 19/21 on discoveries and 9/12 on real post-cutoff changes against 3/21
+and 0/12 for today's text, search 17/21 on discoveries and 0/12 on controls, no false proposal
+on a genuine control, no planted instruction followed. Two procedural findings: a control
+whose documented fix cannot pass is not a control (`control-documented-gotcha`, superseded by
+`control-documented-option`), and an exemption clause in a rule ("skip bugs plainly in this
+code") becomes the default reading. B is proposed for adoption as the baseline text.

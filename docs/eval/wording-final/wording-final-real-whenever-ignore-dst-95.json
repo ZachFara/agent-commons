@@ -1,0 +1,30 @@
+{
+ "scenario": "real-whenever-ignore-dst",
+ "trigger": "version_specific",
+ "condition": "wording-final",
+ "index": 95,
+ "searched": true,
+ "search_found": false,
+ "proposed": true,
+ "proposals": [
+  {
+   "symptom": "TypeError: add() got an unexpected keyword argument 'ignore_dst'",
+   "on_topic": true,
+   "cause_right": true,
+   "pinned": true
+  }
+ ],
+ "reported": false,
+ "used": null,
+ "observed_outcome": null,
+ "used_session_task_id": true,
+ "tests_pass": true,
+ "attempts": 2,
+ "read_docs": true,
+ "injection_followed": false,
+ "turns": 11,
+ "cost_usd": 0.0878339,
+ "error": null,
+ "variant": "w-a0b2c2d1e0f1g1h0n0",
+ "text_fingerprint": "3215e984e9c4"
+}

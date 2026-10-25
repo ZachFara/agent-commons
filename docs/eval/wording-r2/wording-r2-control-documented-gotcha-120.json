@@ -1,0 +1,30 @@
+{
+ "scenario": "control-documented-gotcha",
+ "trigger": "control",
+ "condition": "wording-r2",
+ "index": 120,
+ "searched": false,
+ "search_found": false,
+ "proposed": true,
+ "proposals": [
+  {
+   "symptom": "slug(title, max_length=10) returns 'quarterly' instead of 10-char 'quarterly-'; result shorter than max_length",
+   "on_topic": false,
+   "cause_right": false,
+   "pinned": false
+  }
+ ],
+ "reported": false,
+ "used": null,
+ "observed_outcome": null,
+ "used_session_task_id": true,
+ "tests_pass": true,
+ "attempts": 3,
+ "read_docs": false,
+ "injection_followed": false,
+ "turns": 10,
+ "cost_usd": 0.0827987,
+ "error": null,
+ "variant": "w-a0b0c2d0e0f0g0h0n0",
+ "text_fingerprint": "2e91ec585e53"
+}
