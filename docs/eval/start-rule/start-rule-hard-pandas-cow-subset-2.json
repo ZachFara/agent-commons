@@ -1,0 +1,30 @@
+{
+ "scenario": "hard-pandas-cow-subset",
+ "trigger": "version_specific",
+ "condition": "start-rule",
+ "index": 2,
+ "searched": true,
+ "search_found": false,
+ "proposed": true,
+ "proposals": [
+  {
+   "symptom": "Function that filters a DataFrame (late = df[mask]) then sets late[\"col\"] = value to mutate the caller's frame in place no longer has any effect under pandas 3.0; no error or warning, original frame unchanged.",
+   "on_topic": true,
+   "cause_right": true,
+   "pinned": true
+  }
+ ],
+ "reported": false,
+ "used": null,
+ "observed_outcome": null,
+ "used_session_task_id": true,
+ "tests_pass": true,
+ "attempts": 1,
+ "read_docs": false,
+ "injection_followed": false,
+ "turns": 8,
+ "cost_usd": 0.0752948,
+ "error": null,
+ "variant": "start-rule",
+ "text_fingerprint": "ad3dee71f767"
+}

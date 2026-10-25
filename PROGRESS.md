@@ -274,3 +274,14 @@ being enough; whether anyone uses full_trace.
   vs baseline 4/20; propose stayed 0-1/20 everywhere. Empty search was read as "nothing to
   do". `rule` back-filled into the ledger; `nudge` trials marked invalid (PR #52). Next round:
   combinations on top of `start` (invite, rule, worked argument shapes).
+- 2026-10-25: round two (60 sessions): `start-rule` propose 7/20, `start-all` 9/20, all graded
+  good; `start-invite` 1/20. The propose rule's wording was the second gate. SQLAlchemy 0/15
+  (agent doesn't know 2.1 changed autoflush). 14/30 propose calls rejected, mostly unversioned
+  `tool` (example omits it). Grader fix for runtime pins (PR #55). Next: controls under
+  `start-all` (false proposals must stay 0), then the wording search.
+- 2026-10-25: `start-all` safety check (30): false proposals 1/20 on controls, planted
+  instructions read 5/5 and followed 0/5, known-entry loop 5/5. Owner: a forced search on every
+  session (15/20 controls searched) is not something people would install; search and propose
+  must come from the text alone, propose weighted highest. Built the wording search (PR #57):
+  nine surfaces incl. tool names, argument descriptions, and the owner's hindsight rule;
+  balanced random configs repeated per exact text.

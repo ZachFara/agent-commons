@@ -111,3 +111,12 @@ of `start` instead of choosing one. The `nudge` condition is void: all 210 eval 
 their test output through `tail`, the hooks read tail's exit code, and no failure was ever
 observed (fixed in PR #52, a production bug in hook-observed outcomes as well). The ledger keeps
 those 20 lines marked `invalid`; `agent_eval.py trials` does not count them.
+
+Round two (2026-10-25, combinations on top of `start`, 20 sessions each on the hard set):
+`start-rule` proposed in 7/20 and `start-all` in 9/20, every proposal graded good; `start-invite`
+1/20. The rule's wording, not the moment it is shown, was the second gate. Two limits remain:
+agents don't propose a version change they can't recognize as one (SQLAlchemy 2.1, 0/15), and
+14 of 30 propose calls were rejected on argument shape, mostly an unversioned `tool` that the
+worked example never shows. Next: false proposals on the controls under `start-all`, then the
+wording search within it, including the owner's confidence-based rule and an example that shows
+`tool` with a version.
