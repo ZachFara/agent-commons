@@ -158,3 +158,15 @@ def test_rule_variant_changes_only_the_propose_rule() -> None:
     # everything before the propose rule is identical
     cut = base.index("Propose on surprise")
     assert rule.startswith(base[:cut])
+
+
+def test_fingerprint_changes_when_any_surface_changes() -> None:
+    base = agent_text.fingerprint(agent_text.VARIANTS["baseline"])
+    assert len(base) == 12
+    assert base == agent_text.fingerprint(agent_text.VARIANTS["baseline"])  # stable
+    seen = {agent_text.fingerprint(v) for v in agent_text.VARIANTS.values()}
+    assert len(seen) == len(agent_text.VARIANTS)  # every variant distinct
+    tweaked = agent_text.Variant(
+        agent_text.INSTRUCTIONS + " ", agent_text.PROPOSE, agent_text.SEARCH, agent_text.REPORT
+    )
+    assert agent_text.fingerprint(tweaked) != base  # one character moves the id

@@ -11,8 +11,9 @@ selected with COMMONS_INSTRUCTIONS_VARIANT. "baseline" is what ships; a variant 
 the baseline only after it measurably helps on hold-out scenarios.
 """
 
+import hashlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 INSTRUCTIONS = """\
 Agent Commons: shared debugging knowledge that records whether each entry actually helped.
@@ -157,3 +158,17 @@ VARIANTS: dict[str, Variant] = {
 def variant() -> Variant:
     """Return the variant named by COMMONS_INSTRUCTIONS_VARIANT, or the baseline."""
     return VARIANTS[os.environ.get("COMMONS_INSTRUCTIONS_VARIANT", "baseline")]
+
+
+def fingerprint(shown: Variant) -> str:
+    """Return a short hash over every surface of a variant, so a changed word changes the id.
+
+    Eval results carry this, so a number can always be traced to the exact text that produced it.
+    """
+    digest = hashlib.sha256()
+    for field in fields(shown):
+        digest.update(field.name.encode())
+        digest.update(b"\0")
+        digest.update(str(getattr(shown, field.name) or "").encode())
+        digest.update(b"\0")
+    return digest.hexdigest()[:12]

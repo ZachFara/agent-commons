@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,7 @@ def run(args: argparse.Namespace) -> int:
         hooks=not args.no_hooks,
         concurrency=args.concurrency,
     )
+    append_ledger(results)
     failed = sum(bool(r.failures(SCENARIOS[r.scenario])) for r in results)
     cost = sum(r.cost_usd for r in results)
     errors = sum(r.error is not None for r in results)
@@ -81,6 +83,60 @@ def run(args: argparse.Namespace) -> int:
         f"API-equivalent cost ${cost:.2f}; results in {transcripts}"
     )
     return 1 if errors else 0
+
+
+LEDGER = REPO / "docs" / "eval" / "trials.jsonl"
+
+
+def append_ledger(results: list[runner.Result]) -> None:
+    """Append one line per session to the committed trial ledger, keyed by variant and text hash."""
+    LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    with LEDGER.open("a", encoding="utf-8") as ledger:
+        for result in results:
+            line = {
+                "at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "variant": result.variant,
+                "text": result.text_fingerprint,
+                "condition": result.condition,
+                "scenario": result.scenario,
+                "trigger": result.trigger,
+                "run": result.index,
+                "searched": result.searched,
+                "found": result.search_found,
+                "proposed": result.proposed,
+                "good_proposals": sum(
+                    p.on_topic and p.cause_right and p.pinned for p in result.proposals
+                ),
+                "reported": result.reported,
+                "tests_pass": result.tests_pass,
+                "attempts": result.attempts,
+                "turns": result.turns,
+                "error": result.error,
+            }
+            ledger.write(json.dumps(line) + "\n")
+
+
+def by_variant() -> int:
+    """Summarize the ledger per variant and text fingerprint: the trial log the owner asked for."""
+    if not LEDGER.exists():
+        print("no trials logged yet")
+        return 0
+    rows = [json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line]
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        groups[(row["variant"], row["text"], row["trigger"])].append(row)
+    print(
+        f"{'variant':<10} {'text':<13} {'trigger':<18} {'n':>3} "
+        f"{'search':>7} {'propose':>8} {'good':>5} {'fixed':>6}"
+    )
+    for (variant, text, trigger), group in sorted(groups.items()):
+        good = sum(int(r["good_proposals"]) for r in group)
+        print(
+            f"{variant:<10} {text:<13} {trigger:<18} {len(group):>3} "
+            f"{_rate(group, 'searched'):>7} {_rate(group, 'proposed'):>8} {good:>5} "
+            f"{_rate(group, 'tests_pass'):>6}"
+        )
+    return 0
 
 
 Row = dict[str, Any]
@@ -145,11 +201,16 @@ def main() -> int:
     )
     report_parser = commands.add_parser("report")
     report_parser.add_argument("--condition", action="append")
+    commands.add_parser(
+        "trials", help="Summarize docs/eval/trials.jsonl per variant and text hash."
+    )
     args = parser.parse_args()
     if args.command == "check":
         return check()
     if args.command == "run":
         return run(args)
+    if args.command == "trials":
+        return by_variant()
     return report(args)
 
 
