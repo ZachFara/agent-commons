@@ -79,8 +79,8 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 
 | ID | Status | Task | Done when |
 |---|---|---|---|
-| T34 | doing | Pre-registered behavioral eval (decision 0023): isolated parallel `claude -p` sessions, 13 verified scenarios, evidence-based grading, baseline of 5 runs each | Baseline report committed with per-scenario search/propose/report rates and proposal quality |
-| T35 | todo | Experiments on what the agent sees, one named condition at a time, measured on hold-out scenarios against the baseline: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
+| T34 | done | Pre-registered behavioral eval (decision 0023): isolated parallel `claude -p` sessions, 13 verified scenarios, evidence-based grading, baseline of 5 runs each | Baseline report committed with per-scenario search/propose/report rates and proposal quality |
+| T35 | todo | First: hold-out scenarios from real post-cutoff breaking changes (owner, 2026-10-25), verified by transcript. Then experiments on what the agent sees, one named condition at a time, developed on `docs-retry-flag` + `version-silent-rename`, measured on the hold-out set: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
 | T36 | todo | Eval report with charts (funnel per scenario and condition, rates with intervals, proposal quality) published as a shareable page; raw results committed under `docs/eval/` | Page link in PROGRESS; raw JSON in the repo |
 
 ### DESIGN Phase 3 (after a month of data)
@@ -256,3 +256,6 @@ being enough; whether anyone uses full_trace.
   proposals observed; `used` bug fixed from an eval finding (PR #44); grader fixed twice
   (task-id check, compact JSON). Owner's standing request: experiment with everything the
   agent sees (T35) if the baseline is low, without spamming evals.
+- 2026-10-25: T34 baseline (65 sessions): search 4/45 on discoveries, propose 2/45 (both good),
+  0/20 false proposals. Raw results in docs/eval/baseline. Owner: scenarios share training data
+  with the eval model, so build hold-outs from real post-cutoff breaking changes.
