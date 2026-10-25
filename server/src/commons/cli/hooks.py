@@ -11,7 +11,7 @@ from typing import Any, TextIO
 
 from commons.domain.errors import NotInitializedError
 from commons.domain.observations import ToolUse, exit_code_from_error
-from commons.service import hook_client
+from commons.service import agent_text, hook_client
 from commons.service.hook_client import HookBackend, LocalBackend, RemoteBackend, remote_client
 from commons.service.identity import hosted_server
 from commons.service.local_state import state_dir
@@ -34,6 +34,9 @@ def _session_start(payload: Payload) -> HookOutput:
         f"Agent Commons task_id for this session: {task_id}. "
         "Pass it as task_id to every commons tool call."
     )
+    start_line = agent_text.variant().start_line
+    if start_line:
+        context = f"{context} {start_line}"
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
 
 
@@ -102,15 +105,20 @@ def _stop(payload: Payload) -> HookOutput:
     transcript = payload.get("transcript_path")
     session_id = str(payload["session_id"])
     result = hook_client.on_stop(_backend(), session_id, str(transcript) if transcript else None)
-    if result is None or not result.unreported or payload.get("stop_hook_active"):
+    if result is None or payload.get("stop_hook_active"):
         return None
-    ids = ", ".join(str(entry_id) for entry_id in result.unreported)
-    reason = (
-        f"Before finishing, call the commons `report` tool with task_id {result.task_id} for "
-        f"each entry you retrieved this session but haven't reported on: {ids}. Say honestly "
-        "whether it helped."
-    )
-    return {"decision": "block", "reason": reason}
+    if result.unreported:
+        ids = ", ".join(str(entry_id) for entry_id in result.unreported)
+        reason = (
+            f"Before finishing, call the commons `report` tool with task_id {result.task_id} for "
+            f"each entry you retrieved this session but haven't reported on: {ids}. Say honestly "
+            "whether it helped."
+        )
+        return {"decision": "block", "reason": reason}
+    nudge = agent_text.variant().nudge
+    if nudge and result.fixed_failing_tests and not result.searched:
+        return {"decision": "block", "reason": nudge.format(task_id=result.task_id)}
+    return None
 
 
 HANDLERS: dict[str, Callable[[Payload], HookOutput]] = {

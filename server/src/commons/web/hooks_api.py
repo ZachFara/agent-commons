@@ -169,4 +169,9 @@ def _stop(conn: Connection, body: Body) -> Body:
     result = hooks.finish_turn(conn, _session_id(body), _model(body), used)
     if result is None:
         return {"task_id": None, "unreported": []}
-    return {"task_id": str(result.task_id), "unreported": [str(e) for e in result.unreported]}
+    return {
+        "task_id": str(result.task_id),
+        "unreported": [str(e) for e in result.unreported],
+        "fixed_failing_tests": result.fixed_failing_tests,
+        "searched": result.searched,
+    }

@@ -15,10 +15,9 @@ from commons.domain.outcomes import OutcomeKind, Report
 from commons.domain.reviews import PendingEntry, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchHit, SearchRequest
 from commons.domain.status import StoreStatus
-from commons.mcp import instructions
 from commons.mcp.auth import ApiKeyVerifier, calling_reporter
 from commons.mcp.errors import StructuredValidationErrors, structured_errors
-from commons.service import proposals, reports, reviews
+from commons.service import agent_text, proposals, reports, reviews
 from commons.service import search as search_service
 from commons.service import status as status_service
 from commons.service.identity import serving_hosted
@@ -44,6 +43,7 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
 
     Hosted servers require an API key on every request (decision 0018).
     """
+    shown = agent_text.variant()
 
     def propose(  # keyword-only: tools are always called with named arguments
         *,
@@ -99,7 +99,8 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
         request = SearchRequest(query=query, task_id=task_id, environment=environment, limit=limit)
         with structured_errors(), calling_reporter(), connection() as conn:
             hits = search_service.search(conn, request, model)
-        return {"note": UNTRUSTED_NOTE, "data": [_hit_json(hit) for hit in hits]}
+        note = shown.invite_note if not hits and shown.invite_note else UNTRUSTED_NOTE
+        return {"note": note, "data": [_hit_json(hit) for hit in hits]}
 
     def report(
         *,
@@ -168,7 +169,6 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
             result = status_service.status(conn)
         return _status_json(result)
 
-    shown = instructions.variant()
     return FastMCP(
         "commons",
         instructions=shown.instructions,

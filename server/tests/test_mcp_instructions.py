@@ -11,8 +11,8 @@ from fastmcp import Client
 from commons.domain.entries import ENVIRONMENT_KEYS
 from commons.domain.outcomes import OutcomeKind
 from commons.domain.reporters import PrivacyDefault
-from commons.mcp import instructions
 from commons.mcp.server import build_server
+from commons.service import agent_text
 
 # Claude Code silently truncates each at ~2,048 characters. Server instructions may share that
 # budget with other servers, so they get a tighter limit.
@@ -42,7 +42,7 @@ def vocabulary(tools: list[mt.Tool]) -> set[str]:
     return words | values
 
 
-@pytest.mark.parametrize("variant", sorted(instructions.VARIANTS))
+@pytest.mark.parametrize("variant", sorted(agent_text.VARIANTS))
 def test_instructions_and_descriptions_fit_the_client_limit(variant: str) -> None:
     text, tools = served(variant)
     assert len(text) <= INSTRUCTIONS_LIMIT
@@ -50,7 +50,7 @@ def test_instructions_and_descriptions_fit_the_client_limit(variant: str) -> Non
         assert len(tool.description or "") <= DESCRIPTION_LIMIT, tool.name
 
 
-@pytest.mark.parametrize("variant", sorted(instructions.VARIANTS))
+@pytest.mark.parametrize("variant", sorted(agent_text.VARIANTS))
 def test_text_names_only_real_tools_arguments_and_values(variant: str) -> None:
     text, tools = served(variant)
     named = set(re.findall(r"`([a-z_]+)`", text))
@@ -69,7 +69,7 @@ def test_instructions_cover_the_agent_workflow() -> None:
 def test_unknown_variant_is_an_error_not_a_silent_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COMMONS_INSTRUCTIONS_VARIANT", "no-such-variant")
     with pytest.raises(KeyError):
-        instructions.variant()
+        agent_text.variant()
 
 
 def test_examples_variant_shows_the_shapes_agents_got_wrong() -> None:
