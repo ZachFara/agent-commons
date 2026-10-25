@@ -246,7 +246,12 @@ def run_session(
             check=False,
         )
         events = _events(completed.stdout)
-        if not _rate_limited(events, completed.stderr) or attempt == RATE_LIMIT_RETRIES:
+        exhausted = out_of_usage(events, completed.stderr)
+        if (
+            exhausted
+            or not _rate_limited(events, completed.stderr)
+            or attempt == RATE_LIMIT_RETRIES
+        ):
             if not events:
                 events = [{"type": "result", "is_error": True, "result": completed.stderr[-500:]}]
             return events
@@ -272,6 +277,19 @@ def _events(stdout: str) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return events
+
+
+def out_of_usage(events: list[dict[str, Any]], stderr: str) -> bool:
+    """Whether the subscription's usage ran out: no point retrying, it resets hours later."""
+    # A plain 429 is a short rate limit and worth retrying; only the limit message means stop.
+    results = [e for e in events if e.get("type") == "result" and e.get("is_error")]
+    return any(is_usage_limit(str(e.get("result", ""))) for e in results) or is_usage_limit(stderr)
+
+
+def is_usage_limit(text: str) -> bool:
+    """Whether an error message is Claude Code's usage or session limit."""
+    lowered = text.lower()
+    return "session limit" in lowered or "usage limit" in lowered
 
 
 def _rate_limited(events: list[dict[str, Any]], stderr: str) -> bool:
@@ -474,14 +492,22 @@ def run_many(
     hooks: bool,
     concurrency: int,
 ) -> Iterator[Result]:
-    """Run sessions in parallel, printing and yielding each result as it finishes."""
+    """Run sessions in parallel, printing and yielding each result as it finishes.
+
+    When usage runs out, sessions not yet started are cancelled; rerun with `--resume`.
+    """
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures = {
             pool.submit(run_one, job, model, condition, transcripts, hooks=hooks): job
             for job in jobs
         }
         for future in as_completed(futures):
+            if future.cancelled():
+                continue
             job, result = futures[future], future.result()
+            if result.error and is_usage_limit(result.error):
+                cancelled = sum(other.cancel() for other in futures)
+                print(f"usage limit reached; {cancelled} sessions not started", flush=True)
             misses = result.failures(job.scenario)
             verdict = "OK" if not misses else "MISSED: " + ", ".join(misses)
             print(

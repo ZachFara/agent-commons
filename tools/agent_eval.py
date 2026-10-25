@@ -112,6 +112,15 @@ def plan_configs(named: list[str] | None, count: int, seed: int) -> list[str]:
     ]
 
 
+def finished(transcripts: Path, condition: str, job: runner.Job) -> bool:
+    """Whether a job already has a result without an error (for `--resume`)."""
+    path = transcripts / f"{condition}-{job.scenario.name}-{job.index}.json"
+    if not path.exists():
+        return False
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    return saved.get("error") is None and saved.get("variant") == job.variant
+
+
 def balanced_configs(count: int, seed: int) -> list[str]:
     """Return `count` wording names in which each option of a surface appears about equally.
 
@@ -135,6 +144,9 @@ def balanced_configs(count: int, seed: int) -> list[str]:
 def run_jobs(jobs: list[runner.Job], args: argparse.Namespace) -> int:
     """Run jobs, appending each result to the ledger as it finishes; print a summary."""
     transcripts = RESULTS / args.condition
+    if args.resume:
+        jobs = [job for job in jobs if not finished(transcripts, args.condition, job)]
+        print(f"resuming: {len(jobs)} sessions without a clean result")
     results: list[runner.Result] = []
     for result in runner.run_many(
         jobs,
@@ -163,7 +175,8 @@ def append_ledger(results: list[runner.Result]) -> None:
     """Append one line per session to the committed trial ledger, keyed by variant and text hash."""
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER.open("a", encoding="utf-8") as ledger:
-        for result in results:
+        # An errored session (usage limit, crash) is not a trial of the text: never logged.
+        for result in (r for r in results if r.error is None):
             line = {
                 "at": datetime.now(UTC).isoformat(timespec="seconds"),
                 "variant": result.variant,
@@ -338,6 +351,9 @@ def main() -> int:
     run_parser.add_argument("--model", default="sonnet")
     run_parser.add_argument("--condition", default="baseline")
     run_parser.add_argument("--no-hooks", action="store_true")
+    run_parser.add_argument(
+        "--resume", action="store_true", help="Skip sessions that already have a clean result."
+    )
     run_parser.add_argument("--concurrency", type=int, default=4)
     run_parser.add_argument(
         "--variant", default="baseline", help="COMMONS_INSTRUCTIONS_VARIANT for the sessions."
@@ -355,6 +371,9 @@ def main() -> int:
     search_parser.add_argument("--model", default="sonnet")
     search_parser.add_argument("--condition", default="wording")
     search_parser.add_argument("--no-hooks", action="store_true")
+    search_parser.add_argument(
+        "--resume", action="store_true", help="Skip sessions that already have a clean result."
+    )
     search_parser.add_argument("--concurrency", type=int, default=4)
     effects_parser = commands.add_parser("effects", help="Pool a wording search by option.")
     effects_parser.add_argument("--condition", default="wording")
