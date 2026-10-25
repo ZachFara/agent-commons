@@ -61,6 +61,7 @@ def check() -> int:
 
 def run(args: argparse.Namespace) -> int:
     """Run the requested scenarios in parallel and print results as they finish."""
+    os.environ["COMMONS_INSTRUCTIONS_VARIANT"] = args.variant
     names = args.scenario or sorted(SCENARIOS)
     jobs = [(SCENARIOS[name], index) for name in names for index in range(1, args.runs + 1)]
     transcripts = RESULTS / args.condition
@@ -139,6 +140,9 @@ def main() -> int:
     run_parser.add_argument("--condition", default="baseline")
     run_parser.add_argument("--no-hooks", action="store_true")
     run_parser.add_argument("--concurrency", type=int, default=4)
+    run_parser.add_argument(
+        "--variant", default="baseline", help="COMMONS_INSTRUCTIONS_VARIANT for the sessions."
+    )
     report_parser = commands.add_parser("report")
     report_parser.add_argument("--condition", action="append")
     args = parser.parse_args()

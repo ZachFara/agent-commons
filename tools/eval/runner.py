@@ -31,6 +31,7 @@ ADMIN_URL = os.environ.get(
     "COMMONS_EVAL_ADMIN_URL", "postgresql://commons:commons@localhost:5432/commons"
 )
 ENV_KEYS = ("COMMONS_DATABASE_URL", "COMMONS_CONFIG", "COMMONS_STATE_DIR")
+VARIANT_KEY = "COMMONS_INSTRUCTIONS_VARIANT"
 SESSION_TIMEOUT = 900
 RATE_LIMIT_RETRIES = 4
 ALLOWED_TOOLS = [
@@ -191,7 +192,7 @@ def session_files(workdir: Path, url: str, *, hooks: bool) -> tuple[dict[str, st
     server = {
         "command": "uv",
         "args": ["run", "--directory", str(REPO / "server"), "commons-mcp"],
-        "env": {key: env[key] for key in ENV_KEYS},
+        "env": {key: env[key] for key in (*ENV_KEYS, VARIANT_KEY) if key in env},
     }
     mcp = workdir / "mcp.json"
     mcp.write_text(json.dumps({"mcpServers": {"commons": server}}), encoding="utf-8")
