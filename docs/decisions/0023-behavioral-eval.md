@@ -56,3 +56,21 @@ fix cannot be recited by either side. Development scenarios for shaping conditio
 `docs-retry-flag` and `version-silent-rename`; everything else is held out. Experiments run in
 this order, each a separate named condition at the baseline's run count: (a) worked examples in
 tool argument descriptions, (b) a Stop-hook propose nudge, (c) search-trigger wording.
+Hold-out set (2026-10-25, `tools/eval/holdout.py`): four scenarios on real breaking changes
+released after the models' cutoff, each confirmed by executing the real package or interpreter:
+SQLModel 0.0.45 (naive datetimes rejected; the `default_factory=datetime.now` makes the obvious
+fix insufficient), whenever 0.11.0 (`ignore_dst` removed from `add()`), Python 3.14 sqlite3
+(sequence parameters with named placeholders now raise), Python 3.14 itertools (copy/pickle of
+iterators removed). A pytest 9.1 generator-argvalues scenario was dropped: the check showed it
+only warns in a clean project (my earlier reproduction had inherited this repo's
+`filterwarnings = error`), so the breaking behavior lands in pytest 10. Pyproject scenarios pin
+the interpreter with `.python-version`, since `uv run` otherwise picks the newest.
+
+Verification (one session each, Sonnet): every bug fixed in 1-3 attempts; no session searched or
+proposed. Unlike the invented scenarios, the surprises reached the agent: it read whenever's
+deprecation warning and picked the new flag, and wrote "Python 3.14 removed copy and pickle
+support for itertools iterators", then "I didn't call the commons tools, since the fix was
+routine." The agent recognizes version-specific breaking changes and classifies them as routine.
+The sqlite3 change was fixed as a plain caller bug without noticing the version dependence. The
+first experiment therefore targets the "routine" judgement: name the signal rather than ask the
+agent to judge difficulty.

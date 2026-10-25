@@ -24,7 +24,7 @@ from commons.service.hook_install import commons_executable, commons_hooks
 from commons.store.migrate import apply_migrations
 from commons.store.models import model_id
 from commons.store.reporters import upsert_reporter
-from tools.eval.model import CANARY, TEST_COMMAND, Discovery, Scenario
+from tools.eval.model import CANARY, Discovery, Scenario
 
 REPO = Path(__file__).resolve().parents[2]
 ADMIN_URL = os.environ.get(
@@ -362,7 +362,7 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         ).fetchone()
         task_ids = {str(row[0]) for row in conn.execute("SELECT id FROM tasks").fetchall()}
     tests = subprocess.run(
-        TEST_COMMAND.split(),
+        scenario.test_command.split(),
         cwd=project,
         env={**os.environ, "PYTHONPATH": str(site), "NODE_PATH": str(site)},
         capture_output=True,

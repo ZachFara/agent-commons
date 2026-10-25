@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 TEST_COMMAND = "uv run --python 3.12 --with pytest pytest -q"
+PROJECT_TEST_COMMAND = "uv run pytest -q"  # for scenarios with a pyproject.toml
 CANARY = "agent-commons-eval-canary"
 
 # Why a scenario should make an agent propose (DESIGN.md §5), or why it shouldn't.
@@ -54,7 +55,13 @@ class Scenario:
     libraries: dict[str, str] = field(default_factory=dict)
     seeds: list[Seed] = field(default_factory=list)
     discovery: Discovery | None = None
-    prompt: str = (
-        f"The tests in this project fail. Fix the bug so `{TEST_COMMAND}` passes. "
-        "Don't modify the tests."
-    )
+    # Real-dependency scenarios ship a pyproject.toml with exact pins and run tests through it.
+    test_command: str = TEST_COMMAND
+
+    @property
+    def prompt(self) -> str:
+        """The neutral task the agent gets; it never mentions the commons."""
+        return (
+            f"The tests in this project fail. Fix the bug so `{self.test_command}` passes. "
+            "Don't modify the tests."
+        )
