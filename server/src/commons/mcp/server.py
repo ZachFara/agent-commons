@@ -168,16 +168,17 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
             result = status_service.status(conn)
         return _status_json(result)
 
+    shown = instructions.variant()
     return FastMCP(
         "commons",
-        instructions=instructions.INSTRUCTIONS,
+        instructions=shown.instructions,
         middleware=[StructuredValidationErrors()],
         mask_error_details=True,
         auth=ApiKeyVerifier(connection) if hosted else None,
         tools=[
-            Tool.from_function(propose, description=instructions.PROPOSE),
-            Tool.from_function(search, description=instructions.SEARCH),
-            Tool.from_function(report, description=instructions.REPORT),
+            Tool.from_function(propose, description=shown.propose),
+            Tool.from_function(search, description=shown.search),
+            Tool.from_function(report, description=shown.report),
             approve,
             reject,
             pending,
