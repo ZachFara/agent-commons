@@ -93,15 +93,21 @@ SINGLE_CHANGES = [
 ]
 
 
-def test_the_all_baseline_wording_is_exactly_the_baseline() -> None:
+def test_option_zero_everywhere_is_exactly_the_original_text() -> None:
     name = agent_text.wording_name(dict.fromkeys(agent_text.SURFACES, 0))
-    assert agent_text.resolve(name) == agent_text.VARIANTS["baseline"]
+    assert agent_text.resolve(name) == agent_text.VARIANTS["original"]
+
+
+def test_what_ships_is_the_adopted_wording() -> None:
+    assert agent_text.variant() == agent_text.resolve(agent_text.SHIPPED)
+    assert agent_text.VARIANTS["baseline"] != agent_text.VARIANTS["original"]
+    assert agent_text.CHECK_FIRST_RULE in agent_text.VARIANTS["baseline"].instructions
 
 
 @pytest.mark.parametrize("name", SINGLE_CHANGES)
 def test_each_wording_option_names_only_real_things_and_changes_one_surface(name: str) -> None:
     test_text_names_only_real_tools_arguments_and_values(name)
-    baseline, shown = agent_text.VARIANTS["baseline"], agent_text.resolve(name)
+    baseline, shown = agent_text.VARIANTS["original"], agent_text.resolve(name)
     assert shown != baseline
     assert agent_text.fingerprint(shown) != agent_text.fingerprint(baseline)
 

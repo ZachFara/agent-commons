@@ -21,6 +21,11 @@ Raw per-session results from `tools/agent_eval.py` (decision 0023). One JSON fil
 | `wording-r1` | 2026-10-25 | sonnet | 204 (17 configs × 6 scenarios × 2) | Wording search, round one: balanced random configs over nine surfaces |
 | `wording-r2` | 2026-10-25 | sonnet | 160 (4 configs × 8 scenarios × 5) | Wording search, round two: four exact configs repeated |
 | `wording-final` | 2026-10-25 | sonnet | 153 (3 configs × 17 unseen scenarios × 3) | Confirmation on scenarios the search never saw |
+| `opus-final` | 2026-10-25 | opus 5.5 | 102 (2 texts × 17 unseen scenarios × 3) | Config B vs the original text on Opus |
+| `opus-hard` | 2026-10-25 | opus 5.5 | 40 (2 texts × hard set × 5) | Config B vs the original text on Opus, hard set |
+| `cross-r3` | 2026-10-25 | sonnet + opus 5.5 | 180 (9 configs × 10 scenarios × 2 models) | Round three: options aimed at Opus's failures, both models |
+| `cross-r4` | 2026-10-25 | sonnet + opus 5.5 | 160 (4 configs × 10 × 2 × 2) | Round four: the best four repeated, both models |
+| `cross-final` | 2026-10-25 | sonnet + opus 5.5 | 156 (2 texts × 13 unseen scenarios × 3 × 2) | Confirmation of the adopted text on both models |
 
 Summarize with `uv run python tools/agent_eval.py report --condition <name>` after copying a
 condition's JSON files into `.scratch/eval/<name>/`.
@@ -253,3 +258,50 @@ instructions. Every bug was fixed in every condition except one C session.
 entries on 19/21 discoveries and 9/12 real post-cutoff changes, and proposed nothing on the
 controls, all from text alone. C (hindsight only) is the single biggest change but captures
 about half of B's effect. B is the candidate for adoption.
+
+## Opus 5.5 and the cross-model search (2026-10-25)
+
+**Config B on Opus** (102 + 40 sessions): more good proposals than the original text (37/53 vs
+22/53 pooled) but it failed the bar: 2/12 proposals on controls, both on documented behavior
+(`control-documented-option`), and Opus almost never searched, re-proposing fixes the store
+already held in 10 of 12 known-entry sessions. Opus proposes readily even under the original
+text; its gap is search, not propose. The owner asked for text that works for every model.
+
+**Rounds three and four** ran each config on Sonnet and Opus side by side and ranked configs by
+the worse model. New options: a direct search rule (b4), the hindsight rule narrowed to behavior
+"its docs don't state" (c5) or reframed as "the next agent would have to rediscover" (c6), and a
+search-before-propose check (s1 in the instructions, s2 leading the `propose` description).
+c5 removed Opus's control proposals (0/6 vs 2/6) at no clear cost; either check removed
+duplicates (0/6 vs 2/6); b4 raised Opus's searching and lowered Sonnet's. All four repeated
+configs in round four were clean on both models (no duplicates, no control proposals).
+
+**Why agents missed** (`interviews/cross-r3.json`): 26 sessions that missed were resumed with no
+tools and asked why. Recurring answers: the bug was filed by where the fix lived rather than its
+cause (14/26), the fix felt obvious or the error named it (14), the agent read library source
+instead of searching (9), "recent major version" ruled out 0.x, minor, unpinned, or runtime
+versions (8), there was no error text to search with (7), search was seen as help when stuck
+rather than a duplicate check (6). These are the agents' own accounts, used as hypotheses for
+wording, not as findings.
+
+**Tool search.** Claude Code defers MCP tools by default (code.claude.com/docs/en/mcp.md): until
+the agent loads a tool, it sees only tool names and server instructions. In round four 85 of 160
+sessions called `ToolSearch` first. The instructions are therefore the surface that decides
+whether the commons is used at all, which matches what the screens found.
+
+**Confirmation** on 13 scenarios no round was tuned on (two added for it:
+`known-default-flip`, `control-documented-flag`), 3 runs each, both texts in one batch:
+
+| | Opus: original | Opus: adopted | Sonnet: original | Sonnet: adopted |
+|---|---|---|---|---|
+| Good proposals, discoveries | 13/15 | **15/15** | 1/15 | **10/15** |
+| Good proposals, real post-cutoff changes | 5/12 | **10/12** | 1/12 | **8/12** |
+| Searched, discoveries + post-cutoff | 0/27 | **26/27** | 3/27 | **21/27** |
+| Controls: searched / proposed | 0/9, 0/9 | 0/9, **0/9** | 0/9, 0/9 | 0/9, **0/9** |
+| Known entry: searched, found, used, reported | 0/3 | **3/3** | 0/3 | 0/3 |
+| Duplicate proposals on the known entry | 1/3 | **0/3** | 0/3 | 0/3 |
+| Bugs fixed | 39/39 | 39/39 | 38/39 | 39/39 |
+
+The adopted text (`w-a0b4c5d1e0f1g1h0n0s1`) passes the bar on both models: more good proposals
+(Opus 25/27 vs 18/27, Sonnet 18/27 vs 2/27), no proposal on any control, no lower fix rate. Both
+models now search where it matters and not on controls. Sonnet still skips the search on a known
+entry (without duplicating it).

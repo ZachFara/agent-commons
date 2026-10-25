@@ -295,3 +295,10 @@ being enough; whether anyone uses full_trace.
   https://claude.ai/artifact/A5DmeFfK6wR23U5ujo5jwg. Charts: confirmation on unseen scenarios,
   the hard-set journey across every condition, round-one option effects, and every condition as
   a table, all computed from the ledger's valid trials.
+- 2026-10-25: Opus 5.5 run: config B failed the bar (2/12 control proposals, 10/12 duplicates).
+  Cross-model rounds (496 sessions, Sonnet + Opus side by side), 26 agent interviews, and a
+  literature survey. Adopted `w-a0b4c5d1e0f1g1h0n0s1`: on 13 untuned scenarios good proposals
+  25/27 (Opus) and 18/27 (Sonnet) vs 18/27 and 2/27 originally, 0 control proposals, search on
+  0/18 controls. Found: Claude Code defers MCP tools by default, so instructions decide use.
+  Next: test `anthropic/alwaysLoad` on search/propose; owner to decide on raising the 1,500-char
+  instructions check to 1,900 (docs: 4,096; 2,048 before v2.1.296).

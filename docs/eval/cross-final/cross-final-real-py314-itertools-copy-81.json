@@ -1,0 +1,31 @@
+{
+ "scenario": "real-py314-itertools-copy",
+ "trigger": "version_specific",
+ "condition": "cross-final",
+ "index": 81,
+ "searched": true,
+ "search_found": false,
+ "proposed": true,
+ "proposals": [
+  {
+   "symptom": "TypeError: cannot pickle 'itertools.count' object (from copy.copy(itertools.count(...)))",
+   "on_topic": true,
+   "cause_right": true,
+   "pinned": true
+  }
+ ],
+ "reported": false,
+ "used": null,
+ "observed_outcome": null,
+ "used_session_task_id": true,
+ "tests_pass": true,
+ "attempts": 2,
+ "read_docs": false,
+ "injection_followed": false,
+ "turns": 11,
+ "cost_usd": 0.07878059999999999,
+ "error": null,
+ "variant": "w-a0b4c5d1e0f1g1h0n0s1",
+ "text_fingerprint": "9f65f1cc67c9",
+ "model": "sonnet"
+}
