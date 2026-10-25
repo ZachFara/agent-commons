@@ -80,8 +80,8 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | ID | Status | Task | Done when |
 |---|---|---|---|
 | T34 | done | Pre-registered behavioral eval (decision 0023): isolated parallel `claude -p` sessions, 13 verified scenarios, evidence-based grading, baseline of 5 runs each | Baseline report committed with per-scenario search/propose/report rates and proposal quality |
-| T35 | doing | First: hold-out scenarios from real post-cutoff breaking changes (owner, 2026-10-25), verified by transcript. Then experiments on what the agent sees, one named condition at a time, developed on `docs-retry-flag` + `version-silent-rename`, measured on the hold-out set: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
-| T36 | todo | Eval report with charts (funnel per scenario and condition, rates with intervals, proposal quality) published as a shareable page; raw results committed under `docs/eval/` | Page link in PROGRESS; raw JSON in the repo |
+| T35 | done | First: hold-out scenarios from real post-cutoff breaking changes (owner, 2026-10-25), verified by transcript. Then experiments on what the agent sees, one named condition at a time, developed on `docs-retry-flag` + `version-silent-rename`, measured on the hold-out set: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
+| T36 | done | Eval report with charts (funnel per scenario and condition, rates with intervals, proposal quality) published as a shareable page; raw results committed under `docs/eval/` | Page link in PROGRESS; raw JSON in the repo |
 
 ### DESIGN Phase 3 (after a month of data)
 
@@ -266,3 +266,32 @@ being enough; whether anyone uses full_trace.
   without a search). Agent-facing text moved to `service/agent_text.py` (both entrypoints
   consume it; the boundary check caught `cli` importing `mcp`). Mandatory-search-rule condition
   cut (owner). Owner's confidence-based rule noted for the wording phase.
+- 2026-10-25: structural screen finished; `nudge` never fired. Cause: 210 of 210 eval sessions
+  ran tests as `pytest -q 2>&1 | tail -n`, so the shell's exit code is tail's 0 and hooks
+  recorded failing runs as passes (also wrong for observed outcomes in production). Fixed: the
+  runner's summary line decides a masked 0; with no summary the run is unknown, never a pass.
+- 2026-10-25: screen results committed (docs/eval/README.md): `start` search 20/20 (CI 84-100%)
+  vs baseline 4/20; propose stayed 0-1/20 everywhere. Empty search was read as "nothing to
+  do". `rule` back-filled into the ledger; `nudge` trials marked invalid (PR #52). Next round:
+  combinations on top of `start` (invite, rule, worked argument shapes).
+- 2026-10-25: round two (60 sessions): `start-rule` propose 7/20, `start-all` 9/20, all graded
+  good; `start-invite` 1/20. The propose rule's wording was the second gate. SQLAlchemy 0/15
+  (agent doesn't know 2.1 changed autoflush). 14/30 propose calls rejected, mostly unversioned
+  `tool` (example omits it). Grader fix for runtime pins (PR #55). Next: controls under
+  `start-all` (false proposals must stay 0), then the wording search.
+- 2026-10-25: `start-all` safety check (30): false proposals 1/20 on controls, planted
+  instructions read 5/5 and followed 0/5, known-entry loop 5/5. Owner: a forced search on every
+  session (15/20 controls searched) is not something people would install; search and propose
+  must come from the text alone, propose weighted highest. Built the wording search (PR #57):
+  nine surfaces incl. tool names, argument descriptions, and the owner's hindsight rule;
+  balanced random configs repeated per exact text.
+- 2026-10-25: wording search done (517 sessions). Config B (`w-a0b2c2d1e0f1g1h0n0`) confirmed
+  on unseen scenarios: good proposals 19/21 discoveries, 9/12 real post-cutoff changes (today's
+  text 3/21, 0/12); search 17/21 discoveries, 0/12 controls; 0 false proposals; injection
+  ignored. Owner's hindsight rule is the biggest single lever. Found and fixed: a broken control
+  (`control-documented-gotcha`), runner logging usage-limit errors as trials. Next: adopt B as
+  the baseline (owner merges), chart page (T36), then Tom's invite.
+- 2026-10-25: T36 eval page published (private; share from its Share menu):
+  https://claude.ai/artifact/A5DmeFfK6wR23U5ujo5jwg. Charts: confirmation on unseen scenarios,
+  the hard-set journey across every condition, round-one option effects, and every condition as
+  a table, all computed from the ledger's valid trials.

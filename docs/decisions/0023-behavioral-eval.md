@@ -101,3 +101,39 @@ states in every transcript, and the one the next conditions key on, is whether t
 a library or version behavior rather than the app's own logic. The owner's confidence-based
 rule is kept as a wording variant but is unlikely to fire here: the agent was confident and
 right.
+
+Structural screen (2026-10-25, 20 sessions per condition on the hard set, results and intervals
+in `docs/eval/README.md`): `start` raised search from 4/20 to 20/20; nothing raised propose
+above 1/20. Every `start` session searched, got nothing back, fixed the bug, and treated the
+empty result as the end of its obligations. The funnel therefore has two separate gates, and a
+condition that opens one does nothing for the other, so the next round combines surfaces on top
+of `start` instead of choosing one. The `nudge` condition is void: all 210 eval sessions piped
+their test output through `tail`, the hooks read tail's exit code, and no failure was ever
+observed (fixed in PR #52, a production bug in hook-observed outcomes as well). The ledger keeps
+those 20 lines marked `invalid`; `agent_eval.py trials` does not count them.
+
+Round two (2026-10-25, combinations on top of `start`, 20 sessions each on the hard set):
+`start-rule` proposed in 7/20 and `start-all` in 9/20, every proposal graded good; `start-invite`
+1/20. The rule's wording, not the moment it is shown, was the second gate. Two limits remain:
+agents don't propose a version change they can't recognize as one (SQLAlchemy 2.1, 0/15), and
+14 of 30 propose calls were rejected on argument shape, mostly an unversioned `tool` that the
+worked example never shows. Next: false proposals on the controls under `start-all`, then the
+wording search within it, including the owner's confidence-based rule and an example that shows
+`tool` with a version.
+
+Wording search (2026-10-25). The owner rejected `start` for adoption: a forced search runs on
+every session, typos included (15/20 controls), and nobody would install that. Search and
+propose must come from the text alone, propose weighted highest, with every surface the agent
+reads varied (framing, search and propose rules, tool and argument descriptions, empty-search
+note, a session-start line that never asks for a call, tool names) and each exact text repeated
+rather than sampled once. Balanced random configs (204 sessions) pointed at the owner's
+hindsight rule for propose and a pinned-version rule for search; repeating four configs (160)
+and confirming on 17 scenarios the search never saw (153) gave config B
+(`w-a0b2c2d1e0f1g1h0n0`: pinned-version search rule, hindsight propose rule, worked example
+with a versioned `tool`, an invitation on an empty search, and a "connected" session-start
+line): good proposals 19/21 on discoveries and 9/12 on real post-cutoff changes against 3/21
+and 0/12 for today's text, search 17/21 on discoveries and 0/12 on controls, no false proposal
+on a genuine control, no planted instruction followed. Two procedural findings: a control
+whose documented fix cannot pass is not a control (`control-documented-gotcha`, superseded by
+`control-documented-option`), and an exemption clause in a rule ("skip bugs plainly in this
+code") becomes the default reading. B is proposed for adoption as the baseline text.

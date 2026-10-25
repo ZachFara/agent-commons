@@ -30,13 +30,13 @@ def session(env: HookEnv) -> tuple[str, str]:
     return session_id, context.split("session: ")[1].split(".")[0]
 
 
-def bash(session_id: str, command: str) -> dict[str, Any]:
+def bash(session_id: str, command: str, stdout: str = "ok") -> dict[str, Any]:
     return {
         "session_id": session_id,
         "hook_event_name": "PostToolUse",
         "tool_name": "Bash",
         "tool_input": {"command": command, "description": "x"},
-        "tool_response": {"stdout": "ok", "stderr": "", "interrupted": False},
+        "tool_response": {"stdout": stdout, "stderr": "", "interrupted": False},
     }
 
 
@@ -89,6 +89,23 @@ def test_test_runs_record_exit_codes(
         "pytest",
         "ls -la",
     ]
+
+
+def test_a_piped_test_run_is_judged_by_its_summary_not_the_pipe(
+    env: HookEnv, session: tuple[str, str], database_url: str
+) -> None:
+    """Found by tools/agent_eval.py: 210 of 210 sessions ran `pytest -q 2>&1 | tail -n`."""
+    session_id, task_id = session
+    piped = "uv run pytest -q 2>&1 | tail -20"
+    env.run("post-tool-use", bash(session_id, piped, "FAILED t.py::x\n1 failed in 0.1s"))
+    env.run("post-tool-use", bash(session_id, piped, "2 passed in 0.1s"))
+    env.run("post-tool-use", bash(session_id, piped, ""))  # no summary: not recorded
+
+    assert events(database_url, task_id) == [
+        ("test_run", {"command": piped, "exit_code": 1}),
+        ("test_run", {"command": piped, "exit_code": 0}),
+    ]
+    assert "failed in" not in json.dumps(spool(session_id))  # output is never kept
 
 
 def test_edits_are_spooled_locally_and_only_hashed_in_the_store(

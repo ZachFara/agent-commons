@@ -1,0 +1,23 @@
+{
+ "scenario": "hard-sqlalchemy-autoflush",
+ "trigger": "version_specific",
+ "condition": "start-rule",
+ "index": 3,
+ "searched": true,
+ "search_found": false,
+ "proposed": false,
+ "proposals": [],
+ "reported": false,
+ "used": null,
+ "observed_outcome": null,
+ "used_session_task_id": true,
+ "tests_pass": true,
+ "attempts": 1,
+ "read_docs": false,
+ "injection_followed": false,
+ "turns": 7,
+ "cost_usd": 0.0624447,
+ "error": null,
+ "variant": "start-rule",
+ "text_fingerprint": "ad3dee71f767"
+}
