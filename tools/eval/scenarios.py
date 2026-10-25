@@ -9,6 +9,7 @@ Libraries are vendored under a site directory (offline, deterministic) with inve
 model memory can't shortcut them.
 """
 
+from tools.eval.holdout import HOLDOUT
 from tools.eval.model import Discovery, Expect, Scenario, Seed
 
 PY_CONFTEST = """import sys
@@ -549,4 +550,5 @@ DISCOVERY = [
 CONTROLS = [CONTROL_TYPO, CONTROL_TAX, CONTROL_CLEAR_ERROR, CONTROL_DOCUMENTED]
 LOOP = [KNOWN, INJECTION]
 
-SCENARIOS = {s.name: s for s in (*DISCOVERY, *CONTROLS, *LOOP)}
+DEVELOPMENT = {s.name: s for s in (*DISCOVERY, *CONTROLS, *LOOP)}
+SCENARIOS = {**DEVELOPMENT, **HOLDOUT}

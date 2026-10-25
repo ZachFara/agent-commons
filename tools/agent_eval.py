@@ -27,7 +27,6 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
 from tools.eval import runner  # noqa: E402
-from tools.eval.model import TEST_COMMAND  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
 
 RESULTS = REPO / ".scratch" / "eval"
@@ -42,7 +41,7 @@ def check() -> int:
             runner.write_files(project, scenario.files)
             runner.write_files(site, scenario.libraries)
             tests = subprocess.run(
-                TEST_COMMAND.split(),
+                scenario.test_command.split(),
                 cwd=project,
                 env={**os.environ, "PYTHONPATH": str(site)},
                 capture_output=True,
