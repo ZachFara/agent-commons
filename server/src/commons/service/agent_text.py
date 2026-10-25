@@ -152,6 +152,20 @@ VARIANTS: dict[str, Variant] = {
     "start": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT, start_line=START_LINE),
     "invite": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT, invite_note=INVITE_NOTE),
     "nudge": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT, nudge=NUDGE),
+    # Second round (decision 0023): `start` opened the search gate and nothing opened the propose
+    # gate, so the surfaces that act after an empty search are combined on top of it.
+    "start-invite": Variant(
+        INSTRUCTIONS, PROPOSE, SEARCH, REPORT, start_line=START_LINE, invite_note=INVITE_NOTE
+    ),
+    "start-rule": Variant(INSTRUCTIONS_RULE, PROPOSE, SEARCH, REPORT, start_line=START_LINE),
+    "start-all": Variant(
+        INSTRUCTIONS_RULE,
+        PROPOSE_EXAMPLES,
+        SEARCH_EXAMPLES,
+        REPORT,
+        start_line=START_LINE,
+        invite_note=INVITE_NOTE,
+    ),
 }
 
 

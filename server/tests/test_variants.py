@@ -4,6 +4,7 @@ Production stays on `baseline`; a variant is selected per process with
 COMMONS_INSTRUCTIONS_VARIANT. Hooks and the MCP server both read it.
 """
 
+import dataclasses
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -170,3 +171,28 @@ def test_fingerprint_changes_when_any_surface_changes() -> None:
         agent_text.INSTRUCTIONS + " ", agent_text.PROPOSE, agent_text.SEARCH, agent_text.REPORT
     )
     assert agent_text.fingerprint(tweaked) != base  # one character moves the id
+
+
+@pytest.mark.parametrize(
+    ("name", "parts"),
+    [
+        ("start-invite", {"start", "invite"}),
+        ("start-rule", {"start", "rule"}),
+        ("start-all", {"start", "invite", "rule", "examples"}),
+    ],
+)
+def test_combined_variants_take_each_surface_from_their_parts(name: str, parts: set[str]) -> None:
+    combined = agent_text.VARIANTS[name]
+    baseline = agent_text.VARIANTS["baseline"]
+    for field in dataclasses.fields(agent_text.Variant):
+        owners = {
+            part
+            for part in parts
+            if getattr(agent_text.VARIANTS[part], field.name) != getattr(baseline, field.name)
+        }
+        expected = (
+            getattr(agent_text.VARIANTS[owners.pop()], field.name)
+            if owners
+            else getattr(baseline, field.name)
+        )
+        assert getattr(combined, field.name) == expected, field.name
