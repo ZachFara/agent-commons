@@ -68,3 +68,11 @@ def test_scenarios_are_counted_by_what_the_agent_should_do(
     scenario: str, trigger: str, kind: str
 ) -> None:
     assert scenario_kind({"scenario": scenario, "trigger": trigger}) == kind
+
+
+def test_shipped_and_original_name_the_texts_they_say() -> None:
+    shipped, original = plan_configs(["shipped", "original"], 0, seed=1)
+    assert agent_text.resolve(shipped) == agent_text.VARIANTS["baseline"]
+    assert agent_text.resolve(original) == agent_text.VARIANTS["original"]
+    assert shipped.startswith("w-")
+    assert original.startswith("w-")

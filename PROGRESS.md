@@ -302,3 +302,7 @@ being enough; whether anyone uses full_trace.
   0/18 controls. Found: Claude Code defers MCP tools by default, so instructions decide use.
   Next: test `anthropic/alwaysLoad` on search/propose; owner to decide on raising the 1,500-char
   instructions check to 1,900 (docs: 4,096; 2,048 before v2.1.296).
+- 2026-10-25: shipped (#61) and deployed to production with owner approval. `make eval-confirm`
+  re-runs the confirmation on both models; docs/eval/README.md "Re-running the eval" covers the
+  rest. Transcripts archived outside the repo at
+  ~/Development/agent-commons-eval-archive/eval-2026-10-25.tar.gz; `.scratch/` emptied.

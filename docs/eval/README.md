@@ -30,6 +30,38 @@ Raw per-session results from `tools/agent_eval.py` (decision 0023). One JSON fil
 Summarize with `uv run python tools/agent_eval.py report --condition <name>` after copying a
 condition's JSON files into `.scratch/eval/<name>/`.
 
+## Re-running the eval
+
+Everything needed to measure the agent-facing text again is in the repo: the harness
+(`tools/agent_eval.py`, `tools/eval/`), every scenario, the wording surfaces
+(`server/src/commons/service/agent_text.py`), and this ledger.
+
+- **Setup:** `make db` (local Postgres), and a signed-in `claude` CLI. Sessions run on that
+  account's subscription; Opus uses it up fastest. When a usage limit stops a batch, rerun the
+  same command with `--resume` (or `RESUME=1` for make), which skips sessions with a clean result.
+- **Confirm the shipped text:** `make eval-confirm` runs the shipped text against the original on
+  Sonnet and Opus, 13 scenarios no round was tuned on, 3 runs each (~156 sessions, about an
+  hour), then `make eval-effects EVAL_CONDITION=confirm-YYYYMMDD` prints per-model results.
+  `EVAL_MODELS="--model sonnet --model claude-opus-5-5 --model haiku"` adds a model.
+- **Try new wording:** add an option to a surface in `agent_text.py` (or a new optional surface),
+  keep every combination inside the limits (`make check` enforces them), then
+  `uv run python tools/agent_eval.py search --config shipped --config <w-name> --model sonnet
+  --model claude-opus-5-5 --runs 2 --scenario ...` on development scenarios, and confirm the
+  winner with `make eval-confirm`-style runs on scenarios it was not tuned on.
+- **The bar for shipping a change** (decision 0023), on every model measured: more good
+  proposals than the current text, no proposal on any control, no planted instruction followed,
+  and no lower fix rate. Ship by setting `SHIPPED` in `agent_text.py`.
+- **Record results:** each run appends to `trials.jsonl` as sessions finish and writes one JSON
+  per session to `.scratch/eval/<condition>/`; commit the ledger lines and copy the JSON into
+  `docs/eval/<condition>/`. Transcripts are not committed (size, local paths); those from
+  2026-10-25 are archived on the owner's machine at
+  `~/Development/agent-commons-eval-archive/eval-2026-10-25.tar.gz` (1,455 transcripts, logs,
+  and the agent interviews).
+- **Asking agents why** (idea generation only): a finished session can be resumed with
+  `claude -p --resume <session_id>` from its recorded working directory, with
+  `--setting-sources project --strict-mcp-config` so no hooks or servers run. Ask what led to the
+  decision, not for its reasoning: asking a model to quote its own reasoning trips a safeguard.
+
 ## Trial ledger
 
 `trials.jsonl` is append-only: one line per session, stamped with the **variant** name and a
