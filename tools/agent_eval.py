@@ -121,10 +121,14 @@ def by_variant() -> int:
     if not LEDGER.exists():
         print("no trials logged yet")
         return 0
-    rows = [json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line]
+    lines = [json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line]
+    # A line marked `invalid` stays in the ledger as a record but is never counted.
+    rows = [row for row in lines if not row.get("invalid")]
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         groups[(row["variant"], row["text"], row["trigger"])].append(row)
+    if skipped := len(lines) - len(rows):
+        print(f"({skipped} trials marked invalid are not counted)")
     print(
         f"{'variant':<10} {'text':<13} {'trigger':<18} {'n':>3} "
         f"{'search':>7} {'propose':>8} {'good':>5} {'fixed':>6}"
