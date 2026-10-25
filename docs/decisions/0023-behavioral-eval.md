@@ -101,3 +101,13 @@ states in every transcript, and the one the next conditions key on, is whether t
 a library or version behavior rather than the app's own logic. The owner's confidence-based
 rule is kept as a wording variant but is unlikely to fire here: the agent was confident and
 right.
+
+Structural screen (2026-10-25, 20 sessions per condition on the hard set, results and intervals
+in `docs/eval/README.md`): `start` raised search from 4/20 to 20/20; nothing raised propose
+above 1/20. Every `start` session searched, got nothing back, fixed the bug, and treated the
+empty result as the end of its obligations. The funnel therefore has two separate gates, and a
+condition that opens one does nothing for the other, so the next round combines surfaces on top
+of `start` instead of choosing one. The `nudge` condition is void: all 210 eval sessions piped
+their test output through `tail`, the hooks read tail's exit code, and no failure was ever
+observed (fixed in PR #52, a production bug in hook-observed outcomes as well). The ledger keeps
+those 20 lines marked `invalid`; `agent_eval.py trials` does not count them.
