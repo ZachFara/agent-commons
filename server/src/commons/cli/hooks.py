@@ -21,6 +21,7 @@ logger = logging.getLogger("commons.hooks")
 
 Payload = dict[str, Any]
 HookOutput = dict[str, Any] | None
+OUTPUT_TAIL = 4000  # characters; summaries sit at the end
 
 
 def _session_start(payload: Payload) -> HookOutput:
@@ -74,7 +75,17 @@ def _tool_use(payload: Payload, *, failed: bool) -> ToolUse:
         new_text=None if is_bash or failed else _new_text(tool_input),
         old_text=None if is_bash or failed else _old_text(tool_input),
         exit_code=_exit_code(payload, failed=failed) if is_bash else None,
+        output=_output(payload) if is_bash and not failed else None,
     )
+
+
+def _output(payload: Payload) -> str:
+    """Return the end of a Bash call's output, where test runners print their summary."""
+    response = payload.get("tool_response") or {}
+    if not isinstance(response, dict):
+        return ""
+    text = f"{response.get('stdout') or ''}\n{response.get('stderr') or ''}"
+    return text[-OUTPUT_TAIL:]
 
 
 def _old_text(tool_input: Payload) -> str | None:
