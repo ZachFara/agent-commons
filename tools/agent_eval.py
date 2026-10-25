@@ -86,17 +86,25 @@ def wording_search(args: argparse.Namespace) -> int:
     """Run balanced random wording configs, each repeated on every scenario (decision 0023)."""
     configs = plan_configs(args.config, args.configs, args.seed)
     names = args.scenario or sorted(SCENARIOS)
+    models = args.model or ["sonnet"]
+    # Every config runs on every model, interleaved, so models see the same conditions.
     jobs = [
-        runner.Job(SCENARIOS[name], 0, config)
+        runner.Job(SCENARIOS[name], 0, config, model)
         for config in configs
         for name in names
         for _ in range(args.runs)
+        for model in models
     ]
-    jobs = [runner.Job(job.scenario, index, job.variant) for index, job in enumerate(jobs, 1)]
+    jobs = [
+        runner.Job(job.scenario, index, job.variant, job.model) for index, job in enumerate(jobs, 1)
+    ]
     transcripts = RESULTS / args.condition
     transcripts.mkdir(parents=True, exist_ok=True)
     (transcripts / "configs.json").write_text(json.dumps(configs, indent=1), encoding="utf-8")
-    print(f"{len(configs)} configs x {len(names)} scenarios x {args.runs} runs = {len(jobs)}")
+    print(
+        f"{len(configs)} configs x {len(names)} scenarios x {args.runs} runs x "
+        f"{len(models)} models = {len(jobs)}"
+    )
     return run_jobs(jobs, args)
 
 
@@ -118,7 +126,11 @@ def finished(transcripts: Path, condition: str, job: runner.Job) -> bool:
     if not path.exists():
         return False
     saved = json.loads(path.read_text(encoding="utf-8"))
-    return saved.get("error") is None and saved.get("variant") == job.variant
+    return (
+        saved.get("error") is None
+        and saved.get("variant") == job.variant
+        and saved.get("model", "") in {job.model, ""}
+    )
 
 
 def balanced_configs(count: int, seed: int) -> list[str]:
@@ -148,9 +160,11 @@ def run_jobs(jobs: list[runner.Job], args: argparse.Namespace) -> int:
         jobs = [job for job in jobs if not finished(transcripts, args.condition, job)]
         print(f"resuming: {len(jobs)} sessions without a clean result")
     results: list[runner.Result] = []
+    # `run` takes one model; `search` names one per job, so this is only a fallback there.
+    default_model = args.model if isinstance(args.model, str) else "sonnet"
     for result in runner.run_many(
         jobs,
-        args.model,
+        default_model,
         args.condition,
         transcripts,
         hooks=not args.no_hooks,
@@ -179,6 +193,7 @@ def append_ledger(results: list[runner.Result]) -> None:
         for result in (r for r in results if r.error is None):
             line = {
                 "at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "model": result.model,
                 "variant": result.variant,
                 "text": result.text_fingerprint,
                 "condition": result.condition,
@@ -232,7 +247,10 @@ def _ledger_lines() -> list[dict[str, Any]]:
 
 
 def effects(args: argparse.Namespace) -> int:
-    """Pool a wording search by option: each session counts for every option it showed."""
+    """Pool a wording search by option and model: each session counts for every option it showed.
+
+    Configs are ranked by their worse model, since the text has to work for every model.
+    """
     rows = [
         row
         for row in _ledger_lines()
@@ -243,43 +261,72 @@ def effects(args: argparse.Namespace) -> int:
     if not rows:
         print(f"no wording trials for condition {args.condition}")
         return 0
-    header = (
-        f"{'':<22} {'n':>3} {'search':>16} {'good propose':>16}   "
-        f"{'controls':>8} {'search':>7} {'propose':>8}"
-    )
-    print("per option (pooled over every config that showed it)\n" + header)
+    models = sorted({str(row.get("model") or "sonnet") for row in rows})
+    print("per option (pooled over every config that showed it)")
     for key, size in agent_text.SURFACES.items():
         for option in range(size):
             showing = [row for row in rows if option_of(row["variant"], key) == option]
-            print(_effect_line(f"{key}{option}", showing))
-    print("\nper config, best first\n" + header)
+            if showing:
+                print(_effect_line(f"{key}{option}", showing, models))
+    print("\nper config, ranked by the worse model's good-proposal rate")
     configs = {str(row["variant"]) for row in rows}
 
-    def good_rate(config: str) -> float:
-        mine = [r for r in rows if r["variant"] == config and r["trigger"] != "control"]
-        return sum(bool(r["good_proposals"]) for r in mine) / max(len(mine), 1)
+    def worst(config: str) -> float:
+        mine = [row for row in rows if row["variant"] == config]
+        return min(_good_rate(mine, model) for model in models)
 
-    for config in sorted(configs, key=good_rate, reverse=True):
-        print(_effect_line(config, [row for row in rows if row["variant"] == config]))
+    for config in sorted(configs, key=worst, reverse=True):
+        print(_effect_line(config, [row for row in rows if row["variant"] == config], models))
     return 0
 
 
 def option_of(variant: str, key: str) -> int:
     """Return which option of surface `key` a wording name shows, or -1 if it isn't one."""
+    if not variant.startswith("w-"):
+        return -1
     match = re.search(rf"{key}(\d)", variant.removeprefix("w-"))
-    return int(match.group(1)) if match else -1
+    if match:
+        return int(match.group(1))
+    return 0 if key in agent_text.OPTIONAL_SURFACES else -1  # an optional surface left out is 0
 
 
-def _effect_line(label: str, rows: list[dict[str, Any]]) -> str:
-    discovery = [row for row in rows if row["trigger"] != "control"]
-    controls = [row for row in rows if row["trigger"] == "control"]
-    searched = sum(bool(row["searched"]) for row in discovery)
-    good = sum(bool(row["good_proposals"]) for row in discovery)
-    return (
-        f"{label:<22} {len(discovery):>3} {_with_interval(searched, len(discovery)):>16} "
-        f"{_with_interval(good, len(discovery)):>16}   {len(controls):>8} "
-        f"{_rate(controls, 'searched'):>7} {_rate(controls, 'proposed'):>8}"
-    )
+def scenario_kind(row: dict[str, Any]) -> str:
+    """Return "control", "known" (the store already holds the answer), or "discovery"."""
+    if row["trigger"] == "control":
+        return "control"
+    scenario = SCENARIOS.get(str(row["scenario"]))
+    return "known" if scenario is not None and scenario.seeds else "discovery"
+
+
+def _of(rows: list[dict[str, Any]], model: str, kind: str) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if str(row.get("model") or "sonnet") == model and scenario_kind(row) == kind
+    ]
+
+
+def _good_rate(rows: list[dict[str, Any]], model: str) -> float:
+    found = _of(rows, model, "discovery")
+    return sum(bool(row["good_proposals"]) for row in found) / max(len(found), 1)
+
+
+def _effect_line(label: str, rows: list[dict[str, Any]], models: list[str]) -> str:
+    """One line per label: for each model, discoveries, duplicates, and control proposals."""
+    parts = [f"{label:<26}"]
+    for model in models:
+        found, known, controls = (
+            _of(rows, model, kind) for kind in ("discovery", "known", "control")
+        )
+        good = sum(bool(row["good_proposals"]) for row in found)
+        searched = sum(bool(row["searched"]) for row in found)
+        name = model.removeprefix("claude-")[:10]
+        parts.append(
+            f"| {name:<10} good {_with_interval(good, len(found)):<17}"
+            f" search {searched:>2}/{len(found):<2} dup {_rate(known, 'proposed'):>5}"
+            f" ctl {_rate(controls, 'proposed'):>5}"
+        )
+    return " ".join(parts)
 
 
 def _with_interval(hits: int, total: int) -> str:
@@ -368,7 +415,9 @@ def main() -> int:
     search_parser.add_argument("--seed", type=int, default=1)
     search_parser.add_argument("--scenario", action="append", choices=sorted(SCENARIOS))
     search_parser.add_argument("--runs", type=int, default=2, help="Repeats per config, scenario.")
-    search_parser.add_argument("--model", default="sonnet")
+    search_parser.add_argument(
+        "--model", action="append", help="Run every config on each (default: sonnet)."
+    )
     search_parser.add_argument("--condition", default="wording")
     search_parser.add_argument("--no-hooks", action="store_true")
     search_parser.add_argument(

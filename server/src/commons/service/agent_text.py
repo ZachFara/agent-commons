@@ -216,6 +216,11 @@ SEARCH_RULES = (
         "Search first: one `search` call is cheaper than a wrong guess about a library. When an "
         "error involves a library or the runtime, search the error text before you change code."
     ),
+    # round three (cross-model): direct, keyed on the dependency, no exemption clause
+    (
+        "Search first: before your first fix for a failure that involves a dependency or the "
+        "runtime, call `search` with the error text."
+    ),
 )
 PROPOSE_RULES = (
     _BASELINE_PROPOSE_RULE,
@@ -242,6 +247,19 @@ PROPOSE_RULES = (
         "Before your final message, ask: was the cause outside this codebase, a library or runtime "
         "behaving unlike its docs or an earlier version? If yes, call `propose` (one call: "
         "symptom, cause, fix, versions). If no, skip it."
+    ),
+    # round three (cross-model). Opus proposed documented behavior under the hindsight rule
+    # (`control-documented-option`), so these narrow "discover" without a "skip X" clause, which
+    # round one showed becomes the default reading.
+    (
+        "Propose before finishing, judged by what you knew at the start: fixes look obvious once "
+        "found. If the cause was a library or runtime behavior its docs don't state, call "
+        "`propose`, even for a one-line fix. Skip this codebase's own logic."
+    ),
+    (
+        "Propose before finishing if the next agent would have to rediscover what you found: a "
+        "library or runtime behaving unlike its docs or an earlier version. One-line fixes count; "
+        "fixes look obvious once found. Skip this codebase's own logic."
     ),
 )
 
@@ -330,6 +348,18 @@ NAMES = (
     ("lookup_error", "record_discovery"),
 )
 
+# Check before proposing (round three). Opus rarely searched and re-proposed fixes the store
+# already had (10 of 12 sessions in the two known-entry scenarios); this asks for a search only
+# at the moment of proposing. Option 1 lives in the instructions, which stay visible when Claude
+# Code defers tool descriptions behind tool search; option 2 leads the `propose` description.
+CHECK_FIRST_RULE = "Before proposing, `search`; if an entry exists, `report` on it instead."
+CHECK_FIRST_DESCRIPTION = (
+    "Call `search` with the symptom first: if an entry already covers it, `report` on that entry "
+    "instead of proposing a duplicate."
+)
+CHECK_IN_INSTRUCTIONS, CHECK_IN_DESCRIPTION = 1, 2
+CHECKS = (0, CHECK_IN_INSTRUCTIONS, CHECK_IN_DESCRIPTION)  # 0: no check
+
 SURFACES: dict[str, int] = {
     "a": len(FRAMINGS),
     "b": len(SEARCH_RULES),
@@ -340,8 +370,15 @@ SURFACES: dict[str, int] = {
     "g": len(START_LINES),
     "h": len(ARGUMENTS),
     "n": len(NAMES),
+    "s": len(CHECKS),
 }
-_WORDING = re.compile("w-" + "".join(rf"{key}(\d)" for key in SURFACES))
+# Surfaces added after round two are optional in a name and default to 0, so every name used
+# before them still resolves to the same text, and one text has one name.
+OPTIONAL_SURFACES = ("s",)
+_WORDING = re.compile(
+    "w-"
+    + "".join(rf"(?:{key}(\d))?" if key in OPTIONAL_SURFACES else rf"{key}(\d)" for key in SURFACES)
+)
 
 
 def _swap(text: str, old: str, new: str) -> str:
@@ -356,7 +393,11 @@ def _swap(text: str, old: str, new: str) -> str:
 
 def wording_name(choice: dict[str, int]) -> str:
     """Return the variant name for one option per surface, e.g. `w-a0b2c1d0e1f0`."""
-    return "w-" + "".join(f"{key}{choice[key]}" for key in SURFACES)
+    return "w-" + "".join(
+        f"{key}{choice[key]}"
+        for key in SURFACES
+        if key not in OPTIONAL_SURFACES or choice.get(key, 0)
+    )
 
 
 def wording(choice: dict[str, int]) -> Variant:
@@ -368,6 +409,13 @@ def wording(choice: dict[str, int]) -> Variant:
         (PROPOSE_RULES, _BASELINE_PROPOSE_RULE, "c"),
     ):
         instructions = _swap(instructions, baseline, options[choice[key]])
+    propose = PROPOSE_DESCRIPTIONS[choice["d"]]
+    check = choice.get("s", 0)
+    if check == CHECK_IN_INSTRUCTIONS:
+        rule = PROPOSE_RULES[choice["c"]]
+        instructions = _swap(instructions, rule, f"{rule} {CHECK_FIRST_RULE}")
+    elif check == CHECK_IN_DESCRIPTION:
+        propose = f"{CHECK_FIRST_DESCRIPTION}\n\n{propose}"
     search_name, propose_name = NAMES[choice["n"]]
 
     def named(text: str) -> str:
@@ -378,7 +426,7 @@ def wording(choice: dict[str, int]) -> Variant:
     note = EMPTY_NOTES[choice["f"]]
     return Variant(
         named(instructions),
-        named(PROPOSE_DESCRIPTIONS[choice["d"]]),
+        named(propose),
         named(SEARCH_DESCRIPTIONS[choice["e"]]),
         named(REPORT),
         start_line=START_LINES[choice["g"]],
@@ -396,7 +444,8 @@ def resolve(name: str) -> Variant:
     match = _WORDING.fullmatch(name)
     if match is None:
         raise KeyError(name)
-    choice = dict(zip(SURFACES, (int(digit) for digit in match.groups()), strict=True))
+    digits = (0 if digit is None else int(digit) for digit in match.groups())
+    choice = dict(zip(SURFACES, digits, strict=True))
     if any(choice[key] >= size for key, size in SURFACES.items()):
         raise KeyError(name)
     return wording(choice)

@@ -3,7 +3,7 @@
 from collections import Counter
 
 import pytest
-from tools.agent_eval import balanced_configs, option_of, plan_configs
+from tools.agent_eval import balanced_configs, option_of, plan_configs, scenario_kind
 from tools.eval.runner import allowed_tools
 
 from commons.service import agent_text
@@ -53,3 +53,18 @@ def test_sampled_plans_start_with_todays_text() -> None:
     plan = plan_configs(None, 4, seed=1)
     assert agent_text.resolve(plan[0]) == agent_text.VARIANTS["baseline"]
     assert plan[1:] == balanced_configs(4, seed=1)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "trigger", "kind"),
+    [
+        ("control-typo", "control", "control"),
+        ("known-silent-rename", "version_specific", "known"),
+        ("injection-in-entry", "contradicted_docs", "known"),
+        ("hard-pandas-cow-subset", "version_specific", "discovery"),
+    ],
+)
+def test_scenarios_are_counted_by_what_the_agent_should_do(
+    scenario: str, trigger: str, kind: str
+) -> None:
+    assert scenario_kind({"scenario": scenario, "trigger": trigger}) == kind

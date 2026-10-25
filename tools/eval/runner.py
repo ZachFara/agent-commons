@@ -12,7 +12,7 @@ import tempfile
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +95,7 @@ class Result:
     error: str | None
     variant: str = "baseline"
     text_fingerprint: str = ""
+    model: str = ""
 
     def summary(self) -> str:
         """One line describing what the agent did."""
@@ -373,6 +374,7 @@ class Job:
     scenario: Scenario
     index: int
     variant: str = "baseline"
+    model: str = ""  # empty: the batch's model
 
 
 def grade(session: Session, events: list[dict[str, Any]]) -> Result:
@@ -470,13 +472,14 @@ def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: b
             session = Session(
                 scenario, condition, index, project, workdir / "site", url, job.variant
             )
-            events = run_session(session, workdir, model, hooks=hooks)
+            chosen = job.model or model
+            events = run_session(session, workdir, chosen, hooks=hooks)
             transcripts.mkdir(parents=True, exist_ok=True)
             stem = f"{condition}-{scenario.name}-{index}"
             (transcripts / f"{stem}.jsonl").write_text(
                 "\n".join(json.dumps(e) for e in events), encoding="utf-8"
             )
-            result = grade(session, events)
+            result = replace(grade(session, events), model=chosen)
             (transcripts / f"{stem}.json").write_text(json.dumps(asdict(result), indent=1))
             return result
     finally:
@@ -511,7 +514,8 @@ def run_many(
             misses = result.failures(job.scenario)
             verdict = "OK" if not misses else "MISSED: " + ", ".join(misses)
             print(
-                f"{result.scenario:<22} #{result.index} {job.variant}  {result.summary()}  "
+                f"{result.scenario:<22} #{result.index} {job.variant} {result.model}  "
+                f"{result.summary()}  "
                 f"{verdict}",
                 flush=True,
             )
