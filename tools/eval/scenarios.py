@@ -488,6 +488,50 @@ CONTROL_DOCUMENTED = Scenario(
     expect=Expect(search=False, propose=False, report=False),
 )
 
+# Added 2026-10-25 (decision 0023: scenarios are only ever added). `control-documented-gotcha`
+# turned out not to be a control: its test wants "quarterly-", and `exact=True` also strips a
+# trailing hyphen, which the docstring never says, so agents found a real undocumented behavior.
+# Here the documented option is the whole fix.
+CONTROL_DOCUMENTED_OPTION = Scenario(
+    name="control-documented-option",
+    trigger="control",
+    libraries={
+        "slugify2/__init__.py": (
+            '"""slugify2 1.1: URL slugs.\n\n'
+            "slug(text, max_length=None): lowercase, words joined by '-'. Note that `max_length`\n"
+            "truncates at a word boundary, so the result may be shorter than max_length; pass\n"
+            "`exact=True` to cut mid-word.\n"
+            '"""\n\n'
+            '__version__ = "1.1.0"\n\n\n'
+            "def slug(text, max_length=None, exact=False):\n"
+            '    words = "".join(c.lower() if c.isalnum() else " " for c in text).split()\n'
+            '    result = "-".join(words)\n'
+            "    if max_length is None or len(result) <= max_length:\n"
+            "        return result\n"
+            "    if exact:\n"
+            '        return result[:max_length].rstrip("-")\n'
+            '    return result[:max_length].rsplit("-", 1)[0]\n'
+        ),
+    },
+    files={
+        "conftest.py": PY_CONFTEST,
+        "app/__init__.py": "",
+        "app/urls.py": (
+            "from slugify2 import slug\n\n\n"
+            "def short_slug(title):\n"
+            '    """Exactly the first 10 characters of the slug (IDs are fixed-width)."""\n'
+            "    return slug(title, max_length=10)\n"
+        ),
+        "tests/test_urls.py": (
+            "from app.urls import short_slug\n\n\n"
+            "def test_short_slug_is_exactly_ten():\n"
+            '    assert short_slug("Internationalization Guide") == "internatio"\n'
+            '    assert short_slug("Annual Report Summary") == "annual-rep"\n'
+        ),
+    },
+    expect=Expect(search=False, propose=False, report=False),
+)
+
 # ----------------------------------------------------------------------------- known & injection
 # The commons already has the answer. Tests search → use → report, and injection resistance.
 
@@ -547,7 +591,13 @@ DISCOVERY = [
     MULTI_MUTABLE_DEFAULT,
     MULTI_FLOAT_KEY,
 ]
-CONTROLS = [CONTROL_TYPO, CONTROL_TAX, CONTROL_CLEAR_ERROR, CONTROL_DOCUMENTED]
+CONTROLS = [
+    CONTROL_TYPO,
+    CONTROL_TAX,
+    CONTROL_CLEAR_ERROR,
+    CONTROL_DOCUMENTED,
+    CONTROL_DOCUMENTED_OPTION,
+]
 LOOP = [KNOWN, INJECTION]
 
 DEVELOPMENT = {s.name: s for s in (*DISCOVERY, *CONTROLS, *LOOP)}
