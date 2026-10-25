@@ -150,7 +150,8 @@ class Variant:
 
 
 VARIANTS: dict[str, Variant] = {
-    "baseline": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT),
+    # The text that shipped until the wording search; "baseline" (what ships now) is set below.
+    "original": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT),
     "examples": Variant(INSTRUCTIONS, PROPOSE_EXAMPLES, SEARCH_EXAMPLES, REPORT),
     "rule": Variant(INSTRUCTIONS_RULE, PROPOSE, SEARCH, REPORT),
     "start": Variant(INSTRUCTIONS, PROPOSE, SEARCH, REPORT, start_line=START_LINE),
@@ -386,6 +387,15 @@ def resolve(name: str) -> Variant:
     if any(choice[key] >= size for key, size in SURFACES.items()):
         raise KeyError(name)
     return wording(choice)
+
+
+# Adopted 2026-10-25 (decision 0023, wording search): the pinned-version search rule, the
+# owner's hindsight propose rule, the worked example with a versioned `tool`, an invitation on
+# an empty search, and the "connected" session-start line. On 17 scenarios the search never
+# saw: good proposals 19/21 on discoveries and 9/12 on real post-cutoff changes (the original
+# text: 3/21 and 0/12), search 17/21 on discoveries and 0/12 on controls, no false proposals.
+SHIPPED = "w-a0b2c2d1e0f1g1h0n0"
+VARIANTS["baseline"] = resolve(SHIPPED)
 
 
 def variant() -> Variant:

@@ -49,7 +49,7 @@ def test_named_configs_are_repeated_as_given_and_checked_first() -> None:
         plan_configs(["w-a9b0c0d0e0f0g0h0n0"], 16, seed=1)
 
 
-def test_sampled_plans_start_with_todays_text() -> None:
+def test_sampled_plans_start_with_the_shipped_text() -> None:
     plan = plan_configs(None, 4, seed=1)
     assert agent_text.resolve(plan[0]) == agent_text.VARIANTS["baseline"]
     assert plan[1:] == balanced_configs(4, seed=1)

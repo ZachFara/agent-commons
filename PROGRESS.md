@@ -266,3 +266,5 @@ being enough; whether anyone uses full_trace.
   without a search). Agent-facing text moved to `service/agent_text.py` (both entrypoints
   consume it; the boundary check caught `cli` importing `mcp`). Mandatory-search-rule condition
   cut (owner). Owner's confidence-based rule noted for the wording phase.
+- 2026-10-25: adoption PR: config B becomes `baseline` (what ships); the old text stays
+  measurable as `original`. DESIGN.md §5 propose heuristic updated to match.
