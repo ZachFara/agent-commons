@@ -489,3 +489,6 @@ Next steps:
 - 2026-10-31: T37 search log and call log (decision 0024). Searches with no match were invisible:
   `retrievals` needs an entry. Owner chose the existing privacy modes over a new one. Over stdio
   the call log must stay off stdout (the MCP channel).
+- 2026-10-31: T38 `propose` and `search` return `store` (the hosted URL, or `local`). The tool
+  descriptions were left alone: they are the eval-measured wording, and the field shows in
+  every response anyway. T38's row arrives with PR #64; mark it done there or after it merges.
