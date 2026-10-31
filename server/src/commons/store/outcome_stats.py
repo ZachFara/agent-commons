@@ -9,7 +9,7 @@ SELECT
     count(*) FILTER (WHERE oc.outcome = ANY(%(success)s::outcome_kind[])) AS successes,
     max(oc.created_at) FILTER (WHERE oc.outcome = ANY(%(success)s::outcome_kind[]))
         AS last_confirmed
-FROM retrievals r JOIN outcomes oc ON oc.retrieval_id = r.id
+FROM counted_retrievals r JOIN counted_outcomes oc ON oc.retrieval_id = r.id
 WHERE oc.used IN ('yes', 'partial')
 GROUP BY r.entry_id
 """

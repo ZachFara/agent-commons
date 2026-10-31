@@ -11,6 +11,14 @@ from uuid import UUID
 
 from commons.cli import onboarding
 from commons.cli.hooks import HANDLERS, run_hook
+from commons.domain.corrections import (
+    CORRECTION_FIELDS,
+    CORRECTION_TABLES,
+    Correction,
+    CorrectionField,
+    CorrectionTable,
+    parse_value,
+)
 from commons.domain.errors import (
     InvalidInputError,
     NotFoundError,
@@ -21,7 +29,7 @@ from commons.domain.keys import KEY_SCOPES, KeyInfo, KeyOptions, KeyScope, parse
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchRequest
-from commons.service import doctor, keys, ranking, retention, reviews, seeds
+from commons.service import corrections, doctor, keys, ranking, retention, reviews, seeds
 from commons.service import search as search_service
 from commons.service import status as status_service
 from commons.service.hook_client import RemoteBackend, remote_client
@@ -130,6 +138,26 @@ def _admin_arguments(parser: argparse.ArgumentParser) -> None:
     invite.add_argument("--server", help="Server URL your friend will connect to.")
     key = actions.add_parser("key", help="Manage keys: create, list, rotate, revoke.")
     _key_arguments(key)
+    correct = actions.add_parser("correct", help="Correct or exclude recorded data (audited).")
+    _correct_arguments(correct)
+
+
+def _correct_arguments(parser: argparse.ArgumentParser) -> None:
+    actions = parser.add_subparsers(dest="correct_action", required=True)
+    change = actions.add_parser("set", help="Set one field of one row.")
+    change.add_argument("table", choices=CORRECTION_TABLES)
+    change.add_argument("row_id", type=UUID)
+    change.add_argument("field", choices=CORRECTION_FIELDS)
+    change.add_argument("value", help="used: yes|partial|no|unknown; excluded: true|false")
+    task = actions.add_parser("exclude-task", help="Exclude a task's retrievals and searches.")
+    task.add_argument("task_id", type=UUID)
+    undo = actions.add_parser("undo", help="Undo a correction (and the rest of its batch).")
+    undo.add_argument("correction_id", type=UUID)
+    for sub in (change, task, undo):
+        sub.add_argument("--by", required=True, help="Who is correcting (your pseudonym).")
+    for sub in (change, task):
+        sub.add_argument("--reason", required=True, help="Why; kept with the correction.")
+    actions.add_parser("list", help="List corrections, newest first.")
 
 
 def _key_arguments(parser: argparse.ArgumentParser) -> None:
@@ -155,6 +183,8 @@ def _admin(args: argparse.Namespace) -> int:
     action: str = args.admin_action
     if action == "key":
         return _key(args)
+    if action == "correct":
+        return _correct(args)
     pseudonym: str = args.pseudonym
     if action == "invite" and not args.server:
         msg = "invite needs --server, the URL your friend will connect to."
@@ -209,6 +239,40 @@ def _key(args: argparse.Namespace) -> int:
         sys.stdout.write(onboarding.invite_message(args.server, new.key) + "\n")
     else:
         sys.stdout.write(new.key + "\n")
+    return 0
+
+
+def _correct(args: argparse.Namespace) -> int:
+    action: str = args.correct_action
+    with connect() as conn:
+        if action == "list":
+            for row in insights.corrections(conn):
+                undone = f" (undone by {row['undone_by']})" if row["undone_at"] else ""
+                sys.stdout.write(
+                    f"{row['id']}  {row['created_at']:%Y-%m-%d %H:%M}  {row['corrected_by']}: "
+                    f"{row['target_table']} {row['target_id']} {row['field']} "
+                    f"{row['old_value']} -> {row['new_value']}  ({row['reason']}){undone}\n"
+                )
+            return 0
+        if action == "undo":
+            count = corrections.undo(conn, args.correction_id, by=args.by)
+            sys.stdout.write(f"undid {count} correction(s)\n")
+            return 0
+        if action == "exclude-task":
+            count = corrections.exclude_task(conn, args.task_id, reason=args.reason, by=args.by)
+            sys.stdout.write(f"excluded {count} row(s) of task {args.task_id}\n")
+            return 0
+        field = cast("CorrectionField", args.field)
+        correction = Correction(
+            table=cast("CorrectionTable", args.table),
+            row_id=args.row_id,
+            field=field,
+            value=parse_value(field, args.value),
+            reason=args.reason,
+            by=args.by,
+        )
+        correction_id = corrections.correct(conn, correction)
+    sys.stdout.write(f"correction {correction_id} recorded; scores recomputed\n")
     return 0
 
 

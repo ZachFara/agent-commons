@@ -19,11 +19,17 @@ from starlette.responses import PlainTextResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.templating import Jinja2Templates
 
+from commons.domain.corrections import (
+    CORRECTION_FIELDS,
+    CORRECTION_TABLES,
+    Correction,
+    parse_value,
+)
 from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
 from commons.domain.keys import KEY_SCOPES, KeyOptions, KeyScope, NewKey, parse_duration
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
-from commons.service import keys, reviews
-from commons.service.identity import serving_hosted
+from commons.service import corrections, keys, reviews
+from commons.service.identity import current_pseudonym, serving_hosted
 from commons.store import insights
 from commons.store.connection import Connection, connect
 from commons.web import charts
@@ -98,6 +104,74 @@ class Dashboard:
     async def people(self, request: Request) -> Response:
         """Render reporters, their keys, and models."""
         return self._render(request, "people.html", "people", await self._load(_people_data))
+
+    async def corrections(self, request: Request) -> Response:
+        """Render every correction, with undo (decision 0030)."""
+        data = await self._load(lambda conn: {"corrections": insights.corrections(conn)})
+        return self._render(request, "corrections.html", "corrections", data)
+
+    async def correct(self, request: Request) -> Response:
+        """Record a correction or exclusion from a form, then go back."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        form = await request.form()
+        values = {k: str(form.get(k) or "").strip() for k in ("table", "row_id", "field", "value")}
+        reason = str(form.get("reason") or "")
+
+        def run() -> str:
+            with self._connection() as conn:
+                field = values["field"]
+                if field not in CORRECTION_FIELDS or values["table"] not in CORRECTION_TABLES:
+                    msg = "Unknown table or field."
+                    raise InvalidInputError(msg)
+                correction = Correction(
+                    table=values["table"],
+                    row_id=UUID(values["row_id"]),
+                    field=field,
+                    value=parse_value(field, values["value"]),
+                    reason=reason,
+                    by=current_pseudonym(conn),
+                )
+                corrections.correct(conn, correction)
+            return f"Corrected {values['field']}; scores recomputed."
+
+        return await self._act(request, run)
+
+    async def exclude_task(self, request: Request) -> Response:
+        """Exclude a whole task's retrievals and searches."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        reason = str((await request.form()).get("reason") or "")
+        task_id: UUID = request.path_params["task_id"]
+
+        def run() -> str:
+            with self._connection() as conn:
+                count = corrections.exclude_task(
+                    conn, task_id, reason=reason, by=current_pseudonym(conn)
+                )
+            return f"Excluded {count} rows of the task."
+
+        return await self._act(request, run)
+
+    async def undo_correction(self, request: Request) -> Response:
+        """Undo a correction (and the rest of its batch)."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        correction_id: UUID = request.path_params["correction_id"]
+
+        def run() -> str:
+            with self._connection() as conn:
+                count = corrections.undo(conn, correction_id, by=current_pseudonym(conn))
+            return f"Undid {count} correction(s)."
+
+        return await self._act(request, run)
+
+    async def _act(self, request: Request, action: Callable[[], str]) -> Response:
+        try:
+            message = await run_in_threadpool(action)
+        except (InvalidInputError, NotFoundError, NotInitializedError, ValueError) as error:
+            return _back(request, {"error": str(error)})
+        return _back(request, {"corrected": message})
 
     async def create_key(self, request: Request) -> Response:
         """Mint a key from the People page and show it once (decision 0032)."""
@@ -175,6 +249,7 @@ class Dashboard:
             "error": request.query_params.get("error"),
             "reviewed": request.query_params.get("reviewed"),
             "revoked": request.query_params.get("revoked"),
+            "corrected": request.query_params.get("corrected"),
         }
         return TEMPLATES.TemplateResponse(request, template, context)
 
@@ -255,6 +330,10 @@ def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute
         ("/people", pages.people, "GET", "admin"),
         ("/entries/{entry_id:uuid}/review", pages.review, "POST", "review"),
         ("/keys", pages.create_key, "POST", "admin"),
+        ("/corrections", pages.corrections, "GET", "admin"),
+        ("/corrections", pages.correct, "POST", "admin"),
+        ("/corrections/{correction_id:uuid}/undo", pages.undo_correction, "POST", "admin"),
+        ("/tasks/{task_id:uuid}/exclude", pages.exclude_task, "POST", "admin"),
         ("/keys/{key_id:uuid}/revoke", pages.revoke_key, "POST", "admin"),
     ]
     routes = [

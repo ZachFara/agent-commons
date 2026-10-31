@@ -17,10 +17,10 @@ WITH days AS (
         AS day
 )
 SELECT d.day,
-       (SELECT count(*) FROM retrievals r WHERE r.created_at::date = d.day) AS retrievals,
-       (SELECT count(*) FROM outcomes o WHERE o.created_at::date = d.day
+       (SELECT count(*) FROM counted_retrievals r WHERE r.created_at::date = d.day) AS retrievals,
+       (SELECT count(*) FROM counted_outcomes o WHERE o.created_at::date = d.day
           AND o.outcome = ANY(%(success)s::outcome_kind[])) AS successes,
-       (SELECT count(*) FROM outcomes o WHERE o.created_at::date = d.day
+       (SELECT count(*) FROM counted_outcomes o WHERE o.created_at::date = d.day
           AND o.outcome IN ('tests_failed', 'error_persisted', 'user_rejected')) AS failures,
        (SELECT count(*) FROM entries e WHERE e.created_at::date = d.day) AS proposals
 FROM days d ORDER BY d.day
@@ -30,14 +30,15 @@ _KPIS = """
 SELECT
   (SELECT count(*) FROM entries WHERE status = 'approved') AS approved,
   (SELECT count(*) FROM entries WHERE NOT human_reviewed AND status <> 'retired') AS awaiting,
-  (SELECT count(*) FROM retrievals WHERE created_at > now() - interval '30 days') AS retrievals_30d,
+  (SELECT count(*) FROM counted_retrievals WHERE created_at > now() - interval '30 days')
+      AS retrievals_30d,
   (SELECT count(DISTINCT reporter_id) FROM tasks WHERE created_at > now() - interval '30 days')
       AS active_reporters,
   (SELECT count(*) FILTER (WHERE outcome = ANY(%(success)s::outcome_kind[]))::float
           / nullif(count(*) FILTER (WHERE outcome <> 'unknown' AND outcome <> 'abandoned'), 0)
-     FROM outcomes WHERE evidence->>'outcome_source' = 'hook'
+     FROM counted_outcomes WHERE evidence->>'outcome_source' = 'hook'
        AND created_at > now() - interval '30 days') AS observed_success_rate,
-  (SELECT count(*) FROM outcomes WHERE evidence->>'outcome_source' = 'hook'
+  (SELECT count(*) FROM counted_outcomes WHERE evidence->>'outcome_source' = 'hook'
        AND created_at > now() - interval '30 days') AS observed_outcomes,
   (SELECT avg(reliability) FROM reporters WHERE reliability IS NOT NULL) AS mean_reliability,
   (SELECT count(*) FROM reporters WHERE reliability IS NOT NULL) AS rated_reporters
@@ -47,7 +48,7 @@ _OUTCOME_MIX = """
 SELECT outcome::text AS outcome,
        count(*) FILTER (WHERE evidence->>'outcome_source' = 'hook') AS observed,
        count(*) FILTER (WHERE coalesce(evidence->>'outcome_source', '') <> 'hook') AS self_reported
-FROM outcomes WHERE created_at > now() - interval '30 days'
+FROM counted_outcomes WHERE created_at > now() - interval '30 days'
 GROUP BY outcome ORDER BY count(*) DESC
 """
 
@@ -146,7 +147,9 @@ def entry_retrievals(conn: Connection, entry_id: UUID, limit: int = 50) -> list[
     """Recent retrievals of the entry with their outcomes."""
     return _rows(
         conn,
-        "SELECT r.created_at, r.task_id, r.query, r.rank_position, rp.pseudonym AS reporter, "
+        "SELECT r.id AS retrieval_id, o.id AS outcome_id, "
+        "r.excluded OR coalesce(o.excluded, false) AS excluded, "
+        "r.created_at, r.task_id, r.query, r.rank_position, rp.pseudonym AS reporter, "
         "m.name AS model, o.used::text AS used, o.outcome::text AS outcome, "
         "o.evidence->>'outcome_source' AS source, o.agent_assessment "
         "FROM retrievals r JOIN reporters rp ON rp.id = r.reporter_id "
@@ -162,9 +165,10 @@ def tasks(conn: Connection, limit: int = 100) -> list[Row]:
         conn,
         "SELECT t.id, t.created_at, rp.pseudonym AS reporter, m.name AS model, "
         "t.privacy_mode::text AS privacy, "
-        "(SELECT count(DISTINCT r.entry_id) FROM retrievals r WHERE r.task_id = t.id) "
+        "(SELECT count(DISTINCT r.entry_id) FROM counted_retrievals r WHERE r.task_id = t.id) "
         "  AS retrieved, "
-        "(SELECT count(*) FROM retrievals r JOIN outcomes o ON o.retrieval_id = r.id "
+        "(SELECT count(*) FROM counted_retrievals r "
+        " JOIN counted_outcomes o ON o.retrieval_id = r.id "
         " WHERE r.task_id = t.id AND o.agent_assessment IS NOT NULL) AS reported, "
         "(SELECT count(*) FROM task_events e WHERE e.task_id = t.id AND e.kind = 'test_run' "
         " AND (e.data->>'exit_code')::int = 0) AS tests_passed, "
@@ -181,7 +185,7 @@ def search_totals(conn: Connection) -> Row:
     rows = _rows(
         conn,
         "SELECT count(*) AS searches, count(*) FILTER (WHERE hit_count = 0) AS misses, "
-        "count(DISTINCT reporter_id) AS reporters FROM searches "
+        "count(DISTINCT reporter_id) AS reporters FROM counted_searches "
         "WHERE created_at > now() - interval '30 days'",
         {},
     )
@@ -195,7 +199,7 @@ def missed_queries(conn: Connection, limit: int = 100) -> list[Row]:
         "SELECT query, count(*) AS times, count(DISTINCT reporter_id) AS reporters, "
         "max(created_at) AS last_seen, "
         "string_agg(DISTINCT language, ', ') AS languages "
-        "FROM searches WHERE hit_count = 0 AND created_at > now() - interval '30 days' "
+        "FROM counted_searches WHERE hit_count = 0 AND created_at > now() - interval '30 days' "
         "GROUP BY query ORDER BY times DESC, last_seen DESC LIMIT %(limit)s",
         {"limit": limit},
     )
@@ -205,7 +209,7 @@ def recent_searches(conn: Connection, limit: int = 100) -> list[Row]:
     """Return the latest searches with who ran them and how many entries came back."""
     return _rows(
         conn,
-        "SELECT s.created_at, s.task_id, s.query, s.language, s.hit_count, "
+        "SELECT s.id, s.excluded, s.created_at, s.task_id, s.query, s.language, s.hit_count, "
         "s.privacy_mode::text AS privacy, rp.pseudonym AS reporter, m.name AS model "
         "FROM searches s JOIN reporters rp ON rp.id = s.reporter_id "
         "JOIN models m ON m.id = s.model_id ORDER BY s.created_at DESC LIMIT %(limit)s",
@@ -224,8 +228,9 @@ def reporters(conn: Connection) -> list[Row]:
         "(SELECT count(*) FROM entries e WHERE e.created_by = rp.id) AS proposed, "
         "(SELECT count(*) FROM entries e WHERE e.created_by = rp.id AND e.status = 'approved') "
         "  AS approved, "
-        "(SELECT count(*) FROM retrievals r WHERE r.reporter_id = rp.id) AS retrievals, "
-        "(SELECT count(*) FROM retrievals r JOIN outcomes o ON o.retrieval_id = r.id "
+        "(SELECT count(*) FROM counted_retrievals r WHERE r.reporter_id = rp.id) AS retrievals, "
+        "(SELECT count(*) FROM counted_retrievals r "
+        " JOIN counted_outcomes o ON o.retrieval_id = r.id "
         " WHERE r.reporter_id = rp.id) AS outcomes, "
         "(SELECT max(t.created_at) FROM tasks t WHERE t.reporter_id = rp.id) AS last_seen "
         "FROM reporters rp WHERE rp.pseudonym <> 'agent-commons-seed' "
@@ -245,8 +250,8 @@ def models(conn: Connection) -> list[Row]:
         "  / nullif(count(o.id) FILTER (WHERE o.evidence->>'outcome_source' = 'hook' "
         "  AND o.outcome NOT IN ('unknown', 'abandoned')), 0) AS observed_success_rate, "
         "(SELECT count(*) FROM entries e WHERE e.created_by_model = m.id) AS proposed "
-        "FROM models m LEFT JOIN retrievals r ON r.model_id = m.id "
-        "LEFT JOIN outcomes o ON o.retrieval_id = r.id "
+        "FROM models m LEFT JOIN counted_retrievals r ON r.model_id = m.id "
+        "LEFT JOIN counted_outcomes o ON o.retrieval_id = r.id "
         "WHERE m.name NOT IN ('seed', 'unknown') "
         "GROUP BY m.id, m.name ORDER BY retrievals DESC",
         _SUCCESS,
@@ -257,3 +262,14 @@ def _rows(conn: Connection, query: str, params: dict[str, Any]) -> list[Row]:
     with conn.cursor(row_factory=dict_row) as cursor:
         cursor.execute(query, params)
         return cursor.fetchall()
+
+
+def corrections(conn: Connection, limit: int = 200) -> list[Row]:
+    """Every correction, newest first (decision 0030)."""
+    return _rows(
+        conn,
+        "SELECT id, batch_id, created_at, corrected_by, target_table, target_id, field, "
+        "old_value, new_value, reason, undone_at, undone_by FROM corrections "
+        "ORDER BY created_at DESC LIMIT %(limit)s",
+        {"limit": limit},
+    )

@@ -33,3 +33,13 @@ def ensure_reporter(conn: Connection, pseudonym: str) -> UUID:
         msg = "reporter vanished after insert"
         raise RuntimeError(msg)
     return found
+
+
+def pseudonym_of(conn: Connection, reporter_id: UUID) -> str:
+    """Return the reporter's pseudonym."""
+    row = conn.execute("SELECT pseudonym FROM reporters WHERE id = %s", (reporter_id,)).fetchone()
+    if row is None:
+        msg = f"reporter {reporter_id} does not exist"
+        raise RuntimeError(msg)
+    pseudonym: str = row[0]
+    return pseudonym

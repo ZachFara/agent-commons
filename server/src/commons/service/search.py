@@ -3,7 +3,7 @@ from dataclasses import replace
 from commons.domain.search import SearchHit, SearchRequest, validate_search
 from commons.privacy.redaction import scrub
 from commons.privacy.search_log import search_record
-from commons.service.identity import current_model, current_reporter
+from commons.service.identity import current_model, current_reporter, test_traffic
 from commons.store.connection import Connection
 from commons.store.retrievals import record_retrievals
 from commons.store.search import find_entries
@@ -22,9 +22,12 @@ def search(conn: Connection, request: SearchRequest, model: str | None) -> list[
         model_row = current_model(conn, model)
         hits = find_entries(conn, request)
         mode = privacy_mode(conn, reporter, request.task_id)
-        record_search(conn, search_record(request, hits, mode), reporter, model_row)
+        test = test_traffic()  # a test key's searches never count (decision 0030)
+        record_search(conn, search_record(request, hits, mode), reporter, model_row, excluded=test)
         logged = replace(request, query=scrub(request.query))
-        record_retrievals(conn, logged, hits, reporter_id=reporter, model_id=model_row)
+        record_retrievals(
+            conn, logged, hits, reporter_id=reporter, model_id=model_row, excluded=test
+        )
     return hits
 
 

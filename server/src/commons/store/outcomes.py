@@ -39,7 +39,11 @@ def save_outcome(conn: Connection, retrieval_id: UUID, record: OutcomeRecord) ->
     cursor = conn.execute(
         "INSERT INTO outcomes (retrieval_id, outcome, evidence, agent_assessment) "
         "VALUES (%s, %s, %s, %s) ON CONFLICT (retrieval_id) DO UPDATE SET "
-        "outcome = EXCLUDED.outcome, evidence = EXCLUDED.evidence, "
+        # A standing correction of the outcome (decision 0030) wins over later reports.
+        "outcome = CASE WHEN EXISTS (SELECT 1 FROM corrections c "
+        "  WHERE c.target_table = 'outcomes' AND c.target_id = outcomes.id "
+        "  AND c.field = 'outcome' AND c.undone_at IS NULL) "
+        "THEN outcomes.outcome ELSE EXCLUDED.outcome END, evidence = EXCLUDED.evidence, "
         "agent_assessment = EXCLUDED.agent_assessment RETURNING id",
         (retrieval_id, record.outcome, Jsonb(record.evidence), record.agent_assessment),
     )
@@ -47,5 +51,13 @@ def save_outcome(conn: Connection, retrieval_id: UUID, record: OutcomeRecord) ->
 
 
 def set_used(conn: Connection, retrieval_id: UUID, used: Usage | None) -> None:
-    """Record whether the entry's fix was used (observed by hooks; NULL = unknown)."""
-    conn.execute("UPDATE outcomes SET used = %s WHERE retrieval_id = %s", (used, retrieval_id))
+    """Record whether the entry's fix was used (observed by hooks; NULL = unknown).
+
+    A corrected `used` stands: later Stop hooks don't overwrite it.
+    """
+    conn.execute(
+        "UPDATE outcomes SET used = %s WHERE retrieval_id = %s AND NOT EXISTS ("
+        "  SELECT 1 FROM corrections c WHERE c.target_table = 'outcomes' "
+        "  AND c.target_id = outcomes.id AND c.field = 'used' AND c.undone_at IS NULL)",
+        (used, retrieval_id),
+    )

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Corrections{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Corrections</h1><div class="sub">Every change to recorded outcomes, retrievals and searches, with who and why (decision 0030). Raw rows are never deleted; undo restores the old value.</div></div></header>
+<section class="card">{% if corrections %}<div class="table-wrap"><table>
+  <thead><tr><th>When</th><th>By</th><th>Row</th><th>Field</th><th>Change</th><th>Reason</th><th></th></tr></thead><tbody>
+  {% for c in corrections %}<tr class="{{ 'excluded' if c.undone_at }}"><td style="white-space: nowrap">{{ c.created_at.strftime("%b %d %H:%M") }}</td><td>{{ c.corrected_by }}</td>
+    <td class="mono">{{ c.target_table }} {{ c.target_id | string | truncate(8, true, "") }}</td><td>{{ c.field }}</td>
+    <td class="mono">{{ c.old_value }} → {{ c.new_value }}</td><td>{{ c.reason }}</td>
+    <td>{% if c.undone_at %}<span class="muted">undone by {{ c.undone_by }}</span>{% else %}<form method="post" action="/corrections/{{ c.id }}/undo"><button>Undo{% if c.batch_id %} batch{% endif %}</button></form>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">No corrections yet.</div>{% endif %}</section>
+{% endblock %}

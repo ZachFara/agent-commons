@@ -3,11 +3,13 @@
 {% block content %}
 <header class="page"><div><h1>Activity</h1><div class="sub">Agent sessions seen by hooks, newest first.</div></div></header>
 <section class="card">{% if tasks %}<div class="table-wrap"><table>
-  <thead><tr><th>Started</th><th>Reporter</th><th>Model</th><th class="num">Entries retrieved</th><th class="num">Reported</th><th>Tests</th><th>Privacy</th></tr></thead><tbody>
+  <thead><tr><th>Started</th><th>Reporter</th><th>Model</th><th class="num">Entries retrieved</th><th class="num">Reported</th><th>Tests</th><th>Privacy</th><th></th></tr></thead><tbody>
   {% for t in tasks %}<tr><td style="white-space: nowrap">{{ t.created_at.strftime("%b %d %H:%M") }}</td><td>{{ t.reporter }}</td>
     <td>{{ t.model or "–" }}</td><td class="num">{{ t.retrieved }}</td>
     <td class="num">{% if t.retrieved %}{{ t.reported }}/{{ t.retrieved }}{% else %}<span class="muted">–</span>{% endif %}</td>
     <td>{% if t.tests_passed %}<span class="badge good">{{ t.tests_passed }} passed</span> {% endif %}{% if t.tests_failed %}<span class="badge bad">{{ t.tests_failed }} failed</span>{% endif %}{% if not t.tests_passed and not t.tests_failed %}<span class="muted">none</span>{% endif %}</td>
-    <td><span class="badge soft">{{ t.privacy | replace("_", " ") }}</span></td></tr>{% endfor %}
+    <td><span class="badge soft">{{ t.privacy | replace("_", " ") }}</span></td>
+    <td><details class="correct"><summary>Exclude</summary><form method="post" action="/tasks/{{ t.id }}/exclude">
+      <input type="text" name="reason" placeholder="Reason, e.g. test traffic" aria-label="Reason" required><button class="reject">Exclude task</button></form></details></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">No sessions yet. Install the hooks with <code>commons install-hooks</code>.</div>{% endif %}</section>
 {% endblock %}

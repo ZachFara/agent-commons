@@ -137,6 +137,9 @@
   button.reject { color: var(--critical); border-color: var(--critical); }
   .notice { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; background: var(--accent-soft);
             color: var(--accent); }
+  tr.excluded td { opacity: .45; }
+  details.correct summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details.correct form { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
   .notice.error { background: var(--critical-soft); color: var(--critical); }
   dl.facts { display: grid; grid-template-columns: 110px 1fr; gap: 6px 14px; margin: 0; }
   dl.facts dt { color: var(--muted); }
@@ -167,7 +170,7 @@
 <div class="shell">
   <nav class="side" aria-label="Sections">
     <div class="brand"><span class="mark"></span><span>Agent Commons<small>{{ "Hosted" if hosted else "Local" }} admin</small></span></div>
-    {% set links = [("/", "Overview", "overview"), ("/queue", "Review queue", "queue"), ("/entries", "Entries", "entries"), ("/activity", "Activity", "activity"), ("/searches", "Searches", "searches"),("/people", "People & models", "people")] %}
+    {% set links = [("/", "Overview", "overview"), ("/queue", "Review queue", "queue"), ("/entries", "Entries", "entries"), ("/activity", "Activity", "activity"), ("/searches", "Searches", "searches"), ("/people", "People & models", "people"), ("/corrections", "Corrections", "corrections")] %}
     {% for href, label, key in links %}
       <a href="{{ href }}" class="{{ 'active' if section == key }}">{{ label }}
         {% if key == "queue" and awaiting %}<span class="count hot">{{ awaiting }}</span>{% endif %}</a>
@@ -177,6 +180,7 @@
   <main>
     {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
     {% if reviewed %}<div class="notice">Review recorded for <span class="mono">{{ reviewed }}</span>.</div>{% endif %}
+    {% if corrected %}<div class="notice">{{ corrected }}</div>{% endif %}
     {% if revoked %}<div class="notice">Key <span class="mono">{{ revoked }}</span> revoked.</div>{% endif %}
     {% block content %}{% endblock %}
   </main>

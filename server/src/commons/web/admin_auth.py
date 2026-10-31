@@ -37,7 +37,7 @@ def admin_only(
             return PlainTextResponse(f"Dashboard: {message}.", 401, headers=_CHALLENGE)
         if not check.holder.allows(need):
             return PlainTextResponse(f"This page needs a key with the {need} scope.", 403)
-        with acting_as(check.holder.reporter_id):
+        with acting_as(check.holder.reporter_id, test=check.holder.test):
             return await endpoint(request)
 
     return guarded

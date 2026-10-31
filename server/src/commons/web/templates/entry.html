@@ -36,10 +36,19 @@
   </div>
 </div>
 <section class="card" style="margin-top: 16px"><h2>Retrievals <span class="hint">latest 50</span></h2>
-  {% if retrievals %}<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th class="num">Rank</th><th>Used</th><th>Outcome</th><th>Agent's assessment</th></tr></thead><tbody>
-  {% for r in retrievals %}<tr><td class="muted" style="white-space: nowrap">{{ r.created_at.strftime("%b %d %H:%M") }}</td>
+  {% if retrievals %}<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th class="num">Rank</th><th>Used</th><th>Outcome</th><th>Agent's assessment</th><th></th></tr></thead><tbody>
+  {% for r in retrievals %}<tr class="{{ 'excluded' if r.excluded }}"><td class="muted" style="white-space: nowrap">{{ r.created_at.strftime("%b %d %H:%M") }}{% if r.excluded %}<div><span class="badge soft">excluded</span></div>{% endif %}</td>
     <td>{{ r.reporter }}<div class="muted">{{ r.model }}</div></td><td class="num">{{ r.rank_position }}</td>
     <td>{{ r.used or "–" }}</td><td>{{ outcome(r.outcome, r.source) }}</td>
-    <td><div class="clip" style="max-width: 360px" title="{{ r.agent_assessment or '' }}">{{ r.agent_assessment or "" }}</div></td></tr>{% endfor %}
+    <td><div class="clip" style="max-width: 360px" title="{{ r.agent_assessment or '' }}">{{ r.agent_assessment or "" }}</div></td>
+    <td><details class="correct"><summary>Correct</summary>
+      {% if r.outcome_id %}<form method="post" action="/corrections"><input type="hidden" name="table" value="outcomes"><input type="hidden" name="row_id" value="{{ r.outcome_id }}">
+        <select name="field" aria-label="Field"><option value="used">used</option><option value="outcome">outcome</option></select>
+        <input type="text" name="value" placeholder="yes, partial, no, unknown; or an outcome" aria-label="Value" required>
+        <input type="text" name="reason" placeholder="Reason" aria-label="Reason" required><button>Save</button></form>{% endif %}
+      {% if not r.excluded %}<form method="post" action="/corrections"><input type="hidden" name="table" value="retrievals"><input type="hidden" name="row_id" value="{{ r.retrieval_id }}">
+        <input type="hidden" name="field" value="excluded"><input type="hidden" name="value" value="true">
+        <input type="text" name="reason" placeholder="Reason" aria-label="Reason" required><button class="reject">Exclude retrieval</button></form>{% endif %}
+    </details></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">Never retrieved yet.</div>{% endif %}</section>
 {% endblock %}

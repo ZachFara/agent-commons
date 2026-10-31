@@ -18,9 +18,10 @@ LIMIT %(limit)s
 _ACTIVITY = """
 SELECT
     (SELECT count(*) FROM entries WHERE NOT human_reviewed AND status <> 'retired'),
-    (SELECT count(*) FROM retrievals WHERE created_at > now() - interval '30 days'),
-    (SELECT count(DISTINCT task_id) FROM retrievals WHERE created_at > now() - interval '30 days'),
-    (SELECT count(*) FROM outcomes WHERE created_at > now() - interval '30 days')
+    (SELECT count(*) FROM counted_retrievals WHERE created_at > now() - interval '30 days'),
+    (SELECT count(DISTINCT task_id) FROM counted_retrievals
+     WHERE created_at > now() - interval '30 days'),
+    (SELECT count(*) FROM counted_outcomes WHERE created_at > now() - interval '30 days')
 """
 
 
