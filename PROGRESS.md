@@ -437,3 +437,5 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
   `COMMONS_DATABASE_URL`, not `DATABASE_URL`; the first try minted a key in the local store).
   T43 applied backups, alerts and budget alerts in Terraform; the agent was not permitted to write
   the drill key into a repository secret, so the owner runs `setup-backup-keys.sh`.
+- 2026-10-31: fixed hook test runs over 2,000 characters (a heredoc then pytest) being refused
+  with 400 and lost; the server and hooks now keep the command's last 2,000 characters.

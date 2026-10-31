@@ -16,7 +16,12 @@ from uuid import UUID
 import httpx2
 
 from commons.domain.errors import NotInitializedError, NotPermittedError
-from commons.domain.observations import ToolUse, is_test_command, observed_exit_code
+from commons.domain.observations import (
+    ToolUse,
+    command_tail,
+    is_test_command,
+    observed_exit_code,
+)
 from commons.domain.usage import ArtifactFrequencies, Evidence, UseObservation, observe_use
 from commons.privacy.redaction import scrub
 from commons.service import hooks
@@ -239,7 +244,7 @@ def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
             use.command, use.exit_code, use.output or "", configured_test_runners()
         )
         if code is not None:
-            test_run = {"command": scrub(use.command), "exit_code": code}
+            test_run = {"command": scrub(command_tail(use.command)), "exit_code": code}
     file_change: dict[str, object] | None = None
     if use.file_path is not None and use.new_text is not None:
         file_change = {

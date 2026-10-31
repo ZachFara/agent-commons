@@ -253,3 +253,22 @@ def test_hook_cli_reports_to_the_server_when_connected(
         (task_id,),
     ).fetchone()
     assert owner == ("cli-remote",)
+
+
+@pytest.mark.usefixtures("state")
+def test_a_long_test_command_is_still_observed(app: Starlette, db: psycopg.Connection) -> None:
+    """A test run at the end of a long command (a heredoc, then pytest) was a 400, and the
+    observation was lost (2026-10-31 hook log)."""
+    key = create_key(db, "long-commands", admin=False)
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None)
+    command = "cat > notes.txt <<'EOF'\n" + "x" * 3000 + "\nEOF\nuv run pytest -q"
+
+    hook_client.on_tool_use(backend, bash(session, command, 0))
+
+    runs = db.execute(
+        "SELECT length(data->>'command') FROM task_events WHERE task_id = %s AND kind = 'test_run'",
+        (task_id,),
+    ).fetchall()
+    assert runs == [(2000,)]
