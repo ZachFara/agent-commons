@@ -124,6 +124,14 @@ Code hooks; hooks send only derived data (test results, file hashes), while edit
 commands stay on this machine. Then restart Claude Code and run `commons doctor`: every line
 should be ✓. Update later with `uv tool upgrade commons`.
 
+Switching from a local store to a hosted one (decision 0031): sessions that were already open
+keep the store they started with, and their local MCP server refuses further calls with a
+message to restart Claude Code; `commons join` and `commons doctor` say how many recent
+sessions are affected. To move your good local entries over, run
+`commons import --from-local --dry-run`, then without `--dry-run` to choose which to send
+(`--yes` sends all). They go through redaction, scanning and review on the server again, and
+keep their original model and date. Seeds and rejected entries are never imported.
+
 The key identifies the user on the server; their privacy mode is set there by the admin, and a
 `local` mode is refused because nothing in local mode leaves the machine.
 

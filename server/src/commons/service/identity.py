@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from commons.domain.errors import NotInitializedError
+from commons.domain.errors import NotInitializedError, NotPermittedError
 from commons.domain.reporters import PrivacyDefault, validate_pseudonym
 from commons.store.connection import Connection
 from commons.store.models import model_id
@@ -163,3 +163,23 @@ def current_model(conn: Connection, model: str | None) -> UUID:
 def current_pseudonym(conn: Connection) -> str:
     """Return the calling reporter's pseudonym (who corrections are recorded as)."""
     return pseudonym_of(conn, current_reporter(conn))
+
+
+def refuse_if_switched() -> None:
+    """Stop a local (stdio) MCP server once this machine points at a hosted store (0031).
+
+    Otherwise a session started before the switch keeps writing to the store nobody
+    watches while its hooks report elsewhere.
+    """
+    if _HOSTED.get():
+        return
+    try:
+        server = hosted_server()
+    except NotInitializedError:
+        return
+    if server is not None:
+        msg = (
+            f"This machine switched to {server[0]}; restart Claude Code so this session uses "
+            "it. Nothing was written to the local store."
+        )
+        raise NotPermittedError(msg)

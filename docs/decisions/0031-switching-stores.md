@@ -40,3 +40,20 @@ Decision:
 Consequences: switching stores can no longer lose writes silently, and moving entries is one
 reviewed command. The local server refusing tool calls after a switch is abrupt, but correct:
 the error names the fix. `imported_from` is a new column and appears in provenance.
+
+Implementation notes (T52, 2026-10-31):
+- SessionStart writes the session's store to `sessions/<hash>.store.json` (mode 0600, pruned
+  with the spools). Later hooks use it; when the bound server is still the configured one, the
+  configured key is used, so a key rotated mid-session keeps working.
+- The stdio MCP server checks the config on every tool call and refuses with `forbidden`
+  ("This machine switched to <url>; restart Claude Code...") once a hosted server is set.
+- `commons join` warns when sessions with hook activity in the last hour are bound to another
+  store; `commons doctor` has a `sessions` check for the same.
+- Import goes through two new hook-API steps, `similar` and `import`, rather than the agent
+  tools, so no tool text changed. An entry counts as "already there" when its best similarity
+  on the server passes the duplicate threshold (0027). Imported entries credit the original
+  model; `created_by` is the importer.
+- These are client-side changes: other machines get them with `uv tool upgrade commons`.
+- Known limit: similarity ignores words the store has never seen, so two short symptoms
+  sharing one rare word can look alike. The import shows what it skipped, and `--dry-run`
+  first lets the person check.

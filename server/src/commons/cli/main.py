@@ -507,6 +507,11 @@ COMMANDS: dict[str, Command] = {
         onboarding.join,
         onboarding.join_arguments,
     ),
+    "import": Command(
+        "Re-propose local entries on the hosted server (decision 0031).",
+        onboarding.import_local,
+        onboarding.import_arguments,
+    ),
     "connect": Command("Send hook observations to a hosted server.", _connect, _connect_arguments),
     "admin": Command("Hosted mode administration.", _admin, _admin_arguments),
     "doctor": Command("Check this machine's setup and say what to fix.", _doctor),

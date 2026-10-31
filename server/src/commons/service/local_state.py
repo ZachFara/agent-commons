@@ -56,7 +56,7 @@ def prune_spools(now: float | None = None) -> int:
         return 0
     cutoff = (now if now is not None else time.time()) - SPOOL_RETENTION_DAYS * 86400
     removed = 0
-    for path in directory.glob("*.jsonl"):
+    for path in [*directory.glob("*.jsonl"), *directory.glob("*.store.json")]:
         if path.stat().st_mtime < cutoff:
             path.unlink()
             removed += 1
@@ -87,3 +87,53 @@ def save_frequencies(frequencies: ArtifactFrequencies) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     data = {"entries": frequencies.entries, "counts": dict(frequencies.counts)}
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _store_path(session_id: str) -> Path:
+    name = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
+    return state_dir() / "sessions" / f"{name}.store.json"
+
+
+def bind_store(session_id: str, server: tuple[str, str] | None) -> None:
+    """Record which store this session uses, at its start (decision 0031).
+
+    Later hooks for the session go there even if the machine's config changes, so a
+    session's hooks and its MCP server never point at different stores.
+    """
+    path = _store_path(session_id)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    data = {"store": "local"} if server is None else {"store": server[0], "key": server[1]}
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        json.dump(data, file)
+
+
+def bound_store(session_id: str) -> dict[str, str] | None:
+    """Return the store the session was bound to at start, or None for older sessions."""
+    path = _store_path(session_id)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get("store"), str) else None
+
+
+def active_sessions(since_seconds: float = 3600, now: float | None = None) -> list[str]:
+    """Return the stores of sessions with hook activity in the last hour ("local" or a URL)."""
+    directory = state_dir() / "sessions"
+    if not directory.exists():
+        return []
+    cutoff = (now if now is not None else time.time()) - since_seconds
+    stores = []
+    for spool in directory.glob("*.jsonl"):
+        if spool.stat().st_mtime < cutoff:
+            continue
+        bound = directory / spool.name.replace(".jsonl", ".store.json")
+        try:
+            data = json.loads(bound.read_text(encoding="utf-8"))
+            stores.append(str(data.get("store", "unknown")))
+        except (FileNotFoundError, json.JSONDecodeError):
+            stores.append("unknown")
+    return stores

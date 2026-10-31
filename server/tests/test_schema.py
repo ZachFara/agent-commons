@@ -54,6 +54,7 @@ TABLES = {
         "provisional",
         "sampled",
         "confirmed_at",
+        "imported_from",
     },
     "purges": {
         "reporter_id",
