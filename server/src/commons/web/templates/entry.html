@@ -4,7 +4,7 @@
 {% block content %}
 <header class="page"><div><div class="muted"><a href="/entries">Entries</a> / <span class="mono">{{ e.id | string | truncate(8, true, "") }}</span></div>
   <h1 style="overflow-wrap: anywhere">{{ e.symptom }}</h1>
-  <div class="sub">{{ status(e.status, e.human_reviewed) }} · proposed {{ e.created_at.strftime("%b %d, %Y") }} by {{ e.proposed_by }} with {{ e.model }}</div></div></header>
+  <div class="sub">{{ status(e.status, e.human_reviewed) }}{% if e.superseded_by %} · superseded by <a class="mono" href="/entries/{{ e.superseded_by }}">{{ e.superseded_by | string | truncate(8, true, "") }}</a>{% endif %}{% if e.fixed_in %} · fixed in {{ e.fixed_in.library }} {{ e.fixed_in.version }}{% endif %} · revision {{ e.revision }} · proposed {{ e.created_at.strftime("%b %d, %Y") }} by {{ e.proposed_by }} with {{ e.model }}</div></div></header>
 <div class="grid kpis">
   <div class="card kpi"><div class="label">Score</div><div class="value">{{ "%.2f" | format(e.score) if e.score is not none else "–" }}</div><div class="note">0.5 = no evidence yet</div></div>
   <div class="card kpi"><div class="label">Retrievals, 30 days</div><div class="value">{{ e.retrieval_count_30d if e.retrieval_count_30d is not none else "–" }}</div></div>
@@ -24,11 +24,31 @@
     <input type="text" name="reason" placeholder="Reason (required to reject)" aria-label="Reason">
     <button class="approve" name="decision" value="approve">Approve</button>
     <button class="reject" name="decision" value="reject">Reject</button>
-  </form>{% endif %}</section>
+  </form>{% endif %}
+  <details class="correct"><summary>Edit (saves a new revision)</summary>
+    <form method="post" action="/entries/{{ e.id }}/edit" style="flex-direction: column; align-items: stretch">
+      <label>symptom <textarea name="symptom" rows="2" required>{{ e.symptom }}</textarea></label>
+      <label>cause <textarea name="cause" rows="3" required>{{ e.cause }}</textarea></label>
+      <label>fix <textarea name="fix" rows="4" required>{{ e.fix }}</textarea></label>
+      <label>repro <textarea name="repro" rows="2">{{ e.repro or "" }}</textarea></label>
+      <input type="text" name="reason" placeholder="Why this edit" aria-label="Reason" required><button>Save revision</button></form></details>
+  {% if e.status == "approved" %}<details class="correct"><summary>Retire or supersede</summary>
+    <form method="post" action="/entries/{{ e.id }}/retire">
+      <input type="text" name="reason" placeholder="Reason" aria-label="Reason" required>
+      <input type="text" name="fixed_in" placeholder="Fixed in, e.g. jinja2==3.1.0" aria-label="Fixed in">
+      <input type="text" name="replacement" placeholder="Replaced by entry id" aria-label="Replacement">
+      <button class="reject">Retire</button></form></details>{% endif %}
+  {% if e.status == "retired" %}<form class="review" method="post" action="/entries/{{ e.id }}/restore">
+    <input type="text" name="reason" placeholder="Why restore" aria-label="Reason" required><button>Restore</button></form>{% endif %}
+  </section>
   <div class="stack">
     <section class="card"><h2>Score over time</h2>{{ line(history) }}</section>
+    <section class="card"><h2>Revisions</h2><ul class="timeline">{% for r in revisions %}<li>
+      <span class="badge soft">r{{ r.revision }}</span><span>{{ r.edited_by or "proposed" }}</span>
+      <span class="muted">{{ r.created_at.strftime("%b %d %H:%M") }}</span>
+      {% if r.reason %}<div style="width: 100%" class="muted">{{ r.reason }}</div>{% endif %}</li>{% endfor %}</ul></section>
     <section class="card"><h2>Reviews</h2>{% if reviews %}<ul class="timeline">{% for r in reviews %}<li>
-      <span class="badge {{ 'good' if r.decision == 'approve' else 'bad' }}">{{ r.decision }}</span>
+      <span class="badge {{ 'good' if r.decision in ('approve', 'restore') else 'bad' }}">{{ r.decision }}</span>
       <span>{{ r.reviewer }}</span><span class="badge soft">{{ r.source }}</span>
       <span class="muted">{{ r.created_at.strftime("%b %d %H:%M") }}</span>
       {% if r.reason %}<div style="width: 100%" class="muted">{{ r.reason }}</div>{% endif %}</li>{% endfor %}</ul>

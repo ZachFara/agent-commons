@@ -42,7 +42,10 @@ entries
 - fix: text. What to change. Include a diff or command where possible.
 - repro: text, nullable. A minimal failing case that passes with the fix.
 - domains: text[], at least one. Named as in cq (decision 0008).
-- status: enum pending, approved, rejected, retired. Follows the latest human review if any, else the latest agent review.
+- status: enum pending, approved, rejected, retired. Follows the latest human review if any, else the latest agent review. Admins retire and restore entries as human reviews (decision 0026).
+- revision: integer, the current version of the text. Every version is kept in `entry_revisions` (text, source, editor, reason, redaction report); retrievals record the revision they showed.
+- superseded_by: entry id, nullable. A superseded entry never appears in search.
+- fixed_in: {library, version}, nullable, on retired entries. Such an entry still appears to a caller whose `environment.libraries` has an older version, marked "fixed in".
 - human_reviewed: boolean. False until at least one human review exists.
 - created_by: reporter id.
 - created_by_model: model id.

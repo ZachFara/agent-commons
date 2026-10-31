@@ -10,6 +10,11 @@
     <select name="order" aria-label="Order">{% for value, label in [("score", "Best score"), ("used", "Most retrieved"), ("newest", "Newest")] %}<option value="{{ value }}" {{ "selected" if value == order }}>{{ label }}</option>{% endfor %}</select>
     <button class="primary">Apply</button>
   </form></header>
+{% if stale %}<section class="card" style="margin-bottom: 16px"><h2>Candidates to retire or revise <span class="hint">retrieved in 90 days with no successful use, or under half working lately</span></h2><div class="table-wrap"><table>
+  <thead><tr><th>Entry</th><th class="num">Retrievals, 90 days</th><th>Last success</th><th class="num">Worked lately</th></tr></thead><tbody>
+  {% for s in stale %}<tr><td><a href="/entries/{{ s.id }}">{{ s.symptom | truncate(90) }}</a></td><td class="num">{{ s.retrievals }}</td>
+    <td>{{ s.last_success.strftime("%b %d") if s.last_success else "never" }}</td><td class="num">{% if s.used %}{{ s.worked }}/{{ s.used }}{% else %}–{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div></section>{% endif %}
 <section class="card">{% if entries %}<div class="table-wrap"><table>
   <thead><tr><th>Symptom</th><th>Status</th><th class="num">Score</th><th class="num">Retrievals 30d</th><th class="num">Used</th><th class="num">Success</th><th>Proposed</th></tr></thead><tbody>
   {% for e in entries %}<tr>

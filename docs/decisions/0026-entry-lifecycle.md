@@ -42,3 +42,14 @@ Consequences: the store can stay correct over time without losing history, and t
 gains a clean record of when knowledge went stale, which DESIGN §7 wants. It adds a table, two
 columns and a dashboard editor. Revisions complicate the export (DESIGN §8), which should ship
 the revision chain.
+
+Implementation notes (T48, 2026-10-31):
+- Built: revisions (the first comes from a trigger on insert; existing entries were backfilled
+  as revision 1), admin edits on the entry page through `propose`'s validation and redaction,
+  `superseded_by`, retirement with `fixed_in`, restore, and the stale-candidates list on the
+  Entries page.
+- Not built: agents' `propose(..., revises=...)`. It changes eval-measured tool text, so it
+  waits for an eval run the owner approves (decision 0023).
+- Retire and restore are new `review_decision` values recorded as human reviews; superseding
+  is a retirement with `superseded_by` set. The review tools still accept only approve/reject.
+- Risk scanning of edits arrives with 0029 (T50), on the same path as proposals.
