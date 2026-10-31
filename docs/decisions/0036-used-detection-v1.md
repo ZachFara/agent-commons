@@ -40,3 +40,20 @@ Consequences: fewer false uses, so success rates mean what they say, which is th
 central measurement. The frequency table is one more thing hooks fetch. Rarity is weak while
 the store is small, which is what the built-in generic list is for. Answers part of DESIGN
 §11's open question on whether diff matching is good enough.
+
+Implementation notes (T46, 2026-10-31):
+- The server computes artifact frequencies from approved fixes on request
+  (`/api/hooks/artifact-frequencies`), which is cheap at this size, rather than in
+  `commons rank`; hooks cache them for a day. Against an older server, hooks fall back to equal
+  weights and still apply the generic list and the prose rule.
+- Weights are a smoothed IDF, log((1 + N) / (1 + df)) + 1. The cut points are unchanged: at
+  least half the weight is `yes`, some is `partial`.
+- Only passing runs need matched work before them. Failing runs after the retrieval still count,
+  so an agent's claim of success can be checked against them (reliability, decision 0017).
+- Hooks send `matched_at` with `used`. Hooks installed before this release don't, and the
+  server records their turns unpaired, as before; upgrading them (`uv tool upgrade commons`)
+  turns pairing on.
+- `requirements*.txt`, `constraints*.txt` and `CMakeLists.txt` are code, not prose.
+- Labeled set (`test_used_labeled.py`, 12 sessions: 7 true uses, 5 not): precision 0.70 to
+  1.00, recall 1.00 to 1.00. Eval transcripts are not kept, so the set is built from the eval's
+  known-entry scenarios, the production entries, and the 2026-10-31 cases.

@@ -8,10 +8,12 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from commons.domain.errors import NotPermittedError
-from commons.domain.outcomes import ObservedRun, Usage, merge_observation
+from commons.domain.outcomes import ObservedRun, merge_observation
+from commons.domain.usage import ArtifactFrequencies, UseObservation, count_artifacts
 from commons.service.identity import current_reporter
 from commons.service.ranking import rank, ranking_is_stale
 from commons.store.connection import Connection
+from commons.store.entries import approved_fixes
 from commons.store.models import model_id
 from commons.store.outcomes import locked_outcome, save_outcome, set_used
 from commons.store.task_events import (
@@ -85,9 +87,19 @@ def fixed_failing_tests(runs: list[ObservedRun]) -> bool:
 
 
 def finish_turn(
-    conn: Connection, session_id: str, model: str | None, used: dict[UUID, Usage | None]
+    conn: Connection,
+    session_id: str,
+    model: str | None,
+    used: dict[UUID, UseObservation],
+    *,
+    paired: bool = True,
 ) -> StopResult | None:
-    """Record the observed model, `used` per retrieval, and observed outcomes (decision 0016)."""
+    """Record the observed model, `used` per retrieval, and observed outcomes (decision 0016).
+
+    With `paired` (decision 0036), a test run counts for a retrieval only if it came after
+    the work that matched the fix. Hooks from before 0036 don't say when that was, so their
+    turns are recorded unpaired, as before.
+    """
     with conn.transaction():
         task_id = task_for_session(conn, session_id, current_reporter(conn))
         if task_id is None:
@@ -97,7 +109,8 @@ def finish_turn(
         runs = test_runs(conn, task_id)
         retrieved = task_retrievals(conn, task_id)
         for item in retrieved:
-            _record_observation(conn, item, runs, used.get(item.retrieval_id))
+            seen = used.get(item.retrieval_id, UseObservation(None))
+            _record_observation(conn, item, runs, seen, paired=paired)
     return StopResult(
         task_id,
         [item.entry_id for item in retrieved if not item.reported],
@@ -107,11 +120,34 @@ def finish_turn(
 
 
 def _record_observation(
-    conn: Connection, item: TaskRetrieval, runs: list[ObservedRun], used: Usage | None
+    conn: Connection,
+    item: TaskRetrieval,
+    runs: list[ObservedRun],
+    seen: UseObservation,
+    *,
+    paired: bool,
 ) -> None:
     after = [run for run in runs if run.at > item.retrieved_at]
+    if paired:
+        after = [run for run in after if run.exit_code != 0 or _follows_matched_work(run, seen)]
     record = merge_observation(
         locked_outcome(conn, item.retrieval_id), after[-1] if after else None
     )
     save_outcome(conn, item.retrieval_id, record)
-    set_used(conn, item.retrieval_id, used)
+    set_used(conn, item.retrieval_id, seen.used)
+
+
+def _follows_matched_work(run: ObservedRun, seen: UseObservation) -> bool:
+    """Whether a passing run can be credited to the entry: it came after work that matched.
+
+    A pass with no matched work proves nothing about the entry (decision 0036). Failing runs
+    still count, so an agent's claim of success can be checked against them.
+    """
+    if seen.used not in {"yes", "partial"}:
+        return False
+    return seen.matched_at is None or run.at > seen.matched_at
+
+
+def artifact_frequencies(conn: Connection) -> ArtifactFrequencies:
+    """Count fix artifacts across approved entries, for the hooks' rarity weights (0036)."""
+    return count_artifacts(approved_fixes(conn))

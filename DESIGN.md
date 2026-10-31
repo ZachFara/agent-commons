@@ -66,7 +66,7 @@ searches
 
 outcomes
 - retrieval_id.
-- used: enum yes, partial, no. Determined by checking whether the entry's fix text or commands appear in what the task changed or ran after the retrieval, not by asking the agent. Work done before the retrieval is a lookup, not a use.
+- used: enum yes, partial, no. Determined by checking whether the entry's fix text or commands appear in what the task changed or ran after the retrieval, not by asking the agent. Work done before the retrieval is a lookup, not a use. Each of the fix's artifacts is weighted by how rare it is across the store's fixes, generic tokens (common flags, ordinary hyphenated words, localhost URLs) weigh nothing, and edits to prose files (.md, .rst, .txt, docs/) are not evidence: `used` is the weighted share present (decision 0036). An observed test pass counts for the entry only if it came after the work that matched.
 - outcome: enum tests_passed, tests_failed, error_resolved, error_persisted, user_accepted, user_rejected, abandoned, unknown.
 - evidence: jsonb. Hook payloads: test command, exit code, diff hash, timestamps.
 - agent_assessment: text, nullable. The agent's own post-hoc grading, kept separately from the observed fields so the two can be compared.

@@ -17,13 +17,18 @@ import httpx2
 
 from commons.domain.errors import NotInitializedError, NotPermittedError
 from commons.domain.observations import ToolUse, is_test_command, observed_exit_code
-from commons.domain.outcomes import Usage
-from commons.domain.usage import compute_used
+from commons.domain.usage import ArtifactFrequencies, Evidence, UseObservation, observe_use
 from commons.privacy.redaction import scrub
 from commons.service import hooks
 from commons.service.hooks import StopResult
 from commons.service.identity import configured_test_runners
-from commons.service.local_state import append_spool, prune_spools, read_spool
+from commons.service.local_state import (
+    append_spool,
+    cached_frequencies,
+    prune_spools,
+    read_spool,
+    save_frequencies,
+)
 from commons.store.connection import Connection
 from commons.store.task_events import TaskRetrieval
 
@@ -51,9 +56,13 @@ class HookBackend(Protocol):
         ...
 
     def stop(
-        self, session_id: str, model: str | None, used: dict[UUID, Usage | None]
+        self, session_id: str, model: str | None, used: dict[UUID, UseObservation]
     ) -> StopResult | None:
         """Record the turn's observations."""
+        ...
+
+    def artifact_frequencies(self) -> ArtifactFrequencies:
+        """How common each fix artifact is across the store (decision 0036)."""
         ...
 
 
@@ -85,11 +94,16 @@ class LocalBackend:
             return hooks.retrievals_to_judge(conn, session_id)
 
     def stop(
-        self, session_id: str, model: str | None, used: dict[UUID, Usage | None]
+        self, session_id: str, model: str | None, used: dict[UUID, UseObservation]
     ) -> StopResult | None:
         """Record the turn's observations."""
         with self._connection() as conn:
             return hooks.finish_turn(conn, session_id, model, used)
+
+    def artifact_frequencies(self) -> ArtifactFrequencies:
+        """Count artifacts across the store's approved fixes."""
+        with self._connection() as conn:
+            return hooks.artifact_frequencies(conn)
 
 
 class RemoteBackend:
@@ -147,13 +161,17 @@ class RemoteBackend:
         ]
 
     def stop(
-        self, session_id: str, model: str | None, used: dict[UUID, Usage | None]
+        self, session_id: str, model: str | None, used: dict[UUID, UseObservation]
     ) -> StopResult | None:
-        """Record the turn's observations."""
+        """Record the turn's observations, with when matched work happened (0036)."""
         body = {
             "session_id": session_id,
             "model": model,
-            "used": {str(retrieval): value for retrieval, value in used.items()},
+            "used": {str(retrieval): seen.used for retrieval, seen in used.items()},
+            "matched_at": {
+                str(retrieval): seen.matched_at.isoformat() if seen.matched_at else None
+                for retrieval, seen in used.items()
+            },
         }
         result = self._post("stop", body)
         if result["task_id"] is None:
@@ -164,6 +182,18 @@ class RemoteBackend:
             fixed_failing_tests=bool(result.get("fixed_failing_tests")),
             searched=bool(result.get("searched")),
         )
+
+    def artifact_frequencies(self) -> ArtifactFrequencies:
+        """Fetch artifact counts from the server, at most once a day; empty if unavailable."""
+        if (cached := cached_frequencies()) is not None:
+            return cached
+        try:
+            result = self._post("artifact-frequencies", {})
+        except httpx2.HTTPError:
+            return ArtifactFrequencies()  # older servers: equal weights, generic tokens still 0
+        frequencies = ArtifactFrequencies(int(result["entries"]), dict(result["counts"]))
+        save_frequencies(frequencies)
+        return frequencies
 
 
 def remote_client(url: str, key: str) -> httpx2.Client:
@@ -186,10 +216,13 @@ def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
     """Spool scrubbed text locally; send only the test run and file hashes."""
     if use.command is not None:
         append_spool(use.session_id, {"tool": use.tool_name, "command": scrub(use.command)})
+    where = {"path": use.file_path} if use.file_path else {}
     if use.new_text is not None:
-        append_spool(use.session_id, {"tool": use.tool_name, "text": scrub(use.new_text)})
+        append_spool(use.session_id, {"tool": use.tool_name, "text": scrub(use.new_text), **where})
     if use.old_text:
-        append_spool(use.session_id, {"tool": use.tool_name, "removed": scrub(use.old_text)})
+        append_spool(
+            use.session_id, {"tool": use.tool_name, "removed": scrub(use.old_text), **where}
+        )
     test_run: dict[str, object] | None = None
     if use.command is not None and _is_test(use.command):
         code = observed_exit_code(
@@ -211,9 +244,11 @@ def on_stop(backend: HookBackend, session_id: str, transcript: str | None) -> St
     """Compute `used` from the local spool and record the turn."""
     model = observed_model(Path(transcript)) if transcript else None
     records = read_spool(session_id)
+    retrieved = backend.retrievals(session_id)
+    frequencies = backend.artifact_frequencies() if retrieved else ArtifactFrequencies()
     used = {
-        item.retrieval_id: compute_used(item.fix, _session_text(records, item.retrieved_at))
-        for item in backend.retrievals(session_id)
+        item.retrieval_id: observe_use(item.fix, _evidence(records, item.retrieved_at), frequencies)
+        for item in retrieved
     }
     return backend.stop(session_id, model, used)
 
@@ -222,12 +257,26 @@ def _is_test(command: str) -> bool:
     return is_test_command(command, configured_test_runners())
 
 
-def _session_text(records: list[dict[str, object]], retrieved_at: datetime) -> str:
-    # Commands run, text added, and text removed: a fix often names what to take out.
-    keys = ("command", "text", "removed")
+def _evidence(records: list[dict[str, object]], retrieved_at: datetime) -> list[Evidence]:
+    """Commands run, text added, and text removed after the retrieval, oldest first.
+
+    Removed text counts too: a fix often names what to take out.
+    """
     after = [record for record in records if _spooled_after(record, retrieved_at)]
-    parts = (record.get(key) for record in after for key in keys)
-    return "\n".join(str(part) for part in parts if part)
+    return [
+        Evidence(str(part), _time(record.get("at")), _text(record.get("path")))
+        for record in after
+        for key in ("command", "text", "removed")
+        if (part := record.get(key))
+    ]
+
+
+def _time(value: object) -> datetime | None:
+    return datetime.fromisoformat(value) if isinstance(value, str) else None
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _spooled_after(record: dict[str, object], retrieved_at: datetime) -> bool:

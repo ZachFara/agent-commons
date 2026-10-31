@@ -219,3 +219,36 @@ def test_records_spooled_before_timestamps_still_count(session: Session) -> None
     session.stop()
     used, _outcome, _evidence, _model = session.outcome()
     assert used == "yes"
+
+
+def test_a_pass_with_no_matched_work_is_not_credited(session: Session) -> None:
+    """Decision 0036: a passing run proves nothing about an entry the agent didn't apply."""
+    session.search()
+    session.tool("Bash", {"command": "pytest -q"})
+    session.stop()
+    used, outcome, _evidence, _model = session.outcome()
+    assert (used, outcome) == ("no", "unknown")
+
+
+def test_a_pass_before_the_matching_edit_is_not_credited(session: Session) -> None:
+    session.search()
+    session.tool("Bash", {"command": "pytest -q"})
+    session.tool("Edit", {"file_path": "/r/requirements.txt", "new_string": "markupsafe<2.1"})
+    session.stop()
+    used, outcome, _evidence, _model = session.outcome()
+    assert (used, outcome) == ("partial", "unknown")
+
+    session.tool("Bash", {"command": "pytest -q"})
+    session.stop()
+    used, outcome, _evidence, _model = session.outcome()
+    assert (used, outcome) == ("partial", "tests_passed")
+
+
+def test_writing_the_fix_into_notes_is_not_a_use(session: Session) -> None:
+    session.search()
+    notes = "Pinned markupsafe<2.1 and ran pip check, per the entry."
+    session.tool("Edit", {"file_path": "/r/PROGRESS.md", "new_string": notes})
+    session.tool("Bash", {"command": "pytest -q"})
+    session.stop()
+    used, outcome, _evidence, _model = session.outcome()
+    assert (used, outcome) == ("no", "unknown")
