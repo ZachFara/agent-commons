@@ -94,6 +94,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | ID | Status | Task | Done when |
 |---|---|---|---|
 | T38 | todo | `propose` and `search` say which store they used: `"store": "local"` or the hosted server URL. Why: after the owner switched to production, a session that was already open kept its local MCP server while its hooks went to production. It proposed two entries to the local store and reported them as "pending review", while the owner looked at the production queue (2026-10-31). | Tests: local and hosted responses carry the right store; the tool descriptions mention the field |
+| T39 | todo | Investigate: a retrieval made only to check the store counted as a use. In production, entry `1f0aa91a` shows 1 used outcome and a 0% success rate after a session searched only to see whether the store was empty. That session had applied the same fix earlier, so the Stop hook's diff matching probably marked it `used`. Decide whether `used` should only count changes made after the retrieval (2026-10-31) | Cause confirmed with a test that reproduces it; fixed or recorded as accepted |
 
 ### DESIGN Phase 3 (after a month of data)
 
