@@ -50,3 +50,13 @@ Consequences: data loss is bounded to a day and found by drill, not by disaster,
 are noticed within minutes. Costs: a bucket, an encryption key the owner must keep safe, and a
 few Terraform resources, all within free tiers at current volume. The restore drill uses
 GitHub Actions minutes, which are free for this public repository.
+
+Implementation notes (T43, 2026-10-31):
+- The drill can't decrypt with a key that stays offline, so each backup is encrypted to two
+  age recipients: the owner's recovery key (offline) and a drill key held only as a GitHub
+  secret. Either decrypts; the drill key can be rotated without touching old backups' recovery.
+- Retention runs as `commons retain` at the end of the nightly backup workflow rather than
+  inside `commons rank`, so it runs once a night against production instead of on every
+  machine whose SessionStart re-ranks.
+- Each night's dump is also restored into a scratch Postgres before upload, so a broken dump
+  fails that night rather than at the monthly drill.

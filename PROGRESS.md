@@ -105,8 +105,8 @@ Dependencies are noted.
 
 | ID | Status | Task | Done when |
 |---|---|---|---|
-| T42 | todo | Rotate the owner's printed admin key with today's commands (0032 step 5) | Old key gets 401; owner's MCP and dashboard work on the new one |
-| T43 | todo | Operations: nightly encrypted `pg_dump` to GCS, monthly restore drill, uptime and error alerts, budget alerts in Terraform, retention job (0033) | A drill restores and matches row counts; a forced 5xx and a stopped service each email the owner |
+| T42 | done | Rotate the owner's printed admin key with today's commands (0032 step 5) | Old key gets 401; owner's MCP and dashboard work on the new one. Done 2026-10-31: old key 401 on `/` and `/mcp`, new key 200; config and MCP registration updated |
+| T43 | done (partial) | Operations: nightly encrypted `pg_dump` to GCS, monthly restore drill, uptime and error alerts, budget alerts in Terraform, retention job (0033) | A drill restores and matches row counts; a forced 5xx and a stopped service each email the owner. 2026-10-31: applied (bucket, ops account, uptime check, two alert policies, budget at 50%/90% of $4); a local dump, restore and exact count compare of production passed. Left: the owner runs `setup-backup-keys.sh` (age keys, GitHub variables), then the first nightly run and a `drill=true` run; the alerts have not been fire-tested, since that means taking production down or forcing errors in it |
 | T44 | todo | Keys: `api_keys` table, scopes (agent/review/admin), several keys per reporter, rotate/revoke/expire, `last_used_at` (0032) | Tests per scope and lifecycle step; `join` refuses admin keys; staging soak before production |
 | T45 | todo | Data correction: `corrections` table, `excluded` flags, dashboard and CLI actions, immediate rescoring, test keys (0030; test keys need T44) | Excluded rows vanish from ranking, status, charts and export (tested per reader); 2026-10-31 fixes backfilled |
 | T46 | todo | `used` detection v1: rarity weights, generic-token list, prose files at zero, test runs paired with matched work (0036; supersedes T41's sketch) | Labeled set from the eval plus the 2026-10-31 cases: precision up, recall on true uses held |
@@ -433,3 +433,7 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
 - 2026-10-31: proposed decisions 0025-0036 for the long-term gaps, each written to the
   standard practice for its kind of problem, with task rows T42-T54 in suggested order.
   Owner accepted all twelve the same day.
+- 2026-10-31: T42 rotated the owner's admin key (note: admin CLI commands read
+  `COMMONS_DATABASE_URL`, not `DATABASE_URL`; the first try minted a key in the local store).
+  T43 applied backups, alerts and budget alerts in Terraform; the agent was not permitted to write
+  the drill key into a repository secret, so the owner runs `setup-backup-keys.sh`.

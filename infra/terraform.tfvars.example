@@ -1,4 +1,7 @@
 project_id      = "agent-commons-512623"
 neon_project_id = "weathered-cloud-96612464"
-# Optional Terraform-managed spend alert. Leave unset if you created budgets in the console.
+# Billing account for the Terraform-managed spend alerts (decision 0033); empty skips them.
 # billing_account = "012345-6789AB-CDEF01"
+
+# Alert emails for uptime, errors and budget (decision 0033).
+# alert_emails = ["you@example.com"]

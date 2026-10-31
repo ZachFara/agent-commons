@@ -67,6 +67,54 @@ uv run commons admin invite <friend> --server "$(cd infra && terraform output -j
 Use `agent-commons-staging-database-url` and the staging URL to do the same on staging. Open
 `<url>/` and sign in with any user name and an admin key as the password.
 
+## Backups, alerts and retention (decision 0033)
+
+Targets: lose at most a day of data (RPO 24 h), and be back within an hour (RTO 1 h).
+
+- **Backups**: `.github/workflows/backup.yml` runs nightly. It dumps production through the
+  read-only `commons_backup` role, restores the dump into a scratch Postgres to prove it works,
+  encrypts it with `age`, and uploads it to `gs://agent-commons-512623-backups/daily/<time>/`
+  (also `monthly/` on the 1st). The bucket keeps 14 daily and 6 monthly copies.
+- **Restore drill**: on the 2nd of each month the same workflow decrypts the newest backup,
+  restores it, and checks every table's row count against the counts saved at backup time.
+  Run it any time with `gh workflow run backup -f drill=true`.
+- **Keys**: backups are encrypted to two age keys. The recovery key
+  (`~/.config/agent-commons/backup-recovery.agekey`) belongs in your password manager and nowhere
+  else. The drill key lives only in the GitHub secret `BACKUP_DRILL_IDENTITY`; rotate it by
+  re-running `setup-backup-keys.sh`. Re-key the role with `uv run python tools/backup_role.py`.
+- **Alerts**, by email to `alert_emails` in `terraform.tfvars`: production `/health` failing
+  from more than one region for 10 minutes, 5 or more server errors in 10 minutes, and spend at
+  50% and 90% of `budget_alert_usd` (the console's $4 Cloud Run cap).
+- **Retention**: after each backup, `commons retain` folds searches older than 180 days into
+  `search_months` (query, searches, misses) and deletes them. Cloud Logging keeps call logs for
+  its default 30 days; hook spools on each machine keep 30 days.
+
+### When an alert fires
+
+- **Production is down**: open the Cloud Run service in the console. If billing paused it (the
+  spend cap), the budget emails will have come first: raise the cap or wait for the month to
+  turn, then redeploy (`gh workflow run deploy`). Otherwise read the newest revision's logs, and
+  roll back with `gcloud run services update-traffic agent-commons --to-revisions <previous>=100
+  --region us-central1`.
+- **Server errors**: `gcloud logging read 'resource.labels.service_name="agent-commons" AND
+  severity>=ERROR' --limit 20 --freshness 1h`. Call-log lines name the tool that failed.
+- **A backup or drill failed**: GitHub emails the failed run. Re-run it from the Actions tab
+  once fixed; a missed night only widens that day's RPO.
+
+### Restoring production
+
+1. Mistake in the last 6 hours: restore in the Neon console (Branches, Restore) to a time
+   before it. Nothing else is needed.
+2. Older: download a backup and decrypt it with the recovery key:
+   `gcloud storage cp gs://agent-commons-512623-backups/daily/<time>/commons.dump.age . &&
+   age -d -i ~/.config/agent-commons/backup-recovery.agekey -o commons.dump commons.dump.age`
+3. Create a new Neon branch from production (Neon console), and restore into it:
+   `pg_restore --no-owner --no-privileges --clean --if-exists -d "<new branch URL>" commons.dump`
+   (Postgres 18 client tools).
+4. Check it with `uv run python tools/backup_counts.py compare "<new branch URL>" counts.json`.
+5. Point production at it: `gcloud secrets versions add agent-commons-production-database-url
+   --data-file=-` with the new URL, then redeploy so Cloud Run reads the new version.
+
 ## Costs
 
 Expected bill at the start: **$0/month**. Free-tier figures as of October 2026; check the
@@ -77,13 +125,15 @@ providers' pricing pages before relying on them.
 | Neon Postgres | 0.5-1 GB storage, 100 compute-hours/month per project, scales to zero after 5 min idle | well under 1 GB; two branches, each computing only while in use | Past the free limits Neon suspends compute until next month rather than billing; the usage-based Launch plan is about $0.11 per compute-hour and $0.35/GB-month |
 | Cloud Run | 2M requests, 180k vCPU-seconds, 360k GiB-seconds per month (us-central1), shared by both services | ~5 people × 30 sessions/day × ~100 hook calls ≈ 450k requests and ~45k vCPU-s; staging adds little | Beyond that, about $0.40 per million requests and $0.000024 per vCPU-second |
 | Artifact Registry | 0.5 GB storage | 3 images × ~150 MB | $0.10/GB-month over 0.5 GB |
-| Secret Manager | 6 secret versions, 10k accesses/month | 2 secrets, read at instance start | $0.06 per version, $0.03 per 10k accesses |
-| Cloud Storage (state) | 5 GB in us-central1 | kilobytes | negligible |
+| Secret Manager | 6 secret versions, 10k accesses/month | 3 secrets (two database URLs, the backup role's URL) | $0.06 per version, $0.03 per 10k accesses |
+| Cloud Storage (state, backups) | 5 GB in us-central1 | kilobytes of state; ~20 encrypted dumps of ~50 KB each today | $0.02/GB-month over 5 GB |
+| Cloud Monitoring | uptime checks and alerting free at this scale | one uptime check, two alert policies, one log metric | — |
 | GitHub Actions | free for public repositories | a few minutes per deploy | — |
 
-Budgets for this project were set up in the console (a $5 alert to both email addresses and a $4
-Cloud Run spend cap that pauses Cloud Run), so leave `billing_account` unset. Production scales to
-at most 2 instances and staging to 1.
+The $4 Cloud Run spend cap that pauses Cloud Run was set up in the console and stays there.
+Terraform owns the budget alerts (50% and 90% of that amount, `billing_account` in
+`terraform.tfvars`); the console also has an older $5 alert. Production scales to at most 2
+instances and staging to 1. Backups, monitoring and alerting fit their free tiers.
 
 Cold starts: after a quiet period the first request wakes Cloud Run (~1-3 s) and Neon (~0.5 s).
 Hooks allow 30-60 s, so this only shows up as a slightly slower first hook.

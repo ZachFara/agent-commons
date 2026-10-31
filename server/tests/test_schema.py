@@ -66,6 +66,7 @@ TABLES = {
         "environment",
         "results",
     },
+    "search_months": {"month", "query", "searches", "misses"},
     "outcomes": {
         "retrieval_id",
         "used",
