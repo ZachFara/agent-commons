@@ -89,6 +89,12 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 |---|---|---|---|
 | T37 | done | Log every search, misses included, by privacy mode; one structured log line per MCP tool call; dashboard Searches page (decision 0024) | Tests: misses logged, query redacted, full_trace extras only in full_trace (DB check too), task mode wins, preview and invalid calls log nothing, call lines carry no query text; page renders |
 
+### Follow-ups (owner, 2026-10-31)
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T38 | todo | `propose` and `search` say which store they used: `"store": "local"` or the hosted server URL. Why: after the owner switched to production, a session that was already open kept its local MCP server while its hooks went to production. It proposed two entries to the local store and reported them as "pending review", while the owner looked at the production queue (2026-10-31). | Tests: local and hosted responses carry the right store; the tool descriptions mention the field |
+
 ### DESIGN Phase 3 (after a month of data)
 
 - cq adapter, counterfactual runner, decay/absorption flags, model attribution, `commons export`,
