@@ -117,6 +117,32 @@ being enough; whether anyone uses full_trace.
 1. T34 baseline, then T35 experiments; invite the friend once propose works reliably.
 2. Next: DESIGN Phase 3 after a month of data (DESIGN §10).
 
+### Under consideration: ship a SKILL.md with the server (owner, 2026-10-31)
+
+Not started. Idea: package a Claude Code skill with the MCP server and hooks, probably as the
+`.claude-plugin/` already planned for Phase 3. Why it might help:
+- The skill's name and description would be one more thing the agent sees before tool search
+  loads our tools, alongside the server instructions and tool names. That might raise how often
+  agents search and propose.
+- The skill body only loads when used, so it could hold more than the 1,500-character
+  instructions budget allows: worked examples of good and bad proposals, and when to report.
+- A plugin install could replace the three commands in the friend invite.
+
+Anticipated next steps:
+1. Check the current Claude Code docs before designing anything. How are skill descriptions
+   loaded, and what are their length limits and listing budget? Can one plugin bundle the MCP
+   server, the hooks and the skill? Which other clients (Codex, Cursor) read skills?
+2. Draft the SKILL.md: a short description written to trigger on library and runtime failures,
+   and a body with the search, propose and report rules plus examples. Count its characters
+   against the documented limits, as `test_mcp_instructions.py` does for the instructions.
+3. Teach the eval harness to install the skill (or plugin) into each isolated session. Then run
+   it as a condition against the shipped wording on Sonnet and Opus with `make eval-confirm`'s
+   13 scenarios. Watch the controls for false proposals, and the extra tokens per session.
+4. Adopt it only if it beats the shipped wording on both models without new control
+   proposals. Then build the plugin and update INSTALL.md and `commons admin invite`.
+5. If the skill carries the detail, decide whether the server instructions can shrink. Clients
+   that don't read skills would still depend on the instructions alone.
+
 ## Session log
 
 - 2026-10-24: repo setup (tooling, checks, AGENTS.md, decisions 0001-0004). Initial commit on
