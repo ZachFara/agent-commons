@@ -16,6 +16,7 @@ from commons.domain.reviews import PendingEntry, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchHit, SearchRequest
 from commons.domain.status import StoreStatus
 from commons.mcp.auth import ApiKeyVerifier, calling_reporter
+from commons.mcp.call_log import CallLog, log_calls_to_stdout
 from commons.mcp.errors import StructuredValidationErrors, structured_errors
 from commons.service import agent_text, proposals, reports, reviews
 from commons.service import search as search_service
@@ -172,7 +173,7 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
     return FastMCP(
         "commons",
         instructions=shown.instructions,
-        middleware=[StructuredValidationErrors()],
+        middleware=[CallLog(), StructuredValidationErrors()],
         mask_error_details=True,
         auth=ApiKeyVerifier(connection) if hosted else None,
         tools=[
@@ -278,5 +279,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     host: str = args.host
     port: int = args.port
+    log_calls_to_stdout()
     with serving_hosted():
         build_server(hosted=True).run(transport="http", host=host, port=port, show_banner=False)

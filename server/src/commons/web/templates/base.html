@@ -167,7 +167,7 @@
 <div class="shell">
   <nav class="side" aria-label="Sections">
     <div class="brand"><span class="mark"></span><span>Agent Commons<small>{{ "Hosted" if hosted else "Local" }} admin</small></span></div>
-    {% set links = [("/", "Overview", "overview"), ("/queue", "Review queue", "queue"), ("/entries", "Entries", "entries"), ("/activity", "Activity", "activity"), ("/people", "People & models", "people")] %}
+    {% set links = [("/", "Overview", "overview"), ("/queue", "Review queue", "queue"), ("/entries", "Entries", "entries"), ("/activity", "Activity", "activity"), ("/searches", "Searches", "searches"),("/people", "People & models", "people")] %}
     {% for href, label, key in links %}
       <a href="{{ href }}" class="{{ 'active' if section == key }}">{{ label }}
         {% if key == "queue" and awaiting %}<span class="count hot">{{ awaiting }}</span>{% endif %}</a>

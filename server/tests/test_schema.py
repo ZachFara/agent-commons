@@ -54,6 +54,18 @@ TABLES = {
         "rank_position",
         "score_at_retrieval",
     },
+    "searches": {
+        "task_id",
+        "reporter_id",
+        "model_id",
+        "privacy_mode",
+        "query",
+        "language",
+        "result_limit",
+        "hit_count",
+        "environment",
+        "results",
+    },
     "outcomes": {
         "retrieval_id",
         "used",

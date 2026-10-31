@@ -176,6 +176,43 @@ def tasks(conn: Connection, limit: int = 100) -> list[Row]:
     )
 
 
+def search_totals(conn: Connection) -> Row:
+    """Count searches, and searches that found nothing, over the last 30 days."""
+    rows = _rows(
+        conn,
+        "SELECT count(*) AS searches, count(*) FILTER (WHERE hit_count = 0) AS misses, "
+        "count(DISTINCT reporter_id) AS reporters FROM searches "
+        "WHERE created_at > now() - interval '30 days'",
+        {},
+    )
+    return rows[0]
+
+
+def missed_queries(conn: Connection, limit: int = 100) -> list[Row]:
+    """Return queries that found nothing in the last 30 days, most often searched first."""
+    return _rows(
+        conn,
+        "SELECT query, count(*) AS times, count(DISTINCT reporter_id) AS reporters, "
+        "max(created_at) AS last_seen, "
+        "string_agg(DISTINCT language, ', ') AS languages "
+        "FROM searches WHERE hit_count = 0 AND created_at > now() - interval '30 days' "
+        "GROUP BY query ORDER BY times DESC, last_seen DESC LIMIT %(limit)s",
+        {"limit": limit},
+    )
+
+
+def recent_searches(conn: Connection, limit: int = 100) -> list[Row]:
+    """Return the latest searches with who ran them and how many entries came back."""
+    return _rows(
+        conn,
+        "SELECT s.created_at, s.task_id, s.query, s.language, s.hit_count, "
+        "s.privacy_mode::text AS privacy, rp.pseudonym AS reporter, m.name AS model "
+        "FROM searches s JOIN reporters rp ON rp.id = s.reporter_id "
+        "JOIN models m ON m.id = s.model_id ORDER BY s.created_at DESC LIMIT %(limit)s",
+        {"limit": limit},
+    )
+
+
 def reporters(conn: Connection) -> list[Row]:
     """Every reporter with contribution and accuracy figures."""
     return _rows(

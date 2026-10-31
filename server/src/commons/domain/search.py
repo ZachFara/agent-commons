@@ -3,6 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from commons.domain.errors import InvalidInputError
+from commons.domain.reporters import PrivacyDefault
 
 MAX_LIMIT = 20
 
@@ -32,6 +33,20 @@ def validate_search(request: SearchRequest) -> None:
     if not 1 <= request.limit <= MAX_LIMIT:
         msg = f"limit must be between 1 and {MAX_LIMIT}."
         raise InvalidInputError(msg)
+
+
+@dataclass(frozen=True)
+class SearchRecord:
+    """What the store keeps about one search, already cut down for its privacy mode."""
+
+    task_id: UUID
+    privacy_mode: PrivacyDefault
+    query: str
+    language: str | None
+    limit: int
+    hit_count: int
+    environment: dict[str, object] | None
+    results: list[dict[str, object]] | None
 
 
 @dataclass(frozen=True)
