@@ -53,6 +53,7 @@ TABLES = {
         "query",
         "rank_position",
         "score_at_retrieval",
+        "excluded",
     },
     "searches": {
         "task_id",
@@ -65,6 +66,19 @@ TABLES = {
         "hit_count",
         "environment",
         "results",
+        "excluded",
+    },
+    "corrections": {
+        "batch_id",
+        "corrected_by",
+        "target_table",
+        "target_id",
+        "field",
+        "old_value",
+        "new_value",
+        "reason",
+        "undone_at",
+        "undone_by",
     },
     "search_months": {"month", "query", "searches", "misses"},
     "outcomes": {
@@ -76,6 +90,7 @@ TABLES = {
         "tokens_in",
         "tokens_out",
         "wall_clock_seconds",
+        "excluded",
     },
     "reporters": {"pseudonym", "reliability", "privacy_default"},
     "api_keys": {

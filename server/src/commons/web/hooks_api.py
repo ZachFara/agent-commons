@@ -78,7 +78,7 @@ def _run(
             return holder
         try:
             _check_privacy(holder)
-            with acting_as(holder.reporter_id):
+            with acting_as(holder.reporter_id, test=holder.test):
                 return handler(conn, body), holder.scope
         except NotPermittedError as error:
             return _error(403, "forbidden", str(error))

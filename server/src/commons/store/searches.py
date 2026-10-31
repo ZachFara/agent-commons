@@ -24,13 +24,18 @@ def privacy_mode(conn: Connection, reporter_id: UUID, task_id: UUID) -> PrivacyD
 
 
 def record_search(
-    conn: Connection, record: SearchRecord, reporter_id: UUID, model_id: UUID
+    conn: Connection,
+    record: SearchRecord,
+    reporter_id: UUID,
+    model_id: UUID,
+    *,
+    excluded: bool = False,
 ) -> None:
     """Log one searches row, whether or not anything was found."""
     conn.execute(
         "INSERT INTO searches (task_id, reporter_id, model_id, privacy_mode, query, language, "
-        "result_limit, hit_count, environment, results) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "result_limit, hit_count, environment, results, excluded) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             record.task_id,
             reporter_id,
@@ -42,5 +47,6 @@ def record_search(
             record.hit_count,
             None if record.environment is None else Jsonb(record.environment),
             None if record.results is None else Jsonb(record.results),
+            excluded,
         ),
     )

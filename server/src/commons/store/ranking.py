@@ -10,8 +10,8 @@ _SAMPLES = """
 SELECT r.entry_id, o.outcome = ANY(%(success)s::outcome_kind[]), o.used::text,
        o.evidence->>'outcome_source' = 'hook', rp.reliability,
        extract(epoch FROM now() - o.created_at) / 86400
-FROM outcomes o
-JOIN retrievals r ON r.id = o.retrieval_id
+FROM counted_outcomes o
+JOIN counted_retrievals r ON r.id = o.retrieval_id
 JOIN reporters rp ON rp.id = r.reporter_id
 JOIN entries e ON e.id = r.entry_id
 WHERE e.status = 'approved' AND o.used IN ('yes', 'partial')
@@ -20,11 +20,12 @@ WHERE e.status = 'approved' AND o.used IN ('yes', 'partial')
 
 _ENTRY_STATS = """
 SELECT e.id,
-       (SELECT count(*) FROM retrievals r
+       (SELECT count(*) FROM counted_retrievals r
         WHERE r.entry_id = e.id AND r.created_at > now() - interval '30 days'),
        (SELECT count(*) FILTER (WHERE o.used IN ('yes', 'partial'))::float
                / nullif(count(*) FILTER (WHERE o.used IS NOT NULL), 0)
-        FROM outcomes o JOIN retrievals r ON r.id = o.retrieval_id WHERE r.entry_id = e.id)
+        FROM counted_outcomes o JOIN counted_retrievals r ON r.id = o.retrieval_id
+        WHERE r.entry_id = e.id)
 FROM entries e WHERE e.status = 'approved'
 """
 
@@ -77,7 +78,7 @@ def reliability_pairs(conn: Connection) -> dict[UUID, list[tuple[OutcomeKind, Ou
     pairs: dict[UUID, list[tuple[OutcomeKind, OutcomeKind]]] = defaultdict(list)
     rows = conn.execute(
         "SELECT r.reporter_id, o.evidence->>'agent_outcome', o.outcome::text "
-        "FROM outcomes o JOIN retrievals r ON r.id = o.retrieval_id "
+        "FROM counted_outcomes o JOIN counted_retrievals r ON r.id = o.retrieval_id "
         "WHERE o.evidence->>'outcome_source' = 'hook' AND o.evidence ? 'agent_outcome'"
     ).fetchall()
     for reporter_id, claimed, observed in rows:

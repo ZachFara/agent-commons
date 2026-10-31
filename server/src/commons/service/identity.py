@@ -17,7 +17,7 @@ from commons.domain.errors import NotInitializedError
 from commons.domain.reporters import PrivacyDefault, validate_pseudonym
 from commons.store.connection import Connection
 from commons.store.models import model_id
-from commons.store.reporters import find_reporter, upsert_reporter
+from commons.store.reporters import find_reporter, pseudonym_of, upsert_reporter
 
 UNKNOWN_MODEL = "unknown"
 
@@ -25,6 +25,7 @@ UNKNOWN_MODEL = "unknown"
 # config file on the server. The entry point sets _HOSTED; each request sets _REQUEST_REPORTER.
 _HOSTED: ContextVar[bool] = ContextVar("commons_hosted", default=False)
 _REQUEST_REPORTER: ContextVar[UUID | None] = ContextVar("commons_request_reporter", default=None)
+_REQUEST_TEST: ContextVar[bool] = ContextVar("commons_request_test", default=False)
 
 
 @contextmanager
@@ -38,13 +39,23 @@ def serving_hosted() -> Iterator[None]:
 
 
 @contextmanager
-def acting_as(reporter_id: UUID) -> Iterator[None]:
-    """Attribute everything done inside the block to this reporter (one hosted request)."""
+def acting_as(reporter_id: UUID, *, test: bool = False) -> Iterator[None]:
+    """Attribute everything done inside the block to this reporter (one hosted request).
+
+    With `test` (a test key, decision 0030), what the block logs is excluded from every count.
+    """
     token = _REQUEST_REPORTER.set(reporter_id)
+    test_token = _REQUEST_TEST.set(test)
     try:
         yield
     finally:
+        _REQUEST_TEST.reset(test_token)
         _REQUEST_REPORTER.reset(token)
+
+
+def test_traffic() -> bool:
+    """Whether the current request came with a test key."""
+    return _REQUEST_TEST.get()
 
 
 @dataclass(frozen=True)
@@ -137,3 +148,8 @@ def current_reporter(conn: Connection) -> UUID:
 def current_model(conn: Connection, model: str | None) -> UUID:
     """Return the model row for the calling model (decision 0009), or `unknown`."""
     return model_id(conn, (model or "").strip() or UNKNOWN_MODEL)
+
+
+def current_pseudonym(conn: Connection) -> str:
+    """Return the calling reporter's pseudonym (who corrections are recorded as)."""
+    return pseudonym_of(conn, current_reporter(conn))

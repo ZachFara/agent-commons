@@ -77,6 +77,11 @@ reporters
 - reliability: float. Fraction of this reporter's past outcomes whose agent_assessment matched the observed outcome, recomputed nightly.
 - privacy_default: enum local, entry, full_trace.
 
+corrections (decision 0030)
+- target_table (outcomes, retrievals, searches), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by.
+- Raw observations are never deleted. A correction writes the new value into the row and records the old one; a standing correction of `used` or `outcome` is not overwritten by later hooks or reports.
+- retrievals, outcomes and searches carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes` and `counted_searches` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start.
+
 api_keys (hosted mode only; decision 0032)
 - reporter_id, prefix (first characters, shown in listings), key_hash (SHA-256, unique).
 - scope: enum agent (search, propose, report, status, hooks), review (dashboard reviews), admin (everything).

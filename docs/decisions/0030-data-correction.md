@@ -33,3 +33,13 @@ Consequences: no more hand-written production SQL, and the dataset keeps an audi
 2026-10-31 manual fixes are recorded in PROGRESS.md and would be backfilled into
 `corrections`. Every reader must honour `excluded`. A shared SQL view per table keeps that in
 one place, with a test that each insight query uses the view.
+
+Implementation notes (T45, 2026-10-31):
+- Exclusions are corrections of the `excluded` field, so they share the audit trail and undo.
+  Excluding a task writes one correction per row under a shared `batch_id`; undoing any of
+  them undoes the batch.
+- The CLI has no reporter identity when run against production, so `commons admin correct`
+  takes `--by`. The dashboard records the signed-in key's reporter.
+- Test keys exclude the searches and retrievals they log (and so their outcomes). A test key's
+  proposals still reach the review queue; reject them there.
+- There is no export yet (DESIGN §8); when it exists it reads the same views.

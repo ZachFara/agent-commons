@@ -10,12 +10,15 @@ def record_retrievals(
     hits: list[SearchHit],
     reporter_id: UUID,
     model_id: UUID,
+    *,
+    excluded: bool = False,
 ) -> None:
     """Log one retrievals row per returned entry, with its rank and score at the time."""
     with conn.cursor() as cursor:
         cursor.executemany(
             "INSERT INTO retrievals (entry_id, reporter_id, model_id, task_id, query, "
-            "rank_position, score_at_retrieval) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "rank_position, score_at_retrieval, excluded) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             [
                 (
                     hit.entry_id,
@@ -25,6 +28,7 @@ def record_retrievals(
                     request.query,
                     rank,
                     hit.score,
+                    excluded,
                 )
                 for rank, hit in enumerate(hits, start=1)
             ],
