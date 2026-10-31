@@ -89,6 +89,14 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 |---|---|---|---|
 | T37 | done | Log every search, misses included, by privacy mode; one structured log line per MCP tool call; dashboard Searches page (decision 0024) | Tests: misses logged, query redacted, full_trace extras only in full_trace (DB check too), task mode wins, preview and invalid calls log nothing, call lines carry no query text; page renders |
 
+### Follow-ups (owner, 2026-10-31)
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T38 | todo | `propose` and `search` say which store they used: `"store": "local"` or the hosted server URL. Why: after the owner switched to production, a session that was already open kept its local MCP server while its hooks went to production. It proposed two entries to the local store and reported them as "pending review", while the owner looked at the production queue (2026-10-31). | Tests: local and hosted responses carry the right store; the tool descriptions mention the field |
+| T39 | todo | Investigate: a retrieval made only to check the store counted as a use. In production, entry `1f0aa91a` shows 1 used outcome and a 0% success rate after a session searched only to see whether the store was empty. That session had applied the same fix earlier, so the Stop hook's diff matching probably marked it `used`. Decide whether `used` should only count changes made after the retrieval (2026-10-31) | Cause confirmed with a test that reproduces it; fixed or recorded as accepted |
+| T40 | todo | Tunable duplicate resolution. Today the only guard is the instruction "search before proposing; report on an existing entry instead", so near-identical proposals reach the review queue (owner, 2026-10-31). On `propose`, find similar entries (same full-text match `search` uses, later pgvector) and resolve by a setting: flag the likely duplicate in the queue and dashboard, or link it to the existing entry, or return the existing entry to the agent so it can `report` instead. The similarity threshold and the action are configurable, and the eval measures false merges on distinct entries | Tests: a near-duplicate is detected at the default threshold and not below it; each action behaves as configured; distinct entries with shared words are left alone |
+
 ### DESIGN Phase 3 (after a month of data)
 
 - cq adapter, counterfactual runner, decay/absorption flags, model attribution, `commons export`,
@@ -116,6 +124,171 @@ being enough; whether anyone uses full_trace.
 
 1. T34 baseline, then T35 experiments; invite the friend once propose works reliably.
 2. Next: DESIGN Phase 3 after a month of data (DESIGN §10).
+
+### Under consideration: ship a SKILL.md with the server (owner, 2026-10-31)
+
+Not started. Idea: package a Claude Code skill with the MCP server and hooks, probably as the
+`.claude-plugin/` already planned for Phase 3. Why it might help:
+- The skill's name and description would be one more thing the agent sees before tool search
+  loads our tools, alongside the server instructions and tool names. That might raise how often
+  agents search and propose.
+- The skill body only loads when used, so it could hold more than the 1,500-character
+  instructions budget allows: worked examples of good and bad proposals, and when to report.
+- A plugin install could replace the three commands in the friend invite.
+
+Anticipated next steps:
+1. Check the current Claude Code docs before designing anything. How are skill descriptions
+   loaded, and what are their length limits and listing budget? Can one plugin bundle the MCP
+   server, the hooks and the skill? Which other clients (Codex, Cursor) read skills?
+2. Draft the SKILL.md: a short description written to trigger on library and runtime failures,
+   and a body with the search, propose and report rules plus examples. Count its characters
+   against the documented limits, as `test_mcp_instructions.py` does for the instructions.
+3. Teach the eval harness to install the skill (or plugin) into each isolated session. Then run
+   it as a condition against the shipped wording on Sonnet and Opus with `make eval-confirm`'s
+   13 scenarios. Watch the controls for false proposals, and the extra tokens per session.
+4. Adopt it only if it beats the shipped wording on both models without new control
+   proposals. Then build the plugin and update INSTALL.md and `commons admin invite`.
+5. If the skill carries the detail, decide whether the server instructions can shrink. Clients
+   that don't read skills would still depend on the instructions alone.
+
+### Under consideration: a Stop hook that asks about proposing, every turn (owner, 2026-10-31)
+
+Not started. Evidence comes from one real session (Fable 5.1, a self-hosted Cosmo setup):
+- The agent proposed the first library error unprompted.
+- It missed two later surprises until the owner asked by hand. Cosmo Router returned 401s
+  because the metrics collector defaults to Cosmo Cloud. Keycloak showed "HTTPS required"
+  because of a seeded `sslRequired=external` behind Docker port forwarding.
+- Asked why, the agent gave three reasons. "Before finishing" never comes in a multi-turn
+  session. Neither miss had error text to search. And both were config-default surprises
+  rather than exceptions.
+- In the same session, the existing Stop hook's `report` reminder fired and worked.
+
+What exists: the `nudge` variant in `agent_text.py` blocks Stop once when a session fixed
+failing tests without searching. It has never been measured validly: it never fired in the
+eval because of the piped exit codes fixed in PR #52. It is not shipped.
+
+The idea:
+- Block Stop at most once per turn when that turn shows a failure that was later fixed
+  (failing tests then passing, or a failing command then a working one) and nothing was
+  searched or proposed. Show one line asking whether the fix is commons-worthy. The agent may
+  decline, because the owner rejected forced calls (the forced SessionStart search).
+- Add a manual version: a user-run command (an MCP prompt, e.g. `/commons:record`) that asks
+  the agent to review the session and propose what qualifies. That is what the owner did by
+  hand here.
+
+Anticipated next steps:
+1. Re-run the `nudge` eval now that hooks see piped exit codes.
+2. Widen it from test runs to failing commands, and from once per session to once per turn.
+3. Add multi-turn scenarios to the eval: today every scenario is one `claude -p` prompt, so a
+   per-turn nudge can't show its effect. Include a config-default surprise with no error text.
+4. Measure the manual command separately. It needs no trigger, only a clear checklist.
+5. Related wording candidate: make the trigger cover surprising defaults and error pages, not
+   only error text.
+6. Not pursued: an automatic search on every failing command. It is the same kind of forced
+   call the owner rejected.
+
+### Long-term gaps (owner, 2026-10-31)
+
+Each gap below is its own consideration, roughly in order of how much it would hurt as use
+grows. None is started. A gap becomes a numbered task once the owner picks it. Suggested
+first three: search relevance, editing and retiring entries, and backups with alerting.
+
+#### Under consideration: search relevance
+
+Search matches any shared word: a deploy-check search returned two unrelated Cosmo entries
+because both contain "error". As the store grows, agents get noisy results, report them as
+unhelpful, and learn to ignore commons.
+Next steps:
+1. Measure first: precision of the top results over logged searches (the `searches` table).
+2. Add a minimum-relevance cutoff.
+3. Add embeddings (pgvector is already planned, DESIGN §2).
+4. Add version-aware matching, so an entry about `@apollo/subgraph` 2.15 ranks lower for
+   someone on 3.x.
+
+#### Under consideration: entry lifecycle (edit, supersede, retire)
+
+Entries can only be proposed, approved or rejected. Nothing lets anyone edit one, mark it as
+replaced by a newer entry, or retire it once a library fixes the bug. Phase 3 lists flagging
+stale entries, but there is nothing to act on a flag with.
+Next steps:
+1. Add an admin edit, recorded as a review, so the history stays visible.
+2. Add `superseded_by`, and retire from the dashboard; `retired` already exists in the enum.
+3. Connect the Phase 3 staleness flags to these actions.
+
+#### Under consideration: duplicates
+
+Tracked as T40, tunable duplicate resolution.
+
+#### Under consideration: review bottleneck
+
+Every entry waits for the owner. With Tom and others proposing, that won't scale.
+Next steps:
+1. Allow more than one admin.
+2. Add per-reporter trust levels.
+3. Consider auto-approval after N observed successes, with the threshold measured before
+   it is trusted.
+
+#### Under consideration: entry poisoning and prompt injection
+
+Entries are agent-written text shown to other agents. The untrusted-data note and human
+review help, but a careless or malicious contributor could plant a harmful command in a fix.
+Next steps:
+1. Scan fixes and repros for risky commands (`curl | sh`, `rm -rf`, credential reads), flag
+   them in the review queue, and mark them in search provenance.
+2. Add rate limits per key.
+3. Add a one-step "revoke this key and pull everything this reporter wrote".
+
+#### Under consideration: data correction tooling
+
+Fixing the wrong `used` row from T39 needs a hand-written write to production, and the two
+deploy-check searches stay on the Searches page as noise.
+Next steps:
+1. Let an admin correct or delete outcomes from the dashboard.
+2. Let an admin hide or delete searches and retrievals that were tests.
+3. Record every correction with who made it and why.
+
+#### Under consideration: switching stores
+
+T38 shows the store in responses. Still missing:
+1. `commons join` should warn that sessions already open stay split, with hooks on the new
+   store and tools on the old one, until they are restarted.
+2. A supported way to move good local entries to a hosted store. It was done by hand on
+   2026-10-31: verify, then re-propose.
+
+#### Under consideration: keys and identity
+
+There is no rotation or revocation flow beyond re-inviting, and the owner's admin key was
+printed in a session on 2026-10-31 and is still live.
+Next steps:
+1. Add `commons admin rotate-key` and `commons admin revoke`.
+2. Rotate the owner's key.
+3. Add more than one admin, which overlaps with the review bottleneck above.
+
+#### Under consideration: operations
+
+No backups or restore test for the Neon database have been checked, and there is no alerting
+on server errors. Decision 0022 caps Cloud Run spend at $4; check whether hitting the cap
+stops production, and if so, how anyone would find out. Retention for `searches` and the
+call log is already an open question.
+Next steps:
+1. Confirm Neon's backup and point-in-time restore, and run one restore test.
+2. Alert on 5xx responses and on the budget.
+3. Decide the retention policy.
+
+#### Under consideration: getting agents to propose and report reliably
+
+Tracked by the SKILL.md and per-turn Stop hook considerations above, including the manual
+`/commons:record` command. Clients without hooks, such as Codex and Cursor, will always produce
+`unknown` outcomes, which weakens outcome-based ranking, the project's main point.
+Next step: find out what lifecycle hooks those clients offer.
+
+#### Under consideration: feedback to contributors
+
+Agents and people never learn whether their proposals were approved, rejected or used, so
+there is nothing to reward good contributions.
+Next steps:
+1. A "your entries" view per reporter: status, reviews, retrievals, outcomes.
+2. Possibly a `status` field in the tool response for the caller's own entries.
 
 ## Session log
 
