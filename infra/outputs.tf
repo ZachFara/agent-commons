@@ -15,5 +15,7 @@ output "github_variables" {
     GCP_REGION       = var.region
     GCP_WIF_PROVIDER = google_iam_workload_identity_pool_provider.github.name
     GCP_DEPLOYER     = google_service_account.deployer.email
+    GCP_OPERATIONS   = google_service_account.operations.email
+    BACKUP_BUCKET    = google_storage_bucket.backups.name
   }
 }

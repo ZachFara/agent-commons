@@ -39,7 +39,13 @@ variable "billing_account" {
 }
 
 variable "budget_alert_usd" {
-  description = "Monthly amount that triggers budget alert emails."
+  description = "Monthly budget; alerts at 50% and 90%. Matches the console's Cloud Run cap."
   type        = number
-  default     = 5
+  default     = 4
+}
+
+variable "alert_emails" {
+  description = "Addresses for uptime, error and budget alerts (set in terraform.tfvars)."
+  type        = list(string)
+  default     = []
 }

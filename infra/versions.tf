@@ -24,5 +24,14 @@ provider "google" {
   region  = var.region
 }
 
+# The budgets API needs a quota project when called with user credentials.
+provider "google" {
+  alias                 = "billing"
+  project               = var.project_id
+  region                = var.region
+  billing_project       = var.project_id
+  user_project_override = true
+}
+
 # Reads NEON_API_KEY from the environment.
 provider "neon" {}

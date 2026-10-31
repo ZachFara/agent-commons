@@ -1,0 +1,147 @@
+name: backup
+
+# Decision 0033, runbook in infra/README.md.
+# Nightly: pg_dump production through the read-only `commons_backup` role, prove the dump
+# restores into a scratch Postgres, encrypt it with age, upload it to GCS, then apply
+# retention. Monthly: the restore drill decrypts the newest stored backup and checks it.
+# A failed run emails the owner (GitHub's default for scheduled workflows).
+on:
+  schedule:
+    - cron: "17 7 * * *" # nightly backup
+    - cron: "41 8 2 * *" # monthly restore drill
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: "Run the restore drill after the backup"
+        type: boolean
+        default: false
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+env:
+  BUCKET: ${{ vars.BACKUP_BUCKET }}
+  SCRATCH: postgresql://commons:commons@localhost:5432/commons
+  PG: /usr/lib/postgresql/18/bin
+
+jobs:
+  backup:
+    if: vars.BACKUP_BUCKET != '' && github.event.schedule != '41 8 2 * *'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation
+    services:
+      scratch:
+        image: postgres:18
+        env:
+          POSTGRES_USER: commons
+          POSTGRES_PASSWORD: commons
+          POSTGRES_DB: commons
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commons -d commons"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_OPERATIONS }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Install the Postgres 18 client and age
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -yq postgresql-client-18
+      - name: Dump production
+        run: |
+          BACKUP_URL="$(gcloud secrets versions access latest --secret agent-commons-production-backup-url)"
+          echo "::add-mask::$BACKUP_URL"
+          "$PG/pg_dump" --format=custom --no-owner --no-privileges -d "$BACKUP_URL" -f commons.dump
+          uv run python tools/backup_counts.py count "$BACKUP_URL" > live.json
+      - name: Check the dump restores and migrates
+        run: |
+          "$PG/pg_restore" --no-owner --no-privileges --exit-on-error -d "$SCRATCH" commons.dump
+          uv run python tools/backup_counts.py count "$SCRATCH" > counts.json
+          uv run python tools/backup_counts.py compare "$SCRATCH" live.json --tolerance 0.05
+          COMMONS_DATABASE_URL="$SCRATCH" uv run commons migrate
+      - name: Encrypt and upload
+        env:
+          RECIPIENTS: ${{ vars.BACKUP_AGE_RECIPIENTS }}
+        run: |
+          test -n "$RECIPIENTS"
+          args=(); for r in $RECIPIENTS; do args+=(-r "$r"); done
+          age "${args[@]}" -o commons.dump.age commons.dump
+          rm commons.dump
+          stamp="$(date -u +%Y-%m-%dT%H%MZ)"
+          gcloud storage cp commons.dump.age counts.json "gs://$BUCKET/daily/$stamp/"
+          if [ "$(date -u +%d)" = 01 ]; then
+            gcloud storage cp commons.dump.age counts.json "gs://$BUCKET/monthly/$stamp/"
+          fi
+      - name: Apply retention
+        run: |
+          URL="$(gcloud secrets versions access latest --secret agent-commons-production-database-url)"
+          echo "::add-mask::$URL"
+          COMMONS_DATABASE_URL="$URL" uv run commons retain
+
+  drill:
+    needs: backup
+    if: >-
+      always() && vars.BACKUP_BUCKET != '' && needs.backup.result != 'failure'
+      && (github.event.schedule == '41 8 2 * *' || inputs.drill)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      scratch:
+        image: postgres:18
+        env:
+          POSTGRES_USER: commons
+          POSTGRES_PASSWORD: commons
+          POSTGRES_DB: commons
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commons -d commons"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_OPERATIONS }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Install the Postgres 18 client and age
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -yq postgresql-client-18
+      - name: Fetch and decrypt the newest backup
+        env:
+          IDENTITY: ${{ secrets.BACKUP_DRILL_IDENTITY }}
+        run: |
+          newest="$(gcloud storage ls "gs://$BUCKET/daily/" | sort | tail -1)"
+          echo "Drilling $newest"
+          gcloud storage cp "${newest}commons.dump.age" "${newest}counts.json" .
+          umask 077 && printf '%s\n' "$IDENTITY" > drill.key
+          age -d -i drill.key -o commons.dump commons.dump.age
+          rm drill.key
+      - name: Restore, compare exactly, migrate
+        run: |
+          "$PG/pg_restore" --no-owner --no-privileges --exit-on-error -d "$SCRATCH" commons.dump
+          uv run python tools/backup_counts.py compare "$SCRATCH" counts.json
+          COMMONS_DATABASE_URL="$SCRATCH" uv run commons migrate

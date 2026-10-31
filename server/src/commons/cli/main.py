@@ -19,7 +19,7 @@ from commons.domain.errors import (
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchRequest
-from commons.service import doctor, keys, ranking, reviews, seeds
+from commons.service import doctor, keys, ranking, retention, reviews, seeds
 from commons.service import search as search_service
 from commons.service import status as status_service
 from commons.service.hook_client import RemoteBackend, remote_client
@@ -235,6 +235,13 @@ def _rank(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _retain(_args: argparse.Namespace) -> int:
+    with connect() as conn:
+        folded = retention.apply_retention(conn)
+    sys.stdout.write(f"folded {folded} searches older than 180 days into monthly counts\n")
+    return 0
+
+
 def _hook_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("event", choices=sorted(HANDLERS), help="Hook event; payload on stdin.")
 
@@ -292,6 +299,7 @@ COMMANDS: dict[str, Command] = {
     "search": Command("Preview search results (no retrieval logged).", _search, _search_arguments),
     "show": Command("Show one entry.", _show, _show_arguments),
     "rank": Command("Write ranking snapshots (runs daily on its own).", _rank),
+    "retain": Command("Apply data retention (runs nightly in production).", _retain),
     "hook": Command("Run a Claude Code hook (used by hooks.json).", _hook, _hook_arguments),
     "install-hooks": Command(
         "Add Agent Commons hooks to Claude Code settings.", _install_hooks, _install_hooks_arguments
