@@ -34,3 +34,8 @@ def insert_entry(
         ),
     )
     return returned_id(cursor.fetchone())
+
+
+def approved_fixes(conn: Connection) -> list[str]:
+    """Every approved entry's fix text."""
+    return [fix for (fix,) in conn.execute("SELECT fix FROM entries WHERE status = 'approved'")]

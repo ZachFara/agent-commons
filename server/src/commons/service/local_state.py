@@ -7,6 +7,8 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from commons.domain.usage import ArtifactFrequencies
+
 
 def state_dir() -> Path:
     """Return $COMMONS_STATE_DIR, else $XDG_STATE_HOME/agent-commons (~/.local/state)."""
@@ -59,3 +61,29 @@ def prune_spools(now: float | None = None) -> int:
             path.unlink()
             removed += 1
     return removed
+
+
+FREQUENCIES_MAX_AGE = 86400  # seconds: hooks fetch artifact counts once a day (decision 0036)
+
+
+def cached_frequencies(now: float | None = None) -> ArtifactFrequencies | None:
+    """Return the artifact counts fetched in the last day, if any."""
+    path = state_dir() / "artifact-frequencies.json"
+    if not path.exists():
+        return None
+    age = (now if now is not None else time.time()) - path.stat().st_mtime
+    if age > FREQUENCIES_MAX_AGE:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return ArtifactFrequencies(int(data["entries"]), dict(data["counts"]))
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def save_frequencies(frequencies: ArtifactFrequencies) -> None:
+    """Cache artifact counts for a day."""
+    path = state_dir() / "artifact-frequencies.json"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    data = {"entries": frequencies.entries, "counts": dict(frequencies.counts)}
+    path.write_text(json.dumps(data), encoding="utf-8")

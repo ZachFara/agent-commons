@@ -63,8 +63,12 @@ def test_top_entries_rank_by_success_rate_then_sample_size(
         for result in results:
             factories.outcome(db, entry_id, reporter, result)
 
-    top = call(server, "status", {})["top_entries"]
     ours = {str(half), str(always), str(once), str(rejected)}
+    # Other tests commit entries with outcomes; hide them so the top list is only ours.
+    db.execute(
+        "UPDATE entries SET status = 'retired' WHERE NOT (id::text = ANY(%s))", (list(ours),)
+    )
+    top = call(server, "status", {})["top_entries"]
     ranked = [
         (t["symptom"], t["success_rate"], t["used_outcomes"]) for t in top if t["entry_id"] in ours
     ]

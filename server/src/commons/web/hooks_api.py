@@ -7,6 +7,7 @@ content here even if it tried (decision 0016).
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from starlette.routing import Route
 from commons.domain.errors import InvalidInputError, NotPermittedError
 from commons.domain.keys import KeyHolder
 from commons.domain.outcomes import Usage
+from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
 from commons.service import hooks
 from commons.service.identity import acting_as
@@ -41,6 +43,7 @@ def hook_routes(connection: ConnectionFactory) -> list[Route]:
         "tool-use": _tool_use,
         "retrievals": _retrievals,
         "stop": _stop,
+        "artifact-frequencies": _artifact_frequencies,
     }
     return [
         Route(
@@ -181,13 +184,28 @@ def _retrievals(conn: Connection, body: Body) -> Body:
     }
 
 
+def _artifact_frequencies(conn: Connection, _body: Body) -> Body:
+    frequencies = hooks.artifact_frequencies(conn)
+    return {"entries": frequencies.entries, "counts": dict(frequencies.counts)}
+
+
 def _stop(conn: Connection, body: Body) -> Body:
     used_in = body.get("used", {})
     if not isinstance(used_in, dict) or not all(v in _USAGES for v in used_in.values()):
         msg = "used must map retrieval ids to yes, partial, no, or null."
         raise InvalidInputError(msg)
-    used: dict[UUID, Usage | None] = {UUID(k): v for k, v in used_in.items()}
-    result = hooks.finish_turn(conn, _session_id(body), _model(body), used)
+    matched_in = body.get("matched_at")  # absent from hooks older than decision 0036
+    if matched_in is not None and not isinstance(matched_in, dict):
+        msg = "matched_at must map retrieval ids to ISO times or null."
+        raise InvalidInputError(msg)
+    matched = matched_in or {}
+    used = {
+        UUID(k): UseObservation(v, datetime.fromisoformat(matched[k]) if matched.get(k) else None)
+        for k, v in used_in.items()
+    }
+    result = hooks.finish_turn(
+        conn, _session_id(body), _model(body), used, paired=matched_in is not None
+    )
     if result is None:
         return {"task_id": None, "unreported": []}
     return {

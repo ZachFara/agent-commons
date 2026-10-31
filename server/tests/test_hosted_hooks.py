@@ -2,6 +2,7 @@
 
 import io
 import json
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -23,7 +24,7 @@ from commons.service import search as search_service
 from commons.service.hook_client import RemoteBackend
 from commons.service.identity import acting_as
 from commons.service.keys import create_key
-from commons.service.local_state import read_spool
+from commons.service.local_state import cached_frequencies, read_spool
 from commons.store.connection import Connection
 from commons.store.reporters import find_reporter
 from commons.web import app as web
@@ -55,7 +56,7 @@ def client(app: Starlette, key: str | None) -> TestClient:
 
 
 def edit(session_id: str, text: str) -> ToolUse:
-    return ToolUse(session_id, "Edit", None, "/Users/jdoe/req.txt", text, None)
+    return ToolUse(session_id, "Edit", None, "/Users/jdoe/requirements.txt", text, None)
 
 
 def bash(session_id: str, command: str, exit_code: int) -> ToolUse:
@@ -99,6 +100,54 @@ def test_a_session_end_to_end_over_http(app: Starlette, db: psycopg.Connection) 
 
 def post(app: Starlette, key: str | None, step: str, body: dict[str, Any]) -> httpx2.Response:
     return client(app, key).post(f"/api/hooks/{step}", json=body)
+
+
+@pytest.mark.usefixtures("state")
+def test_hooks_from_before_0036_are_recorded_unpaired(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    """Installed hooks send no matched_at; a pass after the retrieval still counts for them."""
+    key = create_key(db, "old-hooks", admin=False)
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None)
+    reporter = find_reporter(db, "old-hooks")
+    assert reporter is not None
+    word = f"oldhooks{uuid.uuid4().hex[:8]}"
+    factories.entry(db, reporter, symptom=word, fix=FIX)
+    with acting_as(reporter):
+        search_service.search(db, SearchRequest(word, task_id, None, 5), "claude-x")
+    hook_client.on_tool_use(backend, bash(session, "pytest -q", 0))
+    (item,) = backend.retrievals(session)
+
+    old_body = {"session_id": session, "used": {str(item.retrieval_id): "yes"}}
+    assert post(app, key, "stop", old_body).status_code == 200
+
+    row = db.execute(
+        "SELECT used::text, outcome::text FROM outcomes WHERE retrieval_id = %s",
+        (item.retrieval_id,),
+    ).fetchone()
+    assert row == ("yes", "tests_passed")
+
+
+@pytest.mark.usefixtures("state")
+def test_artifact_frequencies_are_served_and_cached_for_a_day(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = create_key(db, "freq-dev", admin=False)
+    reporter = find_reporter(db, "freq-dev")
+    assert reporter is not None
+    rare = f"rare{uuid.uuid4().hex[:6]}==1.0"
+    factories.entry(db, reporter, fix=f"Pin `{rare}`.")
+    backend = RemoteBackend(client(app, key))
+
+    first = backend.artifact_frequencies()
+
+    assert first.counts[rare] == 1
+    assert first.entries >= 1
+    factories.entry(db, reporter, fix=f"Also pin `{rare}`.")
+    assert backend.artifact_frequencies().counts[rare] == 1  # cached
+    assert cached_frequencies(now=time.time() + 2 * 86400) is None
 
 
 @pytest.mark.parametrize("key", [None, "ac_unknown"])
