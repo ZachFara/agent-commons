@@ -143,6 +143,42 @@ Anticipated next steps:
 5. If the skill carries the detail, decide whether the server instructions can shrink. Clients
    that don't read skills would still depend on the instructions alone.
 
+### Under consideration: a Stop hook that asks about proposing, every turn (owner, 2026-10-31)
+
+Not started. Evidence comes from one real session (Fable 5.1, a self-hosted Cosmo setup):
+- The agent proposed the first library error unprompted.
+- It missed two later surprises until the owner asked by hand. Cosmo Router returned 401s
+  because the metrics collector defaults to Cosmo Cloud. Keycloak showed "HTTPS required"
+  because of a seeded `sslRequired=external` behind Docker port forwarding.
+- Asked why, the agent gave three reasons. "Before finishing" never comes in a multi-turn
+  session. Neither miss had error text to search. And both were config-default surprises
+  rather than exceptions.
+- In the same session, the existing Stop hook's `report` reminder fired and worked.
+
+What exists: the `nudge` variant in `agent_text.py` blocks Stop once when a session fixed
+failing tests without searching. It has never been measured validly: it never fired in the
+eval because of the piped exit codes fixed in PR #52. It is not shipped.
+
+The idea:
+- Block Stop at most once per turn when that turn shows a failure that was later fixed
+  (failing tests then passing, or a failing command then a working one) and nothing was
+  searched or proposed. Show one line asking whether the fix is commons-worthy. The agent may
+  decline, because the owner rejected forced calls (the forced SessionStart search).
+- Add a manual version: a user-run command (an MCP prompt, e.g. `/commons:record`) that asks
+  the agent to review the session and propose what qualifies. That is what the owner did by
+  hand here.
+
+Anticipated next steps:
+1. Re-run the `nudge` eval now that hooks see piped exit codes.
+2. Widen it from test runs to failing commands, and from once per session to once per turn.
+3. Add multi-turn scenarios to the eval: today every scenario is one `claude -p` prompt, so a
+   per-turn nudge can't show its effect. Include a config-default surprise with no error text.
+4. Measure the manual command separately. It needs no trigger, only a clear checklist.
+5. Related wording candidate: make the trigger cover surprising defaults and error pages, not
+   only error text.
+6. Not pursued: an automatic search on every failing command. It is the same kind of forced
+   call the owner rejected.
+
 ## Session log
 
 - 2026-10-24: repo setup (tooling, checks, AGENTS.md, decisions 0001-0004). Initial commit on
