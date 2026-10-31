@@ -29,6 +29,7 @@ from commons.domain.keys import KEY_SCOPES, KeyInfo, KeyOptions, KeyScope, parse
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchRequest
+from commons.domain.trust import ROLES
 from commons.service import (
     corrections,
     doctor,
@@ -38,6 +39,7 @@ from commons.service import (
     retention,
     reviews,
     seeds,
+    trust,
 )
 from commons.service import search as search_service
 from commons.service import status as status_service
@@ -150,6 +152,9 @@ def _admin_arguments(parser: argparse.ArgumentParser) -> None:
     _key_arguments(key)
     correct = actions.add_parser("correct", help="Correct or exclude recorded data (audited).")
     _correct_arguments(correct)
+    role = actions.add_parser("role", help="Set a reporter's role: contributor|reviewer|admin.")
+    role.add_argument("pseudonym")
+    role.add_argument("role", choices=ROLES)
     revoke = actions.add_parser("revoke", help="Revoke a reporter's keys; --purge their data.")
     revoke.add_argument("pseudonym")
     revoke.add_argument("--purge", action="store_true", help="Also retire, exclude, suspend.")
@@ -197,7 +202,7 @@ def _key_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _admin(args: argparse.Namespace) -> int:
     action: str = args.admin_action
-    delegated = {"key": _key, "correct": _correct, "revoke": _revoke}
+    delegated = {"key": _key, "correct": _correct, "revoke": _revoke, "role": _role}
     if action in delegated:
         return delegated[action](args)
     pseudonym: str = args.pseudonym
@@ -244,6 +249,7 @@ def _key(args: argparse.Namespace) -> int:
                 expires_in=parse_duration(args.expires) if args.expires else None,
                 test=args.test,
             )
+            trust.check_scope(conn, args.pseudonym, args.scope)
             new = keys.issue_key(conn, args.pseudonym, cast("KeyScope", args.scope), options)
             note = "other keys keep working"
     info = new.info
@@ -255,6 +261,26 @@ def _key(args: argparse.Namespace) -> int:
     else:
         sys.stdout.write(new.key + "\n")
     return 0
+
+
+def _role(args: argparse.Namespace) -> int:
+    with connect() as conn:
+        role = trust.set_role(conn, args.pseudonym, args.role)
+    sys.stdout.write(f"{args.pseudonym} is now a {role}\n")
+    return 0
+
+
+def _queue_check_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--max-age", default="3d", help="Fail when the oldest item is older.")
+
+
+def _queue_check(args: argparse.Namespace) -> int:
+    with connect() as conn:
+        waiting, oldest = trust.queue_health(conn)
+    limit_days = parse_duration(args.max_age).total_seconds() / 86400
+    age = "nothing waiting" if oldest is None else f"oldest waiting {oldest:.1f} days"
+    sys.stdout.write(f"review queue: {waiting} waiting, {age}\n")
+    return 1 if oldest is not None and oldest > limit_days else 0
 
 
 def _revoke(args: argparse.Namespace) -> int:
@@ -487,6 +513,9 @@ COMMANDS: dict[str, Command] = {
     "search": Command("Preview search results (no retrieval logged).", _search, _search_arguments),
     "show": Command("Show one entry.", _show, _show_arguments),
     "rank": Command("Write ranking snapshots (runs daily on its own).", _rank),
+    "queue-check": Command(
+        "Exit 1 if the review queue's oldest item is too old.", _queue_check, _queue_check_arguments
+    ),
     "retain": Command("Apply data retention (runs nightly in production).", _retain),
     "hook": Command("Run a Claude Code hook (used by hooks.json).", _hook, _hook_arguments),
     "install-hooks": Command(

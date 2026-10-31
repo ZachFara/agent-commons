@@ -158,7 +158,7 @@ def test_revoke_command(
     who = f"rev-{uuid.uuid4().hex[:6]}"
     admin = f"adm-{uuid.uuid4().hex[:6]}"
     assert main(["admin", "key", "create", who]) == 0
-    assert main(["admin", "key", "create", admin, "--scope", "admin"]) == 0
+    assert main(["admin", "create-key", admin, "--admin"]) == 0
     capsys.readouterr()
 
     assert main(["admin", "revoke", who, "--purge", "--reason", "spam"]) == 1

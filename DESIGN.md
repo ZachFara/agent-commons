@@ -43,6 +43,7 @@ entries
 - repro: text, nullable. A minimal failing case that passes with the fix.
 - domains: text[], at least one. Named as in cq (decision 0008).
 - status: enum pending, approved, rejected, retired. Follows the latest human review if any, else the latest agent review. Admins retire and restore entries as human reviews (decision 0026).
+- provisional, sampled, confirmed_at: an entry from a trusted contributor (TL1, TL2) goes live provisionally with source `auto`; a sample of them, and every entry with risk findings or likely duplicates, waits in the review queue; others' observed successes confirm it (decision 0028).
 - revision: integer, the current version of the text. Every version is kept in `entry_revisions` (text, source, editor, reason, redaction report); retrievals record the revision they showed.
 - superseded_by: entry id, nullable. A superseded entry never appears in search.
 - aliases: text[]. Wording of duplicates merged into this entry; search matches it like the symptom. duplicate_candidates (up to 3 {entry_id, score, retry}) and duplicate_of are set on propose for the reviewer (decision 0027); `distinct_pairs` remembers pairs a reviewer kept apart.
@@ -81,6 +82,8 @@ reporters
 - pseudonym: text, unique. No email, no real name.
 - reliability: float. Fraction of this reporter's past outcomes whose agent_assessment matched the observed outcome, recomputed nightly.
 - privacy_default: enum local, entry, full_trace.
+- role: enum contributor, reviewer, admin. Review keys need reviewer, admin keys admin.
+- trust_level: 0-2, recomputed with `commons rank` from the reporter's own record (decision 0028). suspended_at: set by a purge (decision 0029).
 
 corrections (decision 0030)
 - target_table (outcomes, retrievals, searches), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by.

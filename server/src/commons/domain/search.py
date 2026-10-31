@@ -71,6 +71,7 @@ class SearchHit:
     revision: int = 1
     fixed_in: dict[str, str] | None = None  # set only on a retired entry shown to older versions
     risks: tuple[str, ...] = ()  # labels from the risk scanner (decision 0029)
+    confirmed: bool = False  # provisional, but confirmed by others' observed outcomes (0028)
 
     def provenance(self) -> str:
         """One line on where the entry came from and how it has held up."""
@@ -85,7 +86,7 @@ class SearchHit:
         )
         parts = [f"proposed by {self.proposed_by_model}", rate, confirmed]
         if not self.human_reviewed:
-            parts.append("unreviewed")
+            parts.append("confirmed by outcomes" if self.confirmed else "unreviewed")
         if self.risks:
             parts.append(f"contains: {', '.join(self.risks)}; review before running")
         if self.fixed_in:

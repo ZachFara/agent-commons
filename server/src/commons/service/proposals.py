@@ -7,6 +7,7 @@ from commons.privacy.risks import scan_proposal
 from commons.service.duplicates import flag_duplicates
 from commons.service.identity import current_model, current_reporter
 from commons.service.rates import limit
+from commons.service.trust import after_propose
 from commons.store.connection import Connection
 from commons.store.entries import insert_entry, set_risk_report
 
@@ -41,5 +42,8 @@ def propose(conn: Connection, proposal: Proposal, model: str | None) -> ProposeR
         )
         set_risk_report(conn, entry_id, risk_report)
         # Flagged for the reviewer only: the reply to the agent is unchanged (decision 0027).
-        flag_duplicates(conn, entry_id, redacted, reporter)
-    return ProposeResult(entry_id=entry_id, status="pending", redaction_report=redaction_report)
+        candidates = flag_duplicates(conn, entry_id, redacted, reporter)
+        risky = bool(risk_report.get("findings"))
+        approved = after_propose(conn, entry_id, reporter, risky=risky, duplicate=bool(candidates))
+    status: EntryStatus = "approved" if approved else "pending"
+    return ProposeResult(entry_id=entry_id, status=status, redaction_report=redaction_report)

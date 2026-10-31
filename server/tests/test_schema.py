@@ -20,8 +20,9 @@ ENUMS = {
         "abandoned",
         "unknown",
     ],
-    "review_decision": ["approve", "reject", "retire", "restore"],
-    "review_source": ["agent", "human"],
+    "review_decision": ["approve", "reject", "retire", "restore", "reopen"],
+    "review_source": ["agent", "human", "auto"],
+    "reporter_role": ["contributor", "reviewer", "admin"],
 }
 
 COMMON = {"id", "created_at", "updated_at"}
@@ -50,6 +51,9 @@ TABLES = {
         "duplicate_candidates",
         "duplicate_of",
         "risk_report",
+        "provisional",
+        "sampled",
+        "confirmed_at",
     },
     "purges": {
         "reporter_id",
@@ -125,7 +129,14 @@ TABLES = {
         "wall_clock_seconds",
         "excluded",
     },
-    "reporters": {"pseudonym", "reliability", "privacy_default", "suspended_at"},
+    "reporters": {
+        "pseudonym",
+        "reliability",
+        "privacy_default",
+        "suspended_at",
+        "role",
+        "trust_level",
+    },
     "api_keys": {
         "reporter_id",
         "prefix",

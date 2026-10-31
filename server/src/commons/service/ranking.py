@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from commons.ranking.reliability import reliability
 from commons.ranking.score import score
+from commons.service.trust import confirm_by_outcomes, update_trust_levels
 from commons.store.connection import Connection
 from commons.store.ranking import (
     entry_stats,
@@ -27,6 +28,8 @@ def rank(conn: Connection) -> int:
     with conn.transaction():
         pairs = reliability_pairs(conn)
         set_reliabilities(conn, {reporter: reliability(p) for reporter, p in pairs.items()})
+        update_trust_levels(conn)
+        confirm_by_outcomes(conn)
         samples = outcome_samples(conn)
         stats = entry_stats(conn)
         for entry_id, retrievals_30d, used_rate in stats:

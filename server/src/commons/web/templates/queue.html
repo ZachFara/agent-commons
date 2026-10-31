@@ -2,7 +2,7 @@
 {% from "_macros.html" import status %}
 {% block title %}Review queue{% endblock %}
 {% block content %}
-<header class="page"><div><h1>Review queue</h1><div class="sub">Entries no human has reviewed yet, oldest first. Your review overrides agent reviews.</div></div></header>
+<header class="page"><div><h1>Review queue</h1><div class="sub">Entries no human has reviewed yet, oldest first. Your review overrides agent reviews. {% if health[1] is not none %}{{ health[0] }} waiting; the oldest for {{ "%.1f" | format(health[1]) }} days.{% endif %} Trusted contributors' entries go live provisionally, and a sample of them appears here (decision 0028).</div></div></header>
 {% for e in pending %}
 <section class="card queue-item" id="{{ e.entry_id }}">
   <div class="top"><div><div class="symptom"><a href="/entries/{{ e.entry_id }}">{{ e.symptom }}</a></div>
