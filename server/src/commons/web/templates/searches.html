@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Searches{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Searches</h1><div class="sub">What agents looked for, starting with what the store didn't have. Queries are redacted. Last 30 days unless noted.</div></div></header>
+<div class="grid kpis">
+  <div class="card kpi"><div class="label">Searches</div><div class="value">{{ totals.searches }}</div>
+    <div class="note">by {{ totals.reporters }} reporter{{ "" if totals.reporters == 1 else "s" }}</div></div>
+  <div class="card kpi"><div class="label">Found nothing</div><div class="value">{{ totals.misses }}</div>
+    <div class="note">{% if totals.searches %}{{ "%.0f" | format(totals.misses / totals.searches * 100) }}% of searches{% else %}no searches yet{% endif %}</div></div>
+</div>
+<section class="card"><h2>Searched, not found <span class="hint">candidates for new entries</span></h2>
+  {% if missed %}<div class="table-wrap"><table>
+  <thead><tr><th>Query</th><th>Language</th><th class="num">Times</th><th class="num">Reporters</th><th>Last searched</th></tr></thead><tbody>
+  {% for m in missed %}<tr><td class="clip mono" title="{{ m.query }}">{{ m.query }}</td><td>{{ m.languages or "–" }}</td>
+    <td class="num">{{ m.times }}</td><td class="num">{{ m.reporters }}</td>
+    <td style="white-space: nowrap">{{ m.last_seen.strftime("%b %d %H:%M") }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">Every search found something, or nobody has searched yet.</div>{% endif %}</section>
+<section class="card" style="margin-top: 16px"><h2>Recent searches <span class="hint">newest first, all time</span></h2>
+  {% if recent %}<div class="table-wrap"><table>
+  <thead><tr><th>When</th><th>Reporter</th><th>Model</th><th>Query</th><th class="num">Results</th><th>Privacy</th></tr></thead><tbody>
+  {% for s in recent %}<tr><td style="white-space: nowrap">{{ s.created_at.strftime("%b %d %H:%M") }}</td><td>{{ s.reporter }}</td><td>{{ s.model }}</td>
+    <td class="clip mono" title="{{ s.query }}">{{ s.query }}</td>
+    <td class="num">{% if s.hit_count %}{{ s.hit_count }}{% else %}<span class="badge warn">none</span>{% endif %}</td>
+    <td><span class="badge soft">{{ s.privacy | replace("_", " ") }}</span></td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">No searches yet.</div>{% endif %}</section>
+{% endblock %}

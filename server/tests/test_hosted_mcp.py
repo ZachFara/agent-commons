@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -72,6 +73,19 @@ def test_a_valid_key_acts_as_its_reporter(hosted: FastMCP, db: psycopg.Connectio
         (result["entry_id"],),
     ).fetchone()
     assert row == ("alice-hosted",)
+
+
+def test_hosted_calls_log_the_key_holder(
+    hosted: FastMCP, db: psycopg.Connection, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="commons.calls")
+    key = create_key(db, "dana-hosted", admin=False)
+    (reporter_id,) = db.execute(
+        "SELECT id::text FROM reporters WHERE pseudonym = 'dana-hosted'"
+    ).fetchone() or ("",)
+    call_http(hosted, key, "status", {})
+    logged = [json.loads(r.getMessage()) for r in caplog.records if r.name == "commons.calls"]
+    assert [(line["tool"], line["reporter_id"]) for line in logged] == [("status", reporter_id)]
 
 
 def http_status(server: FastMCP, key: str | None) -> int:

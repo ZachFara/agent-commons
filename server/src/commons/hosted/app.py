@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import Mount, Route
 
+from commons.mcp.call_log import log_calls_to_stdout
 from commons.mcp.server import build_server
 from commons.service.identity import serving_hosted
 from commons.store.connection import connect
@@ -57,6 +58,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             apply_migrations(conn)
     host: str = args.host
     port: int = args.port
+    log_calls_to_stdout()
     with serving_hosted():
         # Behind a proxy (Cloud Run, Caddy) trust X-Forwarded-Proto so CSRF checks see https.
         uvicorn.run(

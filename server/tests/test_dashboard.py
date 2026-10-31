@@ -5,12 +5,14 @@ from contextlib import contextmanager
 import httpx2
 import psycopg
 import pytest
+from fastmcp import FastMCP
 from starlette.testclient import TestClient
 
 import factories
 from commons.service.ranking import rank
 from commons.store.connection import Connection
 from commons.web import app as web
+from mcp_client import call
 
 BASE = "http://127.0.0.1:8765"
 
@@ -53,6 +55,21 @@ def test_every_page_renders_with_data(
     assert "error resolved" in entry
     for path in ("/activity", "/people"):
         assert client.get(path).status_code == 200
+
+
+def test_searches_page_lists_what_was_not_found(
+    client: TestClient, server: FastMCP, reporter: uuid.UUID
+) -> None:
+    del reporter
+    missing = "QuuxError: dashboard-never-documented <script>"
+    for _ in range(2):
+        call(server, "search", {"query": missing, "task_id": str(uuid.uuid4())})
+
+    page = client.get("/searches").text
+    assert "Searched, not found" in page
+    assert "QuuxError: dashboard-never-documented &lt;script&gt;" in page
+    assert "<script>" not in page.split("<body>", 1)[1]
+    assert 'href="/searches" class="active"' in page
 
 
 def test_entries_filter_by_status_and_unknown_entry_is_404(

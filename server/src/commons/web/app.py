@@ -82,6 +82,17 @@ class Dashboard:
         data = await self._load(lambda conn: {"tasks": insights.tasks(conn)})
         return self._render(request, "activity.html", "activity", data)
 
+    async def searches(self, request: Request) -> Response:
+        """Render what agents searched for, starting with what the store didn't have."""
+        data = await self._load(
+            lambda conn: {
+                "totals": insights.search_totals(conn),
+                "missed": insights.missed_queries(conn),
+                "recent": insights.recent_searches(conn),
+            }
+        )
+        return self._render(request, "searches.html", "searches", data)
+
     async def people(self, request: Request) -> Response:
         """Render reporters and models."""
         data = await self._load(
@@ -192,6 +203,7 @@ def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute
         ("/entries", pages.entries, ["GET"]),
         ("/entries/{entry_id:uuid}", pages.entry, ["GET"]),
         ("/activity", pages.activity, ["GET"]),
+        ("/searches", pages.searches, ["GET"]),
         ("/people", pages.people, ["GET"]),
         ("/entries/{entry_id:uuid}/review", pages.review, ["POST"]),
     ]
