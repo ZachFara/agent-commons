@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -26,7 +27,8 @@ def spool_path(session_id: str) -> Path:
 
 
 def append_spool(session_id: str, record: dict[str, object]) -> None:
-    """Append one record to the task's spool, readable only by this user."""
+    """Append one record, stamped with when it happened, to the task's spool (this user only)."""
+    record = {**record, "at": datetime.now(UTC).isoformat()}
     path = spool_path(session_id)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
