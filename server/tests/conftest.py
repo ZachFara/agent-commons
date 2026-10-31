@@ -30,6 +30,16 @@ ADMIN_URL = os.environ.get(
 )
 
 
+@pytest.fixture(autouse=True)
+def no_machine_identity(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never read this machine's real config or hook state: tests set their own."""
+    isolated = tmp_path_factory.mktemp("machine")
+    monkeypatch.setenv("COMMONS_CONFIG", str(isolated / "config.json"))
+    monkeypatch.setenv("COMMONS_STATE_DIR", str(isolated / "state"))
+
+
 @pytest.fixture(scope="session")
 def database_url() -> Iterator[str]:
     """Create and migrate a throwaway database for this test session; return its URL."""

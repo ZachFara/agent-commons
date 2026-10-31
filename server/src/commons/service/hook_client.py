@@ -183,6 +183,16 @@ class RemoteBackend:
             searched=bool(result.get("searched")),
         )
 
+    def similar(self, text: str) -> list[tuple[str, float]]:
+        """Return the server's live entries most like `text` (for imports, decision 0031)."""
+        items = self._post("similar", {"text": text})["similar"]
+        return [(str(item["entry_id"]), float(item["score"])) for item in items]
+
+    def import_entry(self, entry: dict[str, Any], origin: dict[str, Any]) -> str:
+        """Propose a local entry on the server; return the new entry's id."""
+        result = self._post("import", {"entry": entry, "imported_from": origin})
+        return str(result["entry_id"])
+
     def artifact_frequencies(self) -> ArtifactFrequencies:
         """Fetch artifact counts from the server, at most once a day; empty if unavailable."""
         if (cached := cached_frequencies()) is not None:

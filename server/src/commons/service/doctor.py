@@ -19,7 +19,7 @@ from commons.domain.errors import (
 )
 from commons.service.hook_install import default_settings_path, is_commons_hook
 from commons.service.identity import config_path, current_reporter, hosted_server, read_config
-from commons.service.local_state import state_dir
+from commons.service.local_state import active_sessions, state_dir
 from commons.store.connection import Connection
 from commons.store.migrate import pending_migrations
 
@@ -49,6 +49,7 @@ def run_checks(connect: Connect, ping: Ping) -> list[Check]:
     else:
         checks.append(_server(server, ping))
     checks += [_hooks(), _mcp(hosted=server is not None), _hook_log(), _duplicates()]
+    checks.append(_sessions(server[0] if server else "local"))
     return checks
 
 
@@ -168,3 +169,15 @@ def _duplicates() -> Check:
     except InvalidInputError as error:
         return Check("duplicates", "fail", str(error))
     return Check("duplicates", "ok", f"{current.action} at similarity {current.threshold}")
+
+
+def _sessions(store: str) -> Check:
+    """Warn about sessions still using another store after a switch (decision 0031)."""
+    others = [s for s in active_sessions() if s not in {store, "unknown"}]
+    if others:
+        return Check(
+            "sessions",
+            "warn",
+            f"{len(others)} session(s) active in the last hour use another store; restart them",
+        )
+    return Check("sessions", "ok", "every recent session uses this store")

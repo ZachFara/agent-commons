@@ -5,6 +5,7 @@ content here even if it tried (decision 0016).
 """
 
 import re
+import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
 from datetime import datetime
@@ -16,12 +17,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from commons.domain.entries import Proposal
 from commons.domain.errors import InvalidInputError, NotPermittedError
 from commons.domain.keys import KeyHolder
 from commons.domain.outcomes import Usage
 from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
-from commons.service import hooks
+from commons.service import hooks, imports
 from commons.service.identity import acting_as
 from commons.service.keys import check_key
 from commons.store.connection import Connection
@@ -44,6 +46,8 @@ def hook_routes(connection: ConnectionFactory) -> list[Route]:
         "retrievals": _retrievals,
         "stop": _stop,
         "artifact-frequencies": _artifact_frequencies,
+        "similar": _similar,
+        "import": _import,
     }
     return [
         Route(
@@ -182,6 +186,33 @@ def _retrievals(conn: Connection, body: Body) -> Body:
             for item in items
         ]
     }
+
+
+def _similar(conn: Connection, body: Body) -> Body:
+    text = body["text"]
+    if not isinstance(text, str) or not text.strip():
+        msg = "text must be a non-empty string."
+        raise InvalidInputError(msg)
+    return {"similar": [{"entry_id": str(e), "score": s} for e, s in imports.similar(conn, text)]}
+
+
+def _import(conn: Connection, body: Body) -> Body:
+    entry, origin = body["entry"], body["imported_from"]
+    if not isinstance(entry, dict) or not isinstance(origin, dict):
+        msg = "entry and imported_from must be objects."
+        raise InvalidInputError(msg)
+    proposal = Proposal(
+        symptom=str(entry["symptom"]),
+        environment=dict(entry["environment"]),
+        cause=str(entry["cause"]),
+        fix=str(entry["fix"]),
+        domains=tuple(str(d) for d in entry["domains"]),
+        repro=None if entry.get("repro") is None else str(entry["repro"]),
+        task_id=uuid.uuid4(),
+    )
+    kept = {k: str(origin[k]) for k in ("local_entry_id", "model", "created_at") if k in origin}
+    result = imports.import_entry(conn, proposal, kept, str(origin.get("model") or "unknown"))
+    return {"entry_id": str(result.entry_id), "status": result.status}
 
 
 def _artifact_frequencies(conn: Connection, _body: Body) -> Body:

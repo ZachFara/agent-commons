@@ -11,7 +11,7 @@ from typing_extensions import override
 
 from commons.domain.errors import NotPermittedError
 from commons.domain.keys import KeyHolder
-from commons.service.identity import acting_as
+from commons.service.identity import acting_as, refuse_if_switched
 from commons.service.keys import check_key
 from commons.store.connection import Connection
 
@@ -53,6 +53,7 @@ def calling_reporter() -> Iterator[None]:
     """Act as the request's key holder in hosted mode; do nothing over local stdio."""
     token = get_access_token()
     if token is None:
+        refuse_if_switched()
         yield
         return
     if token.claims.get("privacy") == "local":

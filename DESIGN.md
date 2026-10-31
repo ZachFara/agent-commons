@@ -44,6 +44,7 @@ entries
 - domains: text[], at least one. Named as in cq (decision 0008).
 - status: enum pending, approved, rejected, retired. Follows the latest human review if any, else the latest agent review. Admins retire and restore entries as human reviews (decision 0026).
 - provisional, sampled, confirmed_at: an entry from a trusted contributor (TL1, TL2) goes live provisionally with source `auto`; a sample of them, and every entry with risk findings or likely duplicates, waits in the review queue; others' observed successes confirm it (decision 0028).
+- imported_from: {local_entry_id, model, created_at}, nullable. Set when `commons import --from-local` moved the entry from a local store; provenance says so (decision 0031).
 - revision: integer, the current version of the text. Every version is kept in `entry_revisions` (text, source, editor, reason, redaction report); retrievals record the revision they showed.
 - superseded_by: entry id, nullable. A superseded entry never appears in search.
 - aliases: text[]. Wording of duplicates merged into this entry; search matches it like the symptom. duplicate_candidates (up to 3 {entry_id, score, retry}) and duplicate_of are set on propose for the reviewer (decision 0027); `distinct_pairs` remembers pairs a reviewer kept apart.

@@ -14,7 +14,7 @@ from commons.domain.observations import ToolUse, exit_code_from_error
 from commons.service import agent_text, hook_client
 from commons.service.hook_client import HookBackend, LocalBackend, RemoteBackend, remote_client
 from commons.service.identity import hosted_server
-from commons.service.local_state import state_dir
+from commons.service.local_state import bind_store, bound_store, state_dir
 from commons.store.connection import connect
 
 logger = logging.getLogger("commons.hooks")
@@ -30,7 +30,9 @@ def _session_start(payload: Payload) -> HookOutput:
     if not isinstance(session_id, str) or not (model is None or isinstance(model, str)):
         msg = "session_id must be a string and model a string if present"
         raise TypeError(msg)
-    task_id = hook_client.on_session_start(_backend(), session_id, model)
+    server = _current_server()
+    bind_store(session_id, server)  # this session's hooks stay with this store (0031)
+    task_id = hook_client.on_session_start(backend_for(session_id), session_id, model)
     context = (
         f"Agent Commons task_id for this session: {task_id}. "
         "Pass it as task_id to every commons tool call."
@@ -52,11 +54,32 @@ def _post_tool_use_failure(payload: Payload) -> HookOutput:
 
 
 def _observe(use: ToolUse) -> None:
-    hook_client.on_tool_use(_backend(), use)
+    hook_client.on_tool_use(backend_for(use.session_id), use)
 
 
-def _backend() -> HookBackend:
-    server = hosted_server()
+def _current_server() -> tuple[str, str] | None:
+    try:
+        return hosted_server()
+    except NotInitializedError:
+        return None
+
+
+def backend_for(session_id: str) -> HookBackend:
+    """Return the store this session was bound to at start (the config, for older ones).
+
+    If the bound server is still the configured one, the configured key is used, so a
+    rotated key keeps working.
+    """
+    current = _current_server()
+    bound = bound_store(session_id)
+    if bound is None:
+        server = current
+    elif bound["store"] == "local":
+        server = None
+    elif current is not None and current[0] == bound["store"]:
+        server = current
+    else:
+        server = (bound["store"], bound.get("key", ""))
     if server is None:
         return LocalBackend(connect)
     return RemoteBackend(remote_client(*server))
@@ -115,7 +138,9 @@ def _exit_code(payload: Payload, *, failed: bool) -> int | None:
 def _stop(payload: Payload) -> HookOutput:
     transcript = payload.get("transcript_path")
     session_id = str(payload["session_id"])
-    result = hook_client.on_stop(_backend(), session_id, str(transcript) if transcript else None)
+    result = hook_client.on_stop(
+        backend_for(session_id), session_id, str(transcript) if transcript else None
+    )
     if result is None or payload.get("stop_hook_active"):
         return None
     if result.unreported:
