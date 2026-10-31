@@ -3,6 +3,7 @@
 import json
 import os
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import pytest
 
 import factories
 from commons.mcp.server import build_server
+from commons.service.local_state import spool_path
 from commons.store.reporters import find_reporter
 from hook_env import HookEnv
 from mcp_client import call
@@ -178,6 +180,42 @@ def test_a_minimal_edit_that_removes_what_the_fix_names_counts_as_used(
             "new_string": "expire_after=60",
         },
     )
+    session.stop()
+    used, _outcome, _evidence, _model = session.outcome()
+    assert used == "yes"
+
+
+def backdate_spool(session_id: str, by: timedelta) -> None:
+    """Move every spooled record back in time, as if the agent did it earlier."""
+    path = spool_path(session_id)
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    shifted = [
+        {**record, "at": (datetime.fromisoformat(record["at"]) - by).isoformat()}
+        for record in records
+    ]
+    path.write_text("".join(json.dumps(record) + "\n" for record in shifted), encoding="utf-8")
+
+
+def test_work_done_before_the_retrieval_does_not_count_as_using_it(session: Session) -> None:
+    """A search made after the fix was already applied is a lookup, not a use (T39)."""
+    session.tool("Edit", {"file_path": "/r/requirements.txt", "new_string": "markupsafe<2.1"})
+    session.tool(
+        "Bash", {"command": "pip check && NODE_OPTIONS=--openssl-legacy-provider npm run x"}
+    )
+    backdate_spool(session.session_id, timedelta(minutes=10))
+    session.search()
+    session.tool("Bash", {"command": "ls -la"})
+    session.stop()
+    used, _outcome, _evidence, _model = session.outcome()
+    assert used == "no"
+
+
+def test_records_spooled_before_timestamps_still_count(session: Session) -> None:
+    path = spool_path(session.session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = {"tool": "Edit", "text": "markupsafe<2.1\npip check"}
+    path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+    session.search()
     session.stop()
     used, _outcome, _evidence, _model = session.outcome()
     assert used == "yes"

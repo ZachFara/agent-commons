@@ -8,7 +8,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
@@ -26,6 +26,8 @@ from commons.service.identity import configured_test_runners
 from commons.service.local_state import append_spool, prune_spools, read_spool
 from commons.store.connection import Connection
 from commons.store.task_events import TaskRetrieval
+
+CLOCK_SKEW = timedelta(seconds=5)
 
 
 class HookBackend(Protocol):
@@ -206,9 +208,10 @@ def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
 def on_stop(backend: HookBackend, session_id: str, transcript: str | None) -> StopResult | None:
     """Compute `used` from the local spool and record the turn."""
     model = observed_model(Path(transcript)) if transcript else None
-    text = _session_text(session_id)
+    records = read_spool(session_id)
     used = {
-        item.retrieval_id: compute_used(item.fix, text) for item in backend.retrievals(session_id)
+        item.retrieval_id: compute_used(item.fix, _session_text(records, item.retrieved_at))
+        for item in backend.retrievals(session_id)
     }
     return backend.stop(session_id, model, used)
 
@@ -217,11 +220,24 @@ def _is_test(command: str) -> bool:
     return is_test_command(command, configured_test_runners())
 
 
-def _session_text(session_id: str) -> str:
+def _session_text(records: list[dict[str, object]], retrieved_at: datetime) -> str:
     # Commands run, text added, and text removed: a fix often names what to take out.
     keys = ("command", "text", "removed")
-    parts = (record.get(key) for record in read_spool(session_id) for key in keys)
+    after = [record for record in records if _spooled_after(record, retrieved_at)]
+    parts = (record.get(key) for record in after for key in keys)
     return "\n".join(str(part) for part in parts if part)
+
+
+def _spooled_after(record: dict[str, object], retrieved_at: datetime) -> bool:
+    """Whether the agent did this after retrieving the entry: earlier work is not a use (T39).
+
+    The spool's clock is this machine's and the retrieval's is the database's, so allow for
+    skew. Records spooled before records carried a time have none, and count.
+    """
+    at = record.get("at")
+    if not isinstance(at, str):
+        return True
+    return datetime.fromisoformat(at) >= retrieved_at - CLOCK_SKEW
 
 
 def _sha256(text: str) -> str:

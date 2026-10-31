@@ -25,7 +25,8 @@ def fix_artifacts(fix: str) -> set[str]:
         token = raw.strip(_TRIM).lower()
         if len(token) >= MIN_TOKEN_LENGTH and _DISTINCTIVE.search(token):
             artifacts.add(token)
-    return {a for a in artifacts if a}
+    # Pure punctuation ("...", "--") is a placeholder, not something the agent ran or wrote.
+    return {a for a in artifacts if any(c.isalnum() for c in a)}
 
 
 def compute_used(fix: str, session_text: str) -> Usage | None:

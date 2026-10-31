@@ -66,7 +66,7 @@ searches
 
 outcomes
 - retrieval_id.
-- used: enum yes, partial, no. Determined by checking whether the entry's fix text or commands appear in the task's diff or shell history, not by asking the agent.
+- used: enum yes, partial, no. Determined by checking whether the entry's fix text or commands appear in what the task changed or ran after the retrieval, not by asking the agent. Work done before the retrieval is a lookup, not a use.
 - outcome: enum tests_passed, tests_failed, error_resolved, error_persisted, user_accepted, user_rejected, abandoned, unknown.
 - evidence: jsonb. Hook payloads: test command, exit code, diff hash, timestamps.
 - agent_assessment: text, nullable. The agent's own post-hoc grading, kept separately from the observed fields so the two can be compared.
