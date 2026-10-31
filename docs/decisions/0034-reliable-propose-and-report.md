@@ -24,6 +24,11 @@ Decision:
      a success, with no search or propose in the turn.
    - The agent may decline: no forced calls, as the owner decided.
    - Measured on the multi-turn set against the shipped baseline, on Sonnet and Opus.
+   - Not committed: the owner has not decided to use it (2026-10-31). If it is adopted, the
+     server decides whether to nudge and with what text (hosted hook API), so one deploy
+     turns it off. Hooks already installed on users' machines then need no upgrade to roll
+     it back. Today the `report` reminder and the unshipped `nudge` text are decided on the
+     client.
 3. `/commons:record`: an MCP prompt, which clients show as a slash command. It asks the agent
    to review the session against a short checklist and propose what qualifies. It costs
    nothing unless used. Measure proposal quality when invoked.
