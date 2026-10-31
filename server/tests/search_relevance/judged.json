@@ -1,0 +1,391 @@
+{
+ "note": "Judged relevance set (decision 0025). Each query's relevant entry is the one it is listed under; negatives match nothing. Entries are realistic public problems plus the eval and production entries.",
+ "entries": [
+  {
+   "id": "markupsafe-soft-unicode",
+   "symptom": "ImportError: cannot import name 'soft_unicode' from 'markupsafe'",
+   "cause": "MarkupSafe 2.1.0 removed soft_unicode, which Jinja2 2.x still imports.",
+   "fix": "Upgrade Jinja2 to 3.x (pip install 'jinja2>=3'). If something pins Jinja2 2.x, pin MarkupSafe below 2.1 instead: pip install 'markupsafe<2.1'.",
+   "environment": {
+    "language": "python 3.10"
+   },
+   "domains": [
+    "python",
+    "packaging",
+    "jinja2"
+   ],
+   "queries": [
+    "ImportError: cannot import name 'soft_unicode' from 'markupsafe' (/venv/lib/python3.11/site-packages/markupsafe/__init__.py)",
+    "jinja2 fails to import after upgrading markupsafe, soft_unicode missing",
+    "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n    from flask import Flask\n  File \"/venv/lib/python3.9/site-packages/jinja2/utils.py\", line 6\nImportError: cannot import name 'soft_unicode' from 'markupsafe'\nERROR: process exited with code 1"
+   ]
+  },
+  {
+   "id": "node-openssl-envelope",
+   "symptom": "Error: error:0308010C:digital envelope routines::unsupported (webpack build on Node 17 or newer)",
+   "cause": "Node 17+ ships OpenSSL 3, which disables the MD4 hash that webpack 4 uses for module hashing.",
+   "fix": "Upgrade to webpack 5 (or a toolchain built on it). As a stopgap, run the build with NODE_OPTIONS=--openssl-legacy-provider.",
+   "environment": {
+    "language": "javascript (node 18)"
+   },
+   "domains": [
+    "javascript",
+    "node",
+    "webpack",
+    "openssl"
+   ],
+   "queries": [
+    "Error: error:0308010C:digital envelope routines::unsupported",
+    "webpack build fails on Node 18 with an OpenSSL digital envelope error",
+    "> react-scripts build\nCreating an optimized production build...\nError: error:0308010C:digital envelope routines::unsupported\n    at new Hash (node:internal/crypto/hash:69:19)\n    at Object.createHash (node:crypto:133:10)\nnpm ERR! code ELIFECYCLE"
+   ]
+  },
+  {
+   "id": "psycopg2-pg-config",
+   "symptom": "Error: pg_config executable not found. (pip install psycopg2)",
+   "cause": "psycopg2 builds from source and needs the PostgreSQL client headers and pg_config, which aren't installed.",
+   "fix": "Install psycopg2-binary for development, or install the libpq development package first (Debian/Ubuntu: apt install libpq-dev; macOS: brew install libpq) and retry. New code can use psycopg 3: pip install 'psycopg[binary]'.",
+   "environment": {
+    "language": "python 3.12"
+   },
+   "domains": [
+    "python",
+    "postgres",
+    "packaging"
+   ],
+   "queries": [
+    "Error: pg_config executable not found.",
+    "pip install psycopg2 fails because pg_config is missing",
+    "Collecting psycopg2==2.9.9\n  Downloading psycopg2-2.9.9.tar.gz (384 kB)\n  Preparing metadata (setup.py) ... error\n  error: subprocess-exited-with-error\n  Error: pg_config executable not found.\n  pg_config is required to build psycopg2 from source."
+   ]
+  },
+  {
+   "id": "quickcache-ttl",
+   "symptom": "quickcache 2.0 CacheConfig ignores ttl: expire_after is None and cached entries never expire (assert None == 60)",
+   "cause": "quickcache 2.0 renamed the `ttl` option to `expire_after` and silently ignores unknown options.",
+   "fix": "Rename `ttl=` to `expire_after=` where you construct `CacheConfig`.",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "caching"
+   ],
+   "queries": [
+    "AssertionError: assert None == 60 (CacheConfig expire_after)",
+    "quickcache cached entries never expire after upgrading to 2.0",
+    "FAILED tests/test_cache.py::test_expiry - assert None == 60\n +  where None = CacheConfig(ttl=60).expire_after\n============ 1 failed, 12 passed in 0.31s ============"
+   ]
+  },
+  {
+   "id": "fetchlite-retries",
+   "symptom": "fetchlite 1.3 Client(retries=3) does not retry: TransientError raised on the first failure",
+   "cause": "fetchlite 1.3 moved retries into the transport layer; `retries=` is ignored.",
+   "fix": "Pass `Client(transport={\"retries\": 3})` instead of `Client(retries=3)`.",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "http"
+   ],
+   "queries": [
+    "fetchlite.errors.TransientError raised on first attempt despite retries=3",
+    "fetchlite client stopped retrying requests",
+    "INFO starting sync job\nWARNING upstream returned 503\nfetchlite.errors.TransientError: 503 Service Unavailable\nINFO job failed after 1 attempt(s)"
+   ]
+  },
+  {
+   "id": "csvkitlite-strict",
+   "symptom": "csvkitlite 3.0 read_rows raises ValueError: row has 2 fields, header 3",
+   "cause": "csvkitlite 3.0 made `strict=True` the default, so rows shorter than the header raise instead of being padded with empty strings.",
+   "fix": "Pass `strict=False` to `read_rows` to pad short rows as 2.x did.",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "csv"
+   ],
+   "queries": [
+    "ValueError: row has 2 fields, header 3",
+    "read_rows now raises on short rows after csvkitlite upgrade",
+    "  File \"etl/load.py\", line 41, in load\n    for row in read_rows(text):\n  File \"csvkitlite/reader.py\", line 88, in read_rows\nValueError: row has 2 fields, header 3"
+   ]
+  },
+  {
+   "id": "apollo-subgraph-definitions",
+   "symptom": "TypeError: doc.definitions is not iterable when calling buildSubgraphSchema({ typeDefs, resolvers })",
+   "cause": "@apollo/subgraph 2.x expects an array of modules or a DocumentNode; a single { typeDefs, resolvers } object with a string typeDefs is not parsed.",
+   "fix": "Wrap the module in an array: buildSubgraphSchema([{ typeDefs, resolvers }]) where typeDefs is a DocumentNode (parse(sdl) or gql`...`).",
+   "environment": {
+    "language": "typescript"
+   },
+   "domains": [
+    "graphql",
+    "apollo",
+    "federation"
+   ],
+   "queries": [
+    "TypeError: doc.definitions is not iterable",
+    "buildSubgraphSchema crashes on startup with definitions not iterable",
+    "[nodemon] starting `ts-node src/index.ts`\n/app/node_modules/@apollo/subgraph/dist/schema.js:12\nTypeError: doc.definitions is not iterable\n    at buildSubgraphSchema (/app/node_modules/@apollo/subgraph/dist/buildSubgraphSchema.js:24:31)\n[nodemon] app crashed"
+   ]
+  },
+  {
+   "id": "cosmo-keycloak-ssl",
+   "symptom": "Logging in to self-hosted WunderGraph Cosmo Studio fails: Keycloak says HTTPS required",
+   "cause": "The Cosmo Keycloak realms default to sslRequired=external, so plain-HTTP logins from outside the container are refused.",
+   "fix": "Set the realms to not require SSL with kcadm inside the Keycloak container (local stacks only).",
+   "environment": {
+    "language": "shell"
+   },
+   "domains": [
+    "keycloak",
+    "cosmo",
+    "docker"
+   ],
+   "queries": [
+    "Keycloak: HTTPS required",
+    "cosmo studio login page shows https required on localhost",
+    "keycloak-1  | WARN  [org.keycloak.events] type=LOGIN_ERROR, realmId=cosmo, error=ssl_required\nstudio-1    | GET /login 302\nbrowser: We are sorry... HTTPS required"
+   ]
+  },
+  {
+   "id": "cosmo-router-metrics",
+   "symptom": "wgc subgraph check reports 0 operations impacted on a self-hosted Cosmo stack",
+   "cause": "The router sends GraphQL metrics to Cosmo Cloud by default, so the local collector records no operations.",
+   "fix": "Point the router at the local collector with GRAPHQL_METRICS_COLLECTOR_ENDPOINT=http://host.docker.internal:4005.",
+   "environment": {
+    "language": "shell"
+   },
+   "domains": [
+    "cosmo",
+    "graphql",
+    "docker"
+   ],
+   "queries": [
+    "wgc subgraph check 0 operations impacted",
+    "breaking change check never finds affected client operations in local cosmo",
+    "$ wgc subgraph check products --schema products.graphql\n✔ Checking schema...\nDetected 1 breaking change\n0 operations impacted\n"
+   ]
+  },
+  {
+   "id": "numpy-float-removed",
+   "symptom": "AttributeError: module 'numpy' has no attribute 'float_'",
+   "cause": "NumPy 2.0 removed the np.float_ alias (and np.complex_, np.string_).",
+   "fix": "Use `np.float64` instead of `np.float_`, or pin `numpy<2` until dependencies are updated.",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "numpy"
+   ],
+   "queries": [
+    "AttributeError: module 'numpy' has no attribute 'float_'. Did you mean: 'float16'?",
+    "np.float_ missing after numpy 2 upgrade",
+    "  File \"/opt/conda/lib/python3.11/site-packages/pandas_ta/utils.py\", line 12\n    np.float_\nAttributeError: module 'numpy' has no attribute 'float_'\n[pipeline] step features failed"
+   ]
+  },
+  {
+   "id": "pydantic-basesettings",
+   "symptom": "PydanticImportError: `BaseSettings` has been moved to the `pydantic-settings` package",
+   "cause": "Pydantic v2 split settings management into the separate pydantic-settings package.",
+   "fix": "`pip install pydantic-settings` and import `from pydantic_settings import BaseSettings`.",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "pydantic"
+   ],
+   "queries": [
+    "pydantic.errors.PydanticImportError: `BaseSettings` has been moved to the `pydantic-settings` package",
+    "BaseSettings import broke after upgrading pydantic to v2",
+    "uvicorn app.main:app --reload\nINFO: Will watch for changes\nProcess SpawnProcess-1:\npydantic.errors.PydanticImportError: `BaseSettings` has been moved to the `pydantic-settings` package. See https://docs.pydantic.dev/2.5/migration/"
+   ]
+  },
+  {
+   "id": "sqlalchemy-engine-execute",
+   "symptom": "AttributeError: 'Engine' object has no attribute 'execute'",
+   "cause": "SQLAlchemy 2.0 removed Engine.execute(); statements run on a Connection.",
+   "fix": "Use `with engine.connect() as conn: conn.execute(text(sql))` (and `conn.commit()` for writes).",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "sqlalchemy"
+   ],
+   "queries": [
+    "AttributeError: 'Engine' object has no attribute 'execute'",
+    "engine.execute stopped working with sqlalchemy 2",
+    "  File \"scripts/migrate_users.py\", line 18, in main\n    rows = engine.execute(\"SELECT id FROM users\")\nAttributeError: 'Engine' object has no attribute 'execute'"
+   ]
+  },
+  {
+   "id": "urllib3-openssl",
+   "symptom": "ImportError: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'",
+   "cause": "urllib3 2.x requires OpenSSL 1.1.1 or newer; the system Python on older macOS links LibreSSL.",
+   "fix": "Pin `urllib3<2` or use a Python built against OpenSSL (Homebrew, pyenv).",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "ssl",
+    "macos"
+   ],
+   "queries": [
+    "urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'",
+    "requests import fails on macOS system python complaining about LibreSSL",
+    "$ python3 -c 'import requests'\n/Library/Python/3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'"
+   ]
+  },
+  {
+   "id": "pandas-append-removed",
+   "symptom": "AttributeError: 'DataFrame' object has no attribute 'append'",
+   "cause": "pandas 2.0 removed DataFrame.append and Series.append.",
+   "fix": "Collect the frames in a list and call `pd.concat(frames, ignore_index=True)`.",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "pandas"
+   ],
+   "queries": [
+    "AttributeError: 'DataFrame' object has no attribute 'append'. Did you mean: '_append'?",
+    "df.append no longer exists in pandas 2",
+    "report.py:57: FutureWarning ignored\nTraceback (most recent call last):\n  File \"report.py\", line 60, in build\n    out = out.append(row, ignore_index=True)\nAttributeError: 'DataFrame' object has no attribute 'append'"
+   ]
+  },
+  {
+   "id": "node-fetch-esm",
+   "symptom": "Error [ERR_REQUIRE_ESM]: require() of ES Module node_modules/node-fetch/src/index.js not supported",
+   "cause": "node-fetch 3 is ESM-only and can't be loaded with require() from CommonJS.",
+   "fix": "Use `import fetch from 'node-fetch'` in an ES module, pin `node-fetch@2` for CommonJS, or use the global fetch in Node 18+.",
+   "environment": {
+    "language": "javascript"
+   },
+   "domains": [
+    "javascript",
+    "node",
+    "esm"
+   ],
+   "queries": [
+    "Error [ERR_REQUIRE_ESM]: require() of ES Module /app/node_modules/node-fetch/src/index.js from /app/index.js not supported.",
+    "requiring node-fetch fails because it is an ES module",
+    "node index.js\ninternal/modules/cjs/loader.js:1102\n      throw new ERR_REQUIRE_ESM(filename, parentPath, packageJsonPath);\nError [ERR_REQUIRE_ESM]: require() of ES Module node-fetch not supported."
+   ]
+  },
+  {
+   "id": "docker-arm64-manifest",
+   "symptom": "no matching manifest for linux/arm64/v8 in the manifest list entries",
+   "cause": "The image is published only for amd64, and Apple Silicon Docker pulls arm64 by default.",
+   "fix": "Pull with `--platform linux/amd64` (or `platform: linux/amd64` in compose), or use a multi-arch image.",
+   "environment": {
+    "language": "shell"
+   },
+   "domains": [
+    "docker",
+    "apple-silicon"
+   ],
+   "queries": [
+    "no matching manifest for linux/arm64/v8 in the manifest list entries",
+    "docker compose pull fails on an M1 mac for an amd64-only image",
+    "$ docker compose up -d\n[+] Running 1/2\n ⠿ db Error\nError response from daemon: no matching manifest for linux/arm64/v8 in the manifest list entries"
+   ]
+  },
+  {
+   "id": "python312-distutils",
+   "symptom": "ModuleNotFoundError: No module named 'distutils'",
+   "cause": "Python 3.12 removed distutils from the standard library (PEP 632); old setup.py files and tools still import it.",
+   "fix": "`pip install setuptools` (which provides a distutils shim), or upgrade the package that imports distutils.",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "packaging"
+   ],
+   "queries": [
+    "ModuleNotFoundError: No module named 'distutils'",
+    "distutils missing on python 3.12",
+    "Collecting numpy==1.24.0\n  Installing build dependencies ... done\n  Getting requirements to build wheel ... error\n  ModuleNotFoundError: No module named 'distutils'\n[end of output]"
+   ]
+  },
+  {
+   "id": "jest-esm-import",
+   "symptom": "SyntaxError: Cannot use import statement outside a module (Jest)",
+   "cause": "Jest runs tests as CommonJS by default and doesn't transform ESM-only dependencies in node_modules.",
+   "fix": "Add the package to `transformIgnorePatterns` exceptions with babel-jest, or run Jest with `--experimental-vm-modules` and ESM config.",
+   "environment": {
+    "language": "javascript"
+   },
+   "domains": [
+    "javascript",
+    "jest",
+    "esm"
+   ],
+   "queries": [
+    "SyntaxError: Cannot use import statement outside a module",
+    "jest fails to parse an import in node_modules",
+    "FAIL src/App.test.js\n  ● Test suite failed to run\n    Jest encountered an unexpected token\n    /app/node_modules/lodash-es/lodash.js:10\n    import * as lodash from './lodash.default.js'\n    SyntaxError: Cannot use import statement outside a module"
+   ]
+  },
+  {
+   "id": "git-dubious-ownership",
+   "symptom": "fatal: detected dubious ownership in repository",
+   "cause": "Git 2.35.2+ refuses repositories owned by another user (CVE-2022-24765), common in containers and CI mounts.",
+   "fix": "`git config --global --add safe.directory <path>` for the repository, or fix the directory's owner.",
+   "environment": {
+    "language": "shell"
+   },
+   "domains": [
+    "git",
+    "ci",
+    "docker"
+   ],
+   "queries": [
+    "fatal: detected dubious ownership in repository at '/workspace'",
+    "git refuses to run inside the docker container because of repository ownership",
+    "Run git rev-parse HEAD\nfatal: detected dubious ownership in repository at '/__w/app/app'\nTo add an exception for this directory, call:\n\tgit config --global --add safe.directory /__w/app/app\nError: Process completed with exit code 128."
+   ]
+  },
+  {
+   "id": "pip-externally-managed",
+   "symptom": "error: externally-managed-environment",
+   "cause": "PEP 668: Debian, Ubuntu 23.04+ and Homebrew Python mark the system interpreter as externally managed, so pip refuses global installs.",
+   "fix": "Create a virtual environment (`python3 -m venv .venv`) or use `pipx`; `--break-system-packages` only as a last resort.",
+   "environment": {
+    "language": "python"
+   },
+   "domains": [
+    "python",
+    "packaging",
+    "pip"
+   ],
+   "queries": [
+    "error: externally-managed-environment",
+    "pip install refuses to install packages system wide on ubuntu",
+    "$ pip install httpx\nerror: externally-managed-environment\n\n× This environment is externally managed\n╰─> To install Python packages system-wide, try apt install python3-xyz"
+   ]
+  }
+ ],
+ "negatives": [
+  "DeployCheckError: search-log verification 2026-10-31 nothing should match",
+  "zqxjv blorptangle quuxified wibbleframe",
+  "error check failed",
+  "TypeError: Cannot read properties of undefined (reading 'map')",
+  "make: *** [check] Error 2",
+  "Permission denied (publickey).",
+  "Segmentation fault (core dumped)",
+  "KeyError: 'user_id'",
+  "ModuleNotFoundError: No module named 'requests'",
+  "AttributeError: 'NoneType' object has no attribute 'get'",
+  "psql: error: connection to server on socket \"/tmp/.s.PGSQL.5432\" failed: No such file or directory",
+  "warning: build failed, check the logs"
+ ]
+}

@@ -35,7 +35,7 @@ def hits(result: dict[str, Any], *ours: uuid.UUID) -> list[dict[str, Any]]:
     return [hit for hit in result["data"] if hit["entry_id"] in wanted]
 
 
-def test_long_error_message_finds_the_matching_entry_first(
+def test_long_error_message_finds_the_matching_entry_and_drops_weak_ones(
     server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
 ) -> None:
     weak = factories.entry(
@@ -50,8 +50,9 @@ def test_long_error_message_finds_the_matching_entry_first(
         db, reporter, symptom="Segfault in numpy", cause="ABI mismatch", fix="Rebuild wheels"
     )
 
-    # limit=20: entries committed by other tests also match this common error text.
-    assert ids(search(server, limit=20), weak, strong, unrelated) == [str(strong), str(weak)]
+    # limit=20: entries committed by other tests also match this common error text. The weak
+    # entry shares only "ImportError" and "pip install", under the relevance cutoff (0025).
+    assert ids(search(server, limit=20), weak, strong, unrelated) == [str(strong)]
 
 
 @pytest.mark.parametrize("status", ["pending", "rejected", "retired"])
