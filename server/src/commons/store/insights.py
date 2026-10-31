@@ -217,7 +217,10 @@ def reporters(conn: Connection) -> list[Row]:
     """Every reporter with contribution and accuracy figures."""
     return _rows(
         conn,
-        "SELECT rp.pseudonym, rp.is_admin, rp.privacy_default::text AS privacy, rp.reliability, "
+        "SELECT rp.pseudonym, rp.privacy_default::text AS privacy, rp.reliability, "
+        "EXISTS (SELECT 1 FROM api_keys k WHERE k.reporter_id = rp.id AND k.scope = 'admin' "
+        "  AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > now())) "
+        "  AS is_admin, "
         "(SELECT count(*) FROM entries e WHERE e.created_by = rp.id) AS proposed, "
         "(SELECT count(*) FROM entries e WHERE e.created_by = rp.id AND e.status = 'approved') "
         "  AS approved, "

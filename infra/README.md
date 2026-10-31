@@ -60,12 +60,17 @@ database:
 
 ```sh
 export COMMONS_DATABASE_URL="$(gcloud secrets versions access latest --secret agent-commons-production-database-url)"
-uv run commons admin create-key <your-pseudonym> --admin
+uv run commons admin key create <you> --scope admin --label dashboard   # for the dashboard
+uv run commons admin key create <you> --scope agent --label laptop      # for your sessions
 uv run commons admin invite <friend> --server "$(cd infra && terraform output -json urls | python3 -c 'import json,sys; print(json.load(sys.stdin)["production"])')"
+uv run commons admin key list                       # prefixes, scopes, last use; never keys
+uv run commons admin key rotate <prefix>            # new key now, old one stops in 24 h
+uv run commons admin key revoke <prefix>            # stops at once: 401 "key revoked"
 ```
 
 Use `agent-commons-staging-database-url` and the staging URL to do the same on staging. Open
-`<url>/` and sign in with any user name and an admin key as the password.
+`<url>/` and sign in with any user name and an admin key as the password (a review key reaches
+the review pages only).
 
 ## Backups, alerts and retention (decision 0033)
 

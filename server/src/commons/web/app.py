@@ -5,6 +5,7 @@ import threading
 import webbrowser
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
@@ -19,8 +20,9 @@ from starlette.routing import BaseRoute, Route
 from starlette.templating import Jinja2Templates
 
 from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
+from commons.domain.keys import KEY_SCOPES, KeyOptions, KeyScope, NewKey, parse_duration
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
-from commons.service import reviews
+from commons.service import keys, reviews
 from commons.service.identity import serving_hosted
 from commons.store import insights
 from commons.store.connection import Connection, connect
@@ -94,11 +96,46 @@ class Dashboard:
         return self._render(request, "searches.html", "searches", data)
 
     async def people(self, request: Request) -> Response:
-        """Render reporters and models."""
-        data = await self._load(
-            lambda conn: {"reporters": insights.reporters(conn), "models": insights.models(conn)}
+        """Render reporters, their keys, and models."""
+        return self._render(request, "people.html", "people", await self._load(_people_data))
+
+    async def create_key(self, request: Request) -> Response:
+        """Mint a key from the People page and show it once (decision 0032)."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        form = await request.form()
+        fields = {name: form.get(name) for name in ("pseudonym", "scope", "label", "expires")}
+        values = {k: v.strip() if isinstance(v, str) else "" for k, v in fields.items()}
+        try:
+            new = await run_in_threadpool(self._issue, values)
+        except (InvalidInputError, NotFoundError) as error:
+            return _back(request, {"error": str(error)})
+        data = await self._load(_people_data)
+        return self._render(request, "people.html", "people", {**data, "new_key": new})
+
+    async def revoke_key(self, request: Request) -> Response:
+        """Revoke a key from the People page."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        handle = str(request.path_params["key_id"])
+
+        def revoke() -> None:
+            with self._connection() as conn:
+                keys.revoke_key(conn, handle)
+
+        await run_in_threadpool(revoke)
+        return _back(request, {"revoked": handle[:8]})
+
+    def _issue(self, values: dict[str, str]) -> NewKey:
+        if values["scope"] not in KEY_SCOPES:
+            msg = "scope must be agent, review or admin."
+            raise InvalidInputError(msg)
+        options = KeyOptions(
+            label=values["label"] or None,
+            expires_in=parse_duration(values["expires"]) if values["expires"] else None,
         )
-        return self._render(request, "people.html", "people", data)
+        with self._connection() as conn:
+            return keys.issue_key(conn, values["pseudonym"], values["scope"], options)
 
     async def review(self, request: Request) -> Response:
         """Record a human review from a review form, then go back where it came from."""
@@ -137,6 +174,7 @@ class Dashboard:
             "hosted": self._hosted,
             "error": request.query_params.get("error"),
             "reviewed": request.query_params.get("reviewed"),
+            "revoked": request.query_params.get("revoked"),
         }
         return TEMPLATES.TemplateResponse(request, template, context)
 
@@ -175,6 +213,15 @@ def _overview_data(conn: Connection) -> dict[str, Any]:
     }
 
 
+def _people_data(conn: Connection) -> dict[str, Any]:
+    return {
+        "reporters": insights.reporters(conn),
+        "models": insights.models(conn),
+        "keys": keys.list_keys(conn),
+        "now": datetime.now(UTC),
+    }
+
+
 def _entry_data(conn: Connection, entry_id: UUID) -> dict[str, Any]:
     history = insights.score_history(conn, entry_id)
     return {
@@ -197,19 +244,26 @@ def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) 
 def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute]:
     """Return the dashboard routes, plus the hook API when hosted (reused by `commons.hosted`)."""
     pages = Dashboard(connection, hosted=hosted)
-    endpoints: list[tuple[str, Endpoint, list[str]]] = [
-        ("/", pages.overview, ["GET"]),
-        ("/queue", pages.queue, ["GET"]),
-        ("/entries", pages.entries, ["GET"]),
-        ("/entries/{entry_id:uuid}", pages.entry, ["GET"]),
-        ("/activity", pages.activity, ["GET"]),
-        ("/searches", pages.searches, ["GET"]),
-        ("/people", pages.people, ["GET"]),
-        ("/entries/{entry_id:uuid}/review", pages.review, ["POST"]),
+    # Review keys reach the review pages; everything else needs an admin key (decision 0032).
+    endpoints: list[tuple[str, Endpoint, str, KeyScope]] = [
+        ("/", pages.overview, "GET", "admin"),
+        ("/queue", pages.queue, "GET", "review"),
+        ("/entries", pages.entries, "GET", "review"),
+        ("/entries/{entry_id:uuid}", pages.entry, "GET", "review"),
+        ("/activity", pages.activity, "GET", "admin"),
+        ("/searches", pages.searches, "GET", "admin"),
+        ("/people", pages.people, "GET", "admin"),
+        ("/entries/{entry_id:uuid}/review", pages.review, "POST", "review"),
+        ("/keys", pages.create_key, "POST", "admin"),
+        ("/keys/{key_id:uuid}/revoke", pages.revoke_key, "POST", "admin"),
     ]
     routes = [
-        Route(path, admin_only(endpoint, connection) if hosted else endpoint, methods=methods)
-        for path, endpoint, methods in endpoints
+        Route(
+            path,
+            admin_only(endpoint, connection, need) if hosted else endpoint,
+            methods=[method],
+        )
+        for path, endpoint, method, need in endpoints
     ]
     return [*hook_routes(connection), *routes] if hosted else list(routes)
 

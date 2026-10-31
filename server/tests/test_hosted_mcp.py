@@ -97,7 +97,9 @@ def test_hosted_calls_log_the_key_holder(
     ).fetchone() or ("",)
     call_http(hosted, key, "status", {})
     logged = [json.loads(r.getMessage()) for r in caplog.records if r.name == "commons.calls"]
-    assert [(line["tool"], line["reporter_id"]) for line in logged] == [("status", reporter_id)]
+    calls = [line for line in logged if line["event"] == "tool_call"]
+    assert [(line["tool"], line["reporter_id"]) for line in calls] == [("status", reporter_id)]
+    assert [line["event"] for line in logged if line["event"] != "tool_call"] == ["key_created"]
 
 
 def http_status(server: FastMCP, key: str | None) -> int:
@@ -165,8 +167,9 @@ def test_admin_create_key_command(
     assert key.startswith("ac_")
     with psycopg.connect(database_url) as conn:
         row = conn.execute(
-            "SELECT is_admin, api_key_hash <> %s FROM reporters WHERE pseudonym = %s",
-            (key, pseudonym),
+            "SELECT k.scope::text, k.key_hash <> %s, k.prefix = substr(%s, 4, 8) "
+            "FROM api_keys k JOIN reporters rp ON rp.id = k.reporter_id WHERE rp.pseudonym = %s",
+            (key, key, pseudonym),
         ).fetchone()
-    assert row == (True, True)
+    assert row == ("admin", True, True)
     assert main(["admin", "create-key", "not@valid.example"]) == 1

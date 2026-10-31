@@ -20,6 +20,7 @@ from commons.service.identity import serving_hosted
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
 from commons.web.app import ConnectionFactory, web_routes
+from commons.web.key_errors import explain_refused_keys
 
 DEFAULT_PORT = 8080
 
@@ -34,7 +35,7 @@ def build_hosted_app(connection: ConnectionFactory = connect) -> Starlette:
             Route("/health", _health),
             Route("/healthz", _health),
             *web_routes(connection, hosted=True),
-            Mount("/", app=mcp_app),
+            Mount("/", app=explain_refused_keys(mcp_app, connection)),
         ],
         lifespan=mcp_app.lifespan,
     )

@@ -102,7 +102,8 @@ class RemoteBackend:
     def _post(self, step: str, body: dict[str, Any]) -> dict[str, Any]:
         response = self._client.post(f"/api/hooks/{step}", json=body)
         if response.status_code == httpx2.codes.UNAUTHORIZED:
-            msg = "The hosted server rejected the API key. Run `commons connect` again."
+            reason = _error_message(response) or "unknown API key"
+            msg = f"The hosted server rejected the API key ({reason}). Run `commons join` again."
             raise NotInitializedError(msg)
         if response.status_code == httpx2.codes.FORBIDDEN:
             raise NotPermittedError(response.json()["error"]["message"])
@@ -110,9 +111,10 @@ class RemoteBackend:
         result: dict[str, Any] = response.json()
         return result
 
-    def ping(self) -> None:
-        """Check the server accepts the key."""
-        self._post("ping", {})
+    def ping(self) -> str | None:
+        """Check the server accepts the key; return its scope (None from older servers)."""
+        scope = self._post("ping", {}).get("scope")
+        return scope if isinstance(scope, str) else None
 
     def session_start(self, session_id: str, model: str | None) -> UUID:
         """Create or resume the session's task."""
@@ -257,3 +259,11 @@ def observed_model(transcript: Path) -> str | None:
         if isinstance(message, dict) and isinstance(message.get("model"), str):
             model = message["model"]
     return model
+
+
+def _error_message(response: httpx2.Response) -> str | None:
+    try:
+        message = response.json()["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return message if isinstance(message, str) else None

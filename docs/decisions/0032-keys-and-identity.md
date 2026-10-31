@@ -41,3 +41,13 @@ Decision:
 Consequences: a leaked key can be killed in one command without re-inviting anyone, and an
 agent key can no longer approve entries or open the dashboard. The migration touches auth for
 every request, so it needs careful tests and a staging soak before production.
+
+Implementation notes (T44, 2026-10-31):
+- One scope per key; `admin` includes the others. Review keys reach the queue, entries and
+  review action on the dashboard and nothing else.
+- Migrated keys have no visible prefix (their text was never stored); listings identify them
+  by the first 8 characters of the key id instead.
+- `create-key` and `invite` keep revoking the reporter's other keys, as before; `key create`
+  adds a key alongside them.
+- `reporters.is_admin` was dropped with `api_key_hash`: being an admin now means holding an
+  active admin key, until roles arrive (0028).

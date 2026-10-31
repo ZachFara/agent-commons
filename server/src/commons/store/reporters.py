@@ -1,8 +1,6 @@
 from uuid import UUID
 
-from psycopg.rows import class_row
-
-from commons.domain.reporters import KeyHolder, PrivacyDefault
+from commons.domain.reporters import PrivacyDefault
 from commons.store.connection import Connection
 from commons.store.rows import returned_id
 
@@ -35,22 +33,3 @@ def ensure_reporter(conn: Connection, pseudonym: str) -> UUID:
         msg = "reporter vanished after insert"
         raise RuntimeError(msg)
     return found
-
-
-def set_api_key(conn: Connection, reporter_id: UUID, key_hash: str, *, admin: bool) -> None:
-    """Replace the reporter's API key hash (one key per reporter) and admin flag."""
-    conn.execute(
-        "UPDATE reporters SET api_key_hash = %s, is_admin = %s WHERE id = %s",
-        (key_hash, admin, reporter_id),
-    )
-
-
-def key_holder(conn: Connection, key_hash: str) -> KeyHolder | None:
-    """Return who owns this API key hash, if anyone."""
-    with conn.cursor(row_factory=class_row(KeyHolder)) as cursor:
-        cursor.execute(
-            "SELECT id AS reporter_id, is_admin, privacy_default FROM reporters "
-            "WHERE api_key_hash = %s",
-            (key_hash,),
-        )
-        return cursor.fetchone()
