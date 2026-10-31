@@ -26,6 +26,7 @@ UNKNOWN_MODEL = "unknown"
 _HOSTED: ContextVar[bool] = ContextVar("commons_hosted", default=False)
 _REQUEST_REPORTER: ContextVar[UUID | None] = ContextVar("commons_request_reporter", default=None)
 _REQUEST_TEST: ContextVar[bool] = ContextVar("commons_request_test", default=False)
+_REQUEST_KEY: ContextVar[UUID | None] = ContextVar("commons_request_key", default=None)
 
 
 @contextmanager
@@ -39,18 +40,27 @@ def serving_hosted() -> Iterator[None]:
 
 
 @contextmanager
-def acting_as(reporter_id: UUID, *, test: bool = False) -> Iterator[None]:
+def acting_as(
+    reporter_id: UUID, *, test: bool = False, key_id: UUID | None = None
+) -> Iterator[None]:
     """Attribute everything done inside the block to this reporter (one hosted request).
 
     With `test` (a test key, decision 0030), what the block logs is excluded from every count.
     """
     token = _REQUEST_REPORTER.set(reporter_id)
     test_token = _REQUEST_TEST.set(test)
+    key_token = _REQUEST_KEY.set(key_id)
     try:
         yield
     finally:
+        _REQUEST_KEY.reset(key_token)
         _REQUEST_TEST.reset(test_token)
         _REQUEST_REPORTER.reset(token)
+
+
+def current_key() -> UUID | None:
+    """Return the current hosted request's API key, if any (rate limits count per key)."""
+    return _REQUEST_KEY.get()
 
 
 def test_traffic() -> bool:

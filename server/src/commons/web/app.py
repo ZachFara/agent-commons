@@ -30,7 +30,7 @@ from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializ
 from commons.domain.keys import KEY_SCOPES, KeyOptions, KeyScope, NewKey, parse_duration
 from commons.domain.lifecycle import FixedIn
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
-from commons.service import corrections, duplicates, keys, lifecycle, reviews
+from commons.service import corrections, duplicates, keys, lifecycle, purges, reviews
 from commons.service.identity import current_pseudonym, serving_hosted
 from commons.store import insights
 from commons.store.connection import Connection, connect
@@ -261,6 +261,28 @@ class Dashboard:
             return _back(request, {"error": str(error)})
         return _back(request, {"corrected": message})
 
+    async def purge_reporter(self, request: Request) -> Response:
+        """Revoke and purge a reporter, or restore them (decision 0029)."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        form = await request.form()
+        pseudonym = str(request.path_params["pseudonym"])
+        reason = str(form.get("reason") or "")
+        restoring = form.get("action") == "restore"
+
+        def run() -> str:
+            with self._connection() as conn:
+                if restoring:
+                    done = purges.restore(conn, pseudonym)
+                    return f"Restored {pseudonym}: {done.keys} keys, {done.entries} entries."
+                done = purges.purge(conn, pseudonym, reason)
+            return (
+                f"Purged {pseudonym}: {done.keys} keys revoked, {done.entries} entries retired, "
+                f"{done.outcomes} outcomes excluded."
+            )
+
+        return await self._act(request, run)
+
     async def create_key(self, request: Request) -> Response:
         """Mint a key from the People page and show it once (decision 0032)."""
         if not _same_origin(request, hosted=self._hosted):
@@ -419,6 +441,7 @@ def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute
         ("/people", pages.people, "GET", "admin"),
         ("/entries/{entry_id:uuid}/review", pages.review, "POST", "review"),
         ("/keys", pages.create_key, "POST", "admin"),
+        ("/people/{pseudonym}/purge", pages.purge_reporter, "POST", "admin"),
         ("/corrections", pages.corrections, "GET", "admin"),
         ("/entries/{entry_id:uuid}/edit", pages.edit_entry, "POST", "admin"),
         ("/entries/{entry_id:uuid}/duplicate", pages.merge_duplicate, "POST", "review"),

@@ -4,12 +4,15 @@
 {% block content %}
 <header class="page"><div><h1>People & models</h1><div class="sub">Reporters are pseudonymous. Reliability: how often an agent's own report matched what hooks observed.</div></div></header>
 <section class="card"><h2>Reporters</h2><div class="table-wrap"><table>
-  <thead><tr><th>Pseudonym</th><th>Privacy</th><th class="num">Reliability</th><th class="num">Proposed</th><th class="num">Approved</th><th class="num">Retrievals</th><th class="num">Outcomes</th><th>Last session</th></tr></thead><tbody>
+  <thead><tr><th>Pseudonym</th><th>Privacy</th><th class="num">Reliability</th><th class="num">Proposed</th><th class="num">Approved</th><th class="num">Retrievals</th><th class="num">Outcomes</th><th>Last session</th><th></th></tr></thead><tbody>
   {% for r in reporters %}<tr><td>{{ r.pseudonym }}{% if r.is_admin %} <span class="badge soft">admin</span>{% endif %}</td>
     <td><span class="badge soft">{{ r.privacy | replace("_", " ") }}</span></td>
     <td class="num">{% if r.reliability is none %}<span class="muted" title="Fewer than 5 comparable outcomes">not enough data</span>{% else %}{{ meter(r.reliability) }}{% endif %}</td>
     <td class="num">{{ r.proposed }}</td><td class="num">{{ r.approved }}</td><td class="num">{{ r.retrievals }}</td><td class="num">{{ r.outcomes }}</td>
-    <td class="muted">{{ r.last_seen.strftime("%b %d") if r.last_seen else "never" }}</td></tr>{% else %}<tr><td colspan="8" class="empty">No reporters yet.</td></tr>{% endfor %}
+    <td class="muted">{{ r.last_seen.strftime("%b %d") if r.last_seen else "never" }}</td>
+    <td>{% if r.suspended_at %}<form method="post" action="/people/{{ r.pseudonym }}/purge"><span class="badge bad">suspended</span> <button name="action" value="restore">Restore</button></form>
+      {% else %}<details class="correct"><summary>Revoke and purge</summary><form method="post" action="/people/{{ r.pseudonym }}/purge">
+      <input type="text" name="reason" placeholder="Reason" aria-label="Reason" required><button class="reject" name="action" value="purge">Revoke and purge</button></form></details>{% endif %}</td></tr>{% else %}<tr><td colspan="9" class="empty">No reporters yet.</td></tr>{% endfor %}
   </tbody></table></div></section>
 <section class="card" style="margin-top: 16px"><h2>API keys <span class="hint">decision 0032: agent keys for sessions, admin or review keys for this dashboard</span></h2>
   {% if new_key %}<div class="notice">New {{ new_key.info.scope }} key for {{ new_key.info.pseudonym }}. Copy it now; it is not shown again:<br><span class="mono" style="user-select: all">{{ new_key.key }}</span></div>{% endif %}

@@ -222,6 +222,7 @@ def reporters(conn: Connection) -> list[Row]:
     return _rows(
         conn,
         "SELECT rp.pseudonym, rp.privacy_default::text AS privacy, rp.reliability, "
+        "rp.suspended_at, "
         "EXISTS (SELECT 1 FROM api_keys k WHERE k.reporter_id = rp.id AND k.scope = 'admin' "
         "  AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > now())) "
         "  AS is_admin, "

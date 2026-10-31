@@ -3,10 +3,12 @@ from uuid import UUID
 
 from commons.domain.entries import EntryStatus, Proposal, validate_proposal
 from commons.privacy.redaction import redact_proposal
+from commons.privacy.risks import scan_proposal
 from commons.service.duplicates import flag_duplicates
 from commons.service.identity import current_model, current_reporter
+from commons.service.rates import limit
 from commons.store.connection import Connection
-from commons.store.entries import insert_entry
+from commons.store.entries import insert_entry, set_risk_report
 
 
 @dataclass(frozen=True)
@@ -25,7 +27,9 @@ def propose(conn: Connection, proposal: Proposal, model: str | None) -> ProposeR
     """
     validate_proposal(proposal)
     redacted, redaction_report = redact_proposal(proposal)
+    redacted, risk_report = scan_proposal(redacted)
     with conn.transaction():
+        limit(conn, "propose")
         reporter = current_reporter(conn)
         model_row = current_model(conn, model)
         entry_id = insert_entry(
@@ -35,6 +39,7 @@ def propose(conn: Connection, proposal: Proposal, model: str | None) -> ProposeR
             created_by=reporter,
             created_by_model=model_row,
         )
+        set_risk_report(conn, entry_id, risk_report)
         # Flagged for the reviewer only: the reply to the agent is unchanged (decision 0027).
         flag_duplicates(conn, entry_id, redacted, reporter)
     return ProposeResult(entry_id=entry_id, status="pending", redaction_report=redaction_report)

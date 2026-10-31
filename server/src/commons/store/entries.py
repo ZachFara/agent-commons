@@ -39,3 +39,8 @@ def insert_entry(
 def approved_fixes(conn: Connection) -> list[str]:
     """Every approved entry's fix text."""
     return [fix for (fix,) in conn.execute("SELECT fix FROM entries WHERE status = 'approved'")]
+
+
+def set_risk_report(conn: Connection, entry_id: UUID, report: dict[str, object]) -> None:
+    """Store what the risk scanner found in the entry's text (decision 0029)."""
+    conn.execute("UPDATE entries SET risk_report = %s WHERE id = %s", (Jsonb(report), entry_id))

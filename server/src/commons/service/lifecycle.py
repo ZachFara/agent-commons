@@ -11,9 +11,11 @@ from commons.domain.errors import InvalidInputError
 from commons.domain.lifecycle import FixedIn, require_reason
 from commons.domain.reviews import ReviewDecision, ReviewRequest, review_state
 from commons.privacy.redaction import redact_proposal, scrub
+from commons.privacy.risks import scan_proposal
 from commons.service.identity import current_pseudonym, current_reporter
 from commons.store import lifecycle as store
 from commons.store.connection import Connection
+from commons.store.entries import set_risk_report
 from commons.store.reviews import add_review, entry_reviews, set_review_state
 
 
@@ -22,11 +24,13 @@ def edit_entry(conn: Connection, entry_id: UUID, content: Proposal, reason: str)
     why = scrub(require_reason(reason))
     validate_proposal(content)
     redacted, report = redact_proposal(content)
+    redacted, risks = scan_proposal(redacted)
     with conn.transaction():
         entry = store.locked_entry(conn, entry_id)
         revision = int(entry["revision"]) + 1
         edit = ("human", current_pseudonym(conn), why)
         store.add_revision(conn, entry_id, revision, (redacted, report), edit)
+        set_risk_report(conn, entry_id, risks)
     return revision
 
 

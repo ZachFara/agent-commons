@@ -16,3 +16,12 @@ class NotPermittedError(PermissionError):
 
 class StoreUnavailableError(ConnectionError):
     """The database can't be reached. The message says where and what to try."""
+
+
+class RateLimitedError(PermissionError):
+    """The key made too many calls of this kind. The message says when to try again."""
+
+    def __init__(self, message: str, retry_after: int) -> None:
+        """Keep how many seconds until the window resets."""
+        super().__init__(message)
+        self.retry_after = retry_after
