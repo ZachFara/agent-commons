@@ -290,7 +290,8 @@ def test_key_commands(
     assert main(["admin", "key", "rotate", created[1][:11], "--now"]) == 0
     rotated = capsys.readouterr().out.splitlines()
     assert "stops working now" in rotated[0]
-    assert main(["admin", "key", "revoke", rotated[1][3:11]]) == 0
+    # The ac_ form: a bare prefix can start with "-", which argparse reads as an option.
+    assert main(["admin", "key", "revoke", rotated[1][:11]]) == 0
     assert "revoked" in capsys.readouterr().out
 
     assert main(["admin", "key", "list", who]) == 0

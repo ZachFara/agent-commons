@@ -14,7 +14,7 @@ from commons.domain.keys import KeyCheck, KeyInfo, KeyOptions, KeyProblem, KeySc
 from commons.domain.reporters import validate_pseudonym
 from commons.store import api_keys
 from commons.store.connection import Connection
-from commons.store.reporters import ensure_reporter
+from commons.store.reporters import ensure_reporter, promote_to_admin
 
 KEY_PREFIX = "ac_"
 SHOWN_CHARACTERS = 8
@@ -52,8 +52,14 @@ def issue_key(
 
 
 def create_key(conn: Connection, pseudonym: str, *, admin: bool) -> str:
-    """Mint the reporter's only key, revoking any others (`commons admin create-key`)."""
-    return issue_key(conn, pseudonym, "admin" if admin else "agent", replace=True).key
+    """Mint the reporter's only key, revoking any others (`commons admin create-key`).
+
+    `--admin` also makes the reporter an admin (decision 0028's roles).
+    """
+    key = issue_key(conn, pseudonym, "admin" if admin else "agent", replace=True).key
+    if admin:
+        promote_to_admin(conn, pseudonym)
+    return key
 
 
 def check_key(conn: Connection, key: str) -> KeyCheck:

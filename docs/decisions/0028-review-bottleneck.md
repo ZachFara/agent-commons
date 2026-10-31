@@ -40,3 +40,19 @@ goes where risk is highest. The danger is a trusted reporter publishing somethin
 before the sample catches it. Mitigated by 0029's scanning, which runs before auto-approval and
 forces the queue on any finding, and by instant rollback. Needs a `review_source` value `auto`
 (migration) and DESIGN §3 and §6 updates.
+
+Implementation notes (T51, 2026-10-31):
+- Roles live on `reporters.role` (migrated from admin and review keys). Keys keep their
+  scopes (0032); issuing a review key needs the reviewer role, an admin key the admin role,
+  set with `commons admin role <pseudonym> <role>`. `create-key --admin` still promotes.
+- Trust levels are recomputed in `commons rank`. "Rejected as harmful" means a human rejected
+  an entry the risk scanner had flagged, or an unrestored purge. Such a rejection also demotes
+  at once and reopens the reporter's provisional entries (a `reopen` review, source `auto`).
+- Provisional entries are approved with source `auto` and stay "unreviewed" in provenance
+  until a human reviews them or outcomes confirm them ("confirmed by outcomes"). Any risk
+  finding or likely duplicate (0027) keeps an entry in the queue whatever the trust.
+- `propose` now answers `approved` for a provisional approval. No reporter is TL1 yet (it
+  takes 5 approved entries), so nothing changes for agents today.
+- Queue health: the queue page shows its length and oldest age. The nightly workflow runs
+  `commons queue-check --max-age 3d`, whose failure emails the owner (GitHub's alerting for
+  scheduled runs) instead of a separate digest.

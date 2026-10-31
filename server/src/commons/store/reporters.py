@@ -43,3 +43,8 @@ def pseudonym_of(conn: Connection, reporter_id: UUID) -> str:
         raise RuntimeError(msg)
     pseudonym: str = row[0]
     return pseudonym
+
+
+def promote_to_admin(conn: Connection, pseudonym: str) -> None:
+    """Give the reporter the admin role."""
+    conn.execute("UPDATE reporters SET role = 'admin' WHERE pseudonym = %s", (pseudonym,))

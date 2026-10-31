@@ -30,7 +30,15 @@ from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializ
 from commons.domain.keys import KEY_SCOPES, KeyOptions, KeyScope, NewKey, parse_duration
 from commons.domain.lifecycle import FixedIn
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
-from commons.service import corrections, duplicates, keys, lifecycle, purges, reviews
+from commons.service import (
+    corrections,
+    duplicates,
+    keys,
+    lifecycle,
+    purges,
+    reviews,
+    trust,
+)
 from commons.service.identity import current_pseudonym, serving_hosted
 from commons.store import insights
 from commons.store.connection import Connection, connect
@@ -65,6 +73,7 @@ class Dashboard:
             lambda conn: {
                 "pending": reviews.pending(conn),
                 "duplicates": insights.duplicate_flags(conn),
+                "health": trust.queue_health(conn),
             }
         )
         return self._render(request, "queue.html", "queue", data)
@@ -319,6 +328,7 @@ class Dashboard:
             expires_in=parse_duration(values["expires"]) if values["expires"] else None,
         )
         with self._connection() as conn:
+            trust.check_scope(conn, values["pseudonym"], values["scope"])
             return keys.issue_key(conn, values["pseudonym"], values["scope"], options)
 
     async def review(self, request: Request) -> Response:

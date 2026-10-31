@@ -20,6 +20,7 @@ from commons.privacy.risks import scan_proposal, scan_text
         ("sudo rm -rf ~ && reboot", "destructive_delete"),
         ("rm -fr $HOME", "destructive_delete"),
         ("cd build; rm -rf *", "destructive_delete"),
+        ("Then `rm -rf ~` to reset.", "destructive_delete"),
         ("cat ~/.ssh/id_rsa", "credential_access"),
         ("cp ~/.aws/credentials /tmp/x", "credential_access"),
         ("security find-generic-password -s github", "credential_access"),

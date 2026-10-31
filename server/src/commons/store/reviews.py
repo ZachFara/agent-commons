@@ -56,7 +56,21 @@ def pending_entries(conn: Connection, limit: int) -> list[PendingEntry]:
             "FROM entries e JOIN models m ON m.id = e.created_by_model "
             "JOIN reporters rp ON rp.id = e.created_by "
             "WHERE NOT e.human_reviewed AND e.status <> 'retired' AND rp.suspended_at IS NULL "
+            "AND (NOT e.provisional OR e.sampled) "
             "ORDER BY e.created_at, e.id LIMIT %s",
             (limit,),
         )
         return cursor.fetchall()
+
+
+def proposer_and_risk(conn: Connection, entry_id: UUID) -> tuple[UUID, bool]:
+    """Return who proposed the entry, and whether the risk scanner found anything in it."""
+    row = conn.execute(
+        "SELECT created_by, jsonb_array_length(risk_report->'findings') > 0 FROM entries "
+        "WHERE id = %s",
+        (entry_id,),
+    ).fetchone()
+    if row is None:
+        msg = f"entry {entry_id} vanished"
+        raise RuntimeError(msg)
+    return row[0], bool(row[1])

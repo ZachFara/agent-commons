@@ -31,6 +31,7 @@ SELECT
     m.name AS proposed_by_model, e.human_reviewed,
     coalesce(o.used_outcomes, 0) AS used_outcomes, coalesce(o.successes, 0) AS successes,
     o.last_confirmed, e.revision, e.fixed_in, e.status::text AS status, e.risk_report,
+    e.confirmed_at IS NOT NULL AS confirmed,
     tsvector_to_array(to_tsvector('english', e.symptom || ' ' || array_to_string(e.aliases, ' ')
         || ' ' || array_to_string(e.domains, ' '))) AS symptom_words,
     tsvector_to_array(to_tsvector('english', e.cause || ' ' || e.fix)) AS body_words

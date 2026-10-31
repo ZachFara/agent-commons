@@ -9,8 +9,8 @@ from commons.domain.errors import InvalidInputError
 
 # Mirror the Postgres enums review_decision and review_source.
 # retire and restore are admin lifecycle actions (decision 0026), never agent reviews.
-ReviewDecision = Literal["approve", "reject", "retire", "restore"]
-ReviewSource = Literal["agent", "human"]
+ReviewDecision = Literal["approve", "reject", "retire", "restore", "reopen"]
+ReviewSource = Literal["agent", "human", "auto"]  # auto: trust-based (decision 0028)
 REVIEW_DECISIONS: tuple[ReviewDecision, ...] = ("approve", "reject")
 
 _STATUS_FOR: dict[ReviewDecision, EntryStatus] = {
@@ -18,6 +18,7 @@ _STATUS_FOR: dict[ReviewDecision, EntryStatus] = {
     "reject": "rejected",
     "retire": "retired",
     "restore": "approved",
+    "reopen": "pending",
 }
 
 

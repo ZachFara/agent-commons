@@ -5,12 +5,14 @@ from commons.domain.errors import InvalidInputError, NotFoundError
 from commons.domain.reviews import PendingEntry, ReviewRequest, review_state, validate_review
 from commons.privacy.redaction import scrub
 from commons.service.identity import current_reporter
+from commons.service.trust import demote
 from commons.store.connection import Connection
 from commons.store.reviews import (
     add_review,
     entry_reviews,
     locked_entry_status,
     pending_entries,
+    proposer_and_risk,
     set_review_state,
 )
 
@@ -42,6 +44,10 @@ def review(conn: Connection, request: ReviewRequest) -> ReviewResult:
         add_review(conn, request, reviewed_by=reviewer)
         status, human_reviewed = review_state(entry_reviews(conn, request.entry_id))
         set_review_state(conn, request.entry_id, status, human_reviewed=human_reviewed)
+        if request.source == "human" and request.decision == "reject":
+            proposer, risky = proposer_and_risk(conn, request.entry_id)
+            if risky:
+                demote(conn, proposer)  # a risky entry costs the proposer their trust (0028)
     return ReviewResult(status=status, human_reviewed=human_reviewed)
 
 
