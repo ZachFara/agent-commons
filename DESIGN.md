@@ -58,6 +58,12 @@ retrievals
 - rank_position: int. Where the entry appeared in results.
 - score_at_retrieval: float. The ranking score at the time, so ranking changes can be evaluated later.
 
+searches
+- task_id, reporter_id, model_id, privacy_mode, created_at.
+- query: text, redacted. language, result_limit, hit_count. A hit_count of 0 is a miss: the store had nothing for it.
+- environment, results: jsonb, redacted. Only written in full_trace mode (decision 0024).
+- One row per search call, whether or not anything matched.
+
 outcomes
 - retrieval_id.
 - used: enum yes, partial, no. Determined by checking whether the entry's fix text or commands appear in the task's diff or shell history, not by asking the agent.
@@ -104,7 +110,7 @@ ranking_snapshots
 All tools return JSON. Errors are structured, never free text. The calling model is taken from the SessionStart hook's record for the task when one exists, else from the optional `model` argument, else recorded as unknown (decision 0009).
 
 search(query, task_id, environment?, limit=5, model?)
-Returns entries ranked by score. Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). Logs a retrievals row per returned entry. Results are wrapped in a `data` field with a note that contents are untrusted.
+Returns entries ranked by score. Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). Logs a searches row for every call, misses included, and a retrievals row per returned entry (decision 0024). Results are wrapped in a `data` field with a note that contents are untrusted.
 
 propose(symptom, environment, cause, fix, domains, repro?, task_id, model?)
 Creates a pending entry. The server runs secret scanning and redaction before writing. Returns the entry id and the redaction report so the human can see what was stripped.
@@ -143,8 +149,8 @@ Hook details, including what stays on the user's machine, are in decision 0016. 
 Three modes per reporter, overridable per task.
 
 - local: nothing leaves the machine. Entries and outcomes go to the local store only. `local` decides where a write goes, not a field on the row: local entries are stored with privacy_mode entry, and a reporter whose mode is local never writes to a hosted store (decision 0014).
-- entry (default): structured entries and outcomes are shared. No traces.
-- full_trace: the full redacted session trace is attached to entries and outcomes. For homework, hobby projects, and anyone who has decided they don't care.
+- entry (default): structured entries and outcomes are shared, and searches are logged with the redacted query and hit count. No traces.
+- full_trace: the full redacted session trace is attached to entries and outcomes, and logged searches also keep the redacted environment and the entries returned. For homework, hobby projects, and anyone who has decided they don't care.
 
 Rules that apply in every mode:
 
@@ -152,6 +158,7 @@ Rules that apply in every mode:
 - Reporters are pseudonymous, never anonymous, and the README says so. Repo names, paths, and writing style identify people.
 - A reporter can consent for their own work only. The server's instructions tell the agent to downgrade full_trace to entry when the session touches code with another author in git blame.
 - Traces are evidence for analysis and are never returned by search or included in exports by default.
+- A search is logged under its task's privacy mode, falling back to the reporter's default (decision 0024). Server logs record which tool ran, for whom, and how it went, never queries or entry text.
 
 ## 7. Ranking and attribution
 

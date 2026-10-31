@@ -83,6 +83,12 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 | T35 | done | First: hold-out scenarios from real post-cutoff breaking changes (owner, 2026-10-25), verified by transcript. Then experiments on what the agent sees, one named condition at a time, developed on `docs-retry-flag` + `version-silent-rename`, measured on the hold-out set: (a) argument descriptions with examples so `propose`/`search` succeed first time; (b) Stop-hook nudge to propose when the agent searched, found nothing, then fixed failing tests; (c) instruction wording | Each condition has a report with the same run count as the baseline; changes that measurably help are adopted, the rest are recorded |
 | T36 | done | Eval report with charts (funnel per scenario and condition, rates with intervals, proposal quality) published as a shareable page; raw results committed under `docs/eval/` | Page link in PROGRESS; raw JSON in the repo |
 
+### Observability (owner request, 2026-10-31)
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T37 | done | Log every search, misses included, by privacy mode; one structured log line per MCP tool call; dashboard Searches page (decision 0024) | Tests: misses logged, query redacted, full_trace extras only in full_trace (DB check too), task mode wins, preview and invalid calls log nothing, call lines carry no query text; page renders |
+
 ### DESIGN Phase 3 (after a month of data)
 
 - cq adapter, counterfactual runner, decay/absorption flags, model attribution, `commons export`,
@@ -92,7 +98,8 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 
 Raise new ones here. Do not resolve a question by guessing in code.
 
-None right now.
+- Retention: nothing prunes `searches`, and Cloud Logging keeps call lines for its default 30
+  days. Fine at current volume; decide a policy before the store has many users (decision 0024).
 
 Resolved 2026-10-24 by owner: review model (decision 0005), hook location (decision 0006),
 seed entries come from real use rather than a manual batch (T18), admin dashboard added (T19-T20),
@@ -306,3 +313,6 @@ being enough; whether anyone uses full_trace.
   re-runs the confirmation on both models; docs/eval/README.md "Re-running the eval" covers the
   rest. Transcripts archived outside the repo at
   ~/Development/agent-commons-eval-archive/eval-2026-10-25.tar.gz; `.scratch/` emptied.
+- 2026-10-31: T37 search log and call log (decision 0024). Searches with no match were invisible:
+  `retrievals` needs an entry. Owner chose the existing privacy modes over a new one. Over stdio
+  the call log must stay off stdout (the MCP channel).
