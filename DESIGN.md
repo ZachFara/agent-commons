@@ -110,10 +110,10 @@ ranking_snapshots
 All tools return JSON. Errors are structured, never free text. The calling model is taken from the SessionStart hook's record for the task when one exists, else from the optional `model` argument, else recorded as unknown (decision 0009).
 
 search(query, task_id, environment?, limit=5, model?)
-Returns entries ranked by score. Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). Logs a searches row for every call, misses included, and a retrievals row per returned entry (decision 0024). Results are wrapped in a `data` field with a note that contents are untrusted.
+Returns entries ranked by score. Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). Logs a searches row for every call, misses included, and a retrievals row per returned entry (decision 0024). Results are wrapped in a `data` field with a note that contents are untrusted. A `store` field names where the call went: the hosted server's URL, or `local`.
 
 propose(symptom, environment, cause, fix, domains, repro?, task_id, model?)
-Creates a pending entry. The server runs secret scanning and redaction before writing. Returns the entry id and the redaction report so the human can see what was stripped.
+Creates a pending entry. The server runs secret scanning and redaction before writing. Returns the entry id, the redaction report so the human can see what was stripped, and the `store` it was written to.
 
 report(task_id, entry_id, agent_assessment, outcome?, evidence?)
 Files an outcome. If hooks already wrote observed evidence for this task, the server merges and the observed fields win. The outcome attaches to the earliest retrieval of the entry in the task; `evidence.outcome_source` records whether a hook or the agent set it. The agent's assessment is stored but never overwrites an observed outcome.

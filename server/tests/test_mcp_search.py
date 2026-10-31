@@ -167,3 +167,8 @@ def test_invalid_search_is_a_structured_error(
     result = search(server, **arguments)
     assert result["error"]["code"] == "invalid_input"
     assert message in result["error"]["message"]
+
+
+def test_search_names_the_local_store(server: FastMCP, reporter: uuid.UUID) -> None:
+    del reporter
+    assert search(server)["store"] == "local"

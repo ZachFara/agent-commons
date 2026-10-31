@@ -75,6 +75,18 @@ def test_a_valid_key_acts_as_its_reporter(hosted: FastMCP, db: psycopg.Connectio
     assert row == ("alice-hosted",)
 
 
+def test_hosted_responses_name_the_server_as_the_store(
+    hosted: FastMCP, db: psycopg.Connection
+) -> None:
+    """A session left on the local server after a switch can tell the two apart (T38)."""
+    key = create_key(db, "erin-hosted", admin=False)
+    proposed = call_http(hosted, key, "propose", PROPOSAL)
+    found = call_http(hosted, key, "search", {"query": "hostedcheck", "task_id": str(uuid.uuid4())})
+    assert proposed["store"] == found["store"]
+    assert proposed["store"].startswith("http")
+    assert not proposed["store"].endswith("/")
+
+
 def test_hosted_calls_log_the_key_holder(
     hosted: FastMCP, db: psycopg.Connection, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -31,6 +31,7 @@ def test_propose_creates_pending_entry(server: FastMCP, db: psycopg.Connection) 
 
     assert result["status"] == "pending"
     assert result["redaction_report"] == {"scanned": True, "findings": []}
+    assert result["store"] == "local"
     row = db.execute(
         "SELECT e.symptom, e.domains, e.repro, e.task_id::text, e.human_reviewed, m.name "
         "FROM entries e JOIN models m ON m.id = e.created_by_model WHERE e.id = %s",
