@@ -117,7 +117,8 @@ Dependencies are noted.
 | T51 | done | Review at scale: roles, trust levels with sampled review, outcome confirmation, queue-age alert (0028; needs T44, T50, T43) | Tests per trust level and demotion; risky findings always force the queue |
 | T52 | done | Switching stores: store bound at session start, stale local server refuses, `join` and `doctor` warn, `commons import --from-local` (0031; import needs T49) | Tests reproduce the 2026-10-31 split and show it can't happen; import dry run and real run |
 | T53 | done (session line off until an eval; no digest) | Contributor feedback: "Your entries" page and `commons mine`; SessionStart line and digest only after measurement (0035; needs T44 scopes) | Scoping test: one reporter can't see another's entries |
-| T54 | todo | Reliable propose and report: multi-turn eval scenarios, then measure the per-turn nudge, `/commons:record`, the SKILL.md plugin, a wider trigger; survey other clients' hooks (0034) | Each change adopted only on evidence on Sonnet and Opus, as in decision 0023 |
+| T54 | built, off; waits for an eval run | Reliable propose and report: multi-turn eval scenarios, then measure the per-turn nudge, `/commons:record`, the SKILL.md plugin, a wider trigger; survey other clients' hooks (0034) | Each change adopted only on evidence on Sonnet and Opus, as in decision 0023 |
+| T55 | todo | Hook adapters for Codex CLI and Cursor (decision 0034 step 5): parse their hook payloads into the same derived observations | Tests per client payload; a session on each records test runs and turn ends |
 
 ### DESIGN Phase 3 (after a month of data)
 

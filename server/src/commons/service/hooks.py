@@ -4,12 +4,14 @@ These run where the database is: in the hook process locally, on the server when
 Everything that reads the user's machine (spool, transcript) is in `hook_client`.
 """
 
+import os
 from dataclasses import dataclass
 from uuid import UUID
 
 from commons.domain.errors import NotPermittedError
 from commons.domain.outcomes import ObservedRun, merge_observation
 from commons.domain.usage import ArtifactFrequencies, UseObservation, count_artifacts
+from commons.service.agent_text import TURN_NUDGE
 from commons.service.identity import current_reporter
 from commons.service.ranking import rank, ranking_is_stale
 from commons.store.connection import Connection
@@ -18,7 +20,9 @@ from commons.store.models import model_id
 from commons.store.outcomes import locked_outcome, save_outcome, set_used
 from commons.store.task_events import (
     TaskRetrieval,
+    acted_in_turn,
     add_task_event,
+    end_turn,
     set_task_model,
     task_for_session,
     task_retrievals,
@@ -76,6 +80,7 @@ class StopResult:
     unreported: list[UUID]
     fixed_failing_tests: bool = False  # a failing test run followed later by a passing one
     searched: bool = False  # the task has at least one retrieval
+    nudge: str | None = None  # the store's per-turn nudge, when it is on (decision 0034)
 
 
 def fixed_failing_tests(runs: list[ObservedRun]) -> bool:
@@ -111,12 +116,29 @@ def finish_turn(
         for item in retrieved:
             seen = used.get(item.retrieval_id, UseObservation(None))
             _record_observation(conn, item, runs, seen, paired=paired)
+        nudge = _turn_nudge(conn, task_id, runs)
     return StopResult(
         task_id,
         [item.entry_id for item in retrieved if not item.reported],
         fixed_failing_tests=fixed_failing_tests(runs),
         searched=bool(retrieved),
+        nudge=nudge,
     )
+
+
+def _turn_nudge(conn: Connection, task_id: UUID, runs: list[ObservedRun]) -> str | None:
+    """Return the per-turn nudge if it is on and this turn earned it; mark the turn ended.
+
+    It fires when the turn saw a failing test become a passing one with no search and no
+    proposal in the turn (decision 0034).
+    """
+    since = end_turn(conn, task_id)
+    if os.environ.get("COMMONS_TURN_NUDGE", "off").strip().lower() != "on":
+        return None
+    turn = [run for run in runs if since is None or run.at > since]
+    if not fixed_failing_tests(turn) or acted_in_turn(conn, task_id, since):
+        return None
+    return TURN_NUDGE.format(task_id=task_id)
 
 
 def _record_observation(

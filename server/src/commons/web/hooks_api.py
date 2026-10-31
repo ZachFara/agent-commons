@@ -263,4 +263,5 @@ def _stop(conn: Connection, body: Body) -> Body:
         "unreported": [str(e) for e in result.unreported],
         "fixed_failing_tests": result.fixed_failing_tests,
         "searched": result.searched,
+        "nudge": result.nudge,
     }

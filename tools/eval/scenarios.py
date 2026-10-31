@@ -660,4 +660,26 @@ CONTROLS = [
 LOOP = [KNOWN, INJECTION, KNOWN_DEFAULT_FLIP]
 
 DEVELOPMENT = {s.name: s for s in (*DISCOVERY, *CONTROLS, *LOOP)}
-SCENARIOS = {**DEVELOPMENT, **HOLDOUT}
+
+
+# Multi-turn (decision 0034): the failure seen in practice on 2026-10-31. An agent proposed the
+# first library surprise of a session and missed later ones. The second task arrives through
+# `--resume` after the first turn ends; a good session proposes both.
+def _two_turns(name: str, first: Scenario, second: Scenario) -> Scenario:
+    return Scenario(
+        name=name,
+        trigger=first.trigger,
+        files=first.files,
+        libraries=first.libraries,
+        discovery=first.discovery,
+        expect=Expect(search=True, propose=True, report=False, proposals=2),
+        then=second,
+    )
+
+
+MULTI_TURN = [
+    _two_turns("multi-turn-rename-then-default", VERSION_SILENT_RENAME, VERSION_DEFAULT_FLIP),
+    # the second surprise is a changed default the docs still describe the old way
+    _two_turns("multi-turn-retry-then-timezone", DOCS_RETRY, DOCS_TIMEZONE),
+]
+SCENARIOS = {**DEVELOPMENT, **HOLDOUT, **{s.name: s for s in MULTI_TURN}}
