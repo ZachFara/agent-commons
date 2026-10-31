@@ -52,9 +52,10 @@ def pending_entries(conn: Connection, limit: int) -> list[PendingEntry]:
             "SELECT e.id AS entry_id, e.created_at, e.status, e.symptom, e.environment, e.cause, "
             "e.fix, e.repro, e.domains, m.name AS proposed_by_model, "
             "(SELECT count(*) FROM reviews r WHERE r.entry_id = e.id) AS agent_reviews, "
-            "e.redaction_report "
+            "e.redaction_report, e.risk_report "
             "FROM entries e JOIN models m ON m.id = e.created_by_model "
-            "WHERE NOT e.human_reviewed AND e.status <> 'retired' "
+            "JOIN reporters rp ON rp.id = e.created_by "
+            "WHERE NOT e.human_reviewed AND e.status <> 'retired' AND rp.suspended_at IS NULL "
             "ORDER BY e.created_at, e.id LIMIT %s",
             (limit,),
         )

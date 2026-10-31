@@ -158,6 +158,8 @@ machine with Docker and a DNS name pointing at it (ports 80 and 443 open).
    [--expires 90d]`, `key list`, `key rotate <prefix>` (the old key keeps working for 24 hours
    unless `--now`) and `key revoke <prefix>`. Keys can also be created and revoked on the
    dashboard's People page. Agent sessions use agent keys; `commons join` refuses admin keys.
+   To remove a bad actor in one step, `commons admin revoke <pseudonym> --purge --reason ...
+   --by <you>` (reversible with `--restore`; decision 0029).
 4. Admins review proposals at `https://<domain>/`. The browser asks for a user name (anything)
    and a password (an admin key, or a review key for the review pages only).
 

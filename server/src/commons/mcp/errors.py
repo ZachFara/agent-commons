@@ -16,9 +16,12 @@ from commons.domain.errors import (
     NotFoundError,
     NotInitializedError,
     NotPermittedError,
+    RateLimitedError,
 )
 
-ErrorCode = Literal["invalid_input", "not_initialized", "not_found", "forbidden", "internal"]
+ErrorCode = Literal[
+    "invalid_input", "not_initialized", "not_found", "forbidden", "rate_limited", "internal"
+]
 INVALID_INPUT: ErrorCode = "invalid_input"
 INTERNAL: ErrorCode = "internal"
 _CODES: dict[type[Exception], ErrorCode] = {
@@ -26,6 +29,7 @@ _CODES: dict[type[Exception], ErrorCode] = {
     NotInitializedError: "not_initialized",
     NotFoundError: "not_found",
     NotPermittedError: "forbidden",
+    RateLimitedError: "rate_limited",
 }
 _INTERNAL_MESSAGE = "Unexpected server error; see server logs."
 
@@ -45,6 +49,9 @@ def structured_errors() -> Iterator[None]:
     """
     try:
         yield
+    except RateLimitedError as error:
+        payload = {"code": "rate_limited", "message": str(error), "retry_after": error.retry_after}
+        raise ToolError(json.dumps({"error": payload})) from error
     except (InvalidInputError, NotInitializedError, NotFoundError, NotPermittedError) as error:
         raise tool_error(_CODES[type(error)], str(error)) from error
     except Exception as error:

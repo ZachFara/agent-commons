@@ -54,3 +54,17 @@ Consequences: obvious attacks and accidents are caught before review, and a bad 
 removed quickly and completely. Pattern scanning is evasion-prone and will need upkeep. False
 positives, such as a legitimate `rm -rf node_modules`, only add a label, never a block. Rate
 limits need a counter table and add one query per call.
+
+Implementation notes (T50, 2026-10-31):
+- Scanner: `commons.privacy.risks`, run on `propose` and admin edits after redaction. Each
+  pattern has a test, with look-alikes it must ignore (`rm -rf node_modules`, pinned installs,
+  `cp .env.example .env`, ...). Labels live in `commons.domain.risks`.
+- Rate limits: counted per key and window in `rate_counts`, so they hold across instances.
+  Defaults as decided; `COMMONS_RATE_LIMIT_PROPOSE|SEARCH|REPORT` override the call counts.
+  Local stdio calls carry no key and are not limited, and the hook API is not limited.
+  `commons retain` prunes old windows.
+- Purge: revokes keys, retires approved entries, excludes the reporter's outcomes (one
+  corrections batch), and suspends the reporter. Pending entries are held out of the queue by
+  the suspension rather than rejected, because a rejection can't be cleanly undone. `--restore`
+  (or Restore on the People page) reverses exactly what the `purges` row recorded.
+- Provenance shows risk labels on approved entries that have findings, so agents see them.

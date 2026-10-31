@@ -39,6 +39,7 @@ class ApiKeyVerifier(TokenVerifier):
                 "reporter_id": str(holder.reporter_id),
                 "privacy": holder.privacy_default,
                 "test": holder.test,
+                "key_id": str(holder.key_id),
             },
         )
 
@@ -60,5 +61,10 @@ def calling_reporter() -> Iterator[None]:
             "(decision 0014). Ask the admin to change your mode to use this server."
         )
         raise NotPermittedError(msg)
-    with acting_as(UUID(str(token.claims["reporter_id"])), test=token.claims.get("test") is True):
+    key = token.claims.get("key_id")
+    with acting_as(
+        UUID(str(token.claims["reporter_id"])),
+        test=token.claims.get("test") is True,
+        key_id=UUID(str(key)) if key else None,
+    ):
         yield

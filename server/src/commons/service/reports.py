@@ -5,6 +5,7 @@ from commons.domain.errors import NotFoundError
 from commons.domain.outcomes import OutcomeRecord, Report, merge_report, validate_report
 from commons.privacy.redaction import scrub, scrub_json
 from commons.service.identity import current_reporter
+from commons.service.rates import limit
 from commons.store.connection import Connection
 from commons.store.outcomes import locked_outcome, save_outcome, task_retrieval
 
@@ -26,6 +27,7 @@ def report(conn: Connection, request: Report) -> ReportResult:
         evidence=None if request.evidence is None else scrub_json(request.evidence),
     )
     with conn.transaction():
+        limit(conn, "report")
         reporter = current_reporter(conn)
         retrieval_id = task_retrieval(conn, request.task_id, request.entry_id, reporter)
         if retrieval_id is None:

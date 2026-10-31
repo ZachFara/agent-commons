@@ -4,6 +4,7 @@ from uuid import UUID
 from psycopg.rows import dict_row
 
 from commons.domain.lifecycle import shown_despite_fix
+from commons.domain.risks import risk_labels
 from commons.domain.search import (
     GENERIC_WORDS,
     MIN_RELEVANCE,
@@ -29,7 +30,7 @@ SELECT
     coalesce(s.score, 0.5) AS score,
     m.name AS proposed_by_model, e.human_reviewed,
     coalesce(o.used_outcomes, 0) AS used_outcomes, coalesce(o.successes, 0) AS successes,
-    o.last_confirmed, e.revision, e.fixed_in, e.status::text AS status,
+    o.last_confirmed, e.revision, e.fixed_in, e.status::text AS status, e.risk_report,
     tsvector_to_array(to_tsvector('english', e.symptom || ' ' || array_to_string(e.aliases, ' ')
         || ' ' || array_to_string(e.domains, ' '))) AS symptom_words,
     tsvector_to_array(to_tsvector('english', e.cause || ' ' || e.fix)) AS body_words
@@ -106,6 +107,7 @@ def find_entries(conn: Connection, request: SearchRequest) -> list[SearchHit]:
         if fit >= MIN_RELEVANCE:
             versions = version_factor(asked_libraries, candidate["environment"].get("libraries"))
             values = {k: v for k, v in candidate.items() if k in _HIT_FIELDS}
+            values["risks"] = tuple(risk_labels(candidate["risk_report"]))
             hits.append(SearchHit(**{**values, "score": fit * versions * candidate["score"]}))
     hits.sort(key=lambda hit: hit.score, reverse=True)
     return hits[: request.limit]

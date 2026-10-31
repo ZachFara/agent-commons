@@ -15,6 +15,7 @@
     <dt>environment</dt><dd class="mono">{{ e.environment | tojson }}</dd>
     <dt>domains</dt><dd>{{ e.domains | join(", ") }}</dd>
     <dt>redacted</dt><dd>{% for f in e.redaction_report.findings %}<span class="badge warn">{{ f.count }} {{ f.kind | replace("_", " ") }} in {{ f.field }}</span> {% else %}{{ "nothing" if e.redaction_report.scanned else "not scanned (proposed before secret scanning)" }}{% endfor %}</dd>
+    <dt>risks</dt><dd>{% for f in e.risk_report.findings %}<span class="badge bad">{{ f.kind | replace("_", " ") }} in {{ f.field }}{% if f.count > 1 %} ×{{ f.count }}{% endif %}</span> {% else %}{{ "none found" if e.risk_report.scanned else "not scanned (proposed before risk scanning)" }}{% endfor %}</dd>
   </dl>
   {% for d in duplicates.get(e.entry_id, []) %}<div class="notice" style="margin: 8px 0">
     {% if d.retry %}<span class="badge warn">same task: likely a retry</span> {% endif %}Looks like

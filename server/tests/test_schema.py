@@ -49,6 +49,17 @@ TABLES = {
         "aliases",
         "duplicate_candidates",
         "duplicate_of",
+        "risk_report",
+    },
+    "purges": {
+        "reporter_id",
+        "purged_by",
+        "reason",
+        "keys",
+        "retired_entries",
+        "correction_batch",
+        "restored_at",
+        "restored_by",
     },
     "distinct_pairs": {"entry_a", "entry_b", "decided_by"},
     "entry_revisions": {
@@ -114,7 +125,7 @@ TABLES = {
         "wall_clock_seconds",
         "excluded",
     },
-    "reporters": {"pseudonym", "reliability", "privacy_default"},
+    "reporters": {"pseudonym", "reliability", "privacy_default", "suspended_at"},
     "api_keys": {
         "reporter_id",
         "prefix",

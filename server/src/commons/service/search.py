@@ -4,6 +4,7 @@ from commons.domain.search import SearchHit, SearchRequest, validate_search
 from commons.privacy.redaction import scrub
 from commons.privacy.search_log import search_record
 from commons.service.identity import current_model, current_reporter, test_traffic
+from commons.service.rates import limit
 from commons.store.connection import Connection
 from commons.store.retrievals import record_retrievals
 from commons.store.search import find_entries
@@ -18,6 +19,7 @@ def search(conn: Connection, request: SearchRequest, model: str | None) -> list[
     """
     validate_search(request)
     with conn.transaction():
+        limit(conn, "search")
         reporter = current_reporter(conn)
         model_row = current_model(conn, model)
         hits = find_entries(conn, request)

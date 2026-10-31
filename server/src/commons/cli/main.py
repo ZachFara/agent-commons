@@ -29,15 +29,25 @@ from commons.domain.keys import KEY_SCOPES, KeyInfo, KeyOptions, KeyScope, parse
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchRequest
-from commons.service import corrections, doctor, keys, ranking, retention, reviews, seeds
+from commons.service import (
+    corrections,
+    doctor,
+    keys,
+    purges,
+    ranking,
+    retention,
+    reviews,
+    seeds,
+)
 from commons.service import search as search_service
 from commons.service import status as status_service
 from commons.service.hook_client import RemoteBackend, remote_client
 from commons.service.hook_install import default_settings_path, install_hooks
-from commons.service.identity import init_reporter, save_server
+from commons.service.identity import acting_as, init_reporter, save_server
 from commons.store import insights
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
+from commons.store.reporters import find_reporter
 
 
 def _migrate(_args: argparse.Namespace) -> int:
@@ -140,6 +150,12 @@ def _admin_arguments(parser: argparse.ArgumentParser) -> None:
     _key_arguments(key)
     correct = actions.add_parser("correct", help="Correct or exclude recorded data (audited).")
     _correct_arguments(correct)
+    revoke = actions.add_parser("revoke", help="Revoke a reporter's keys; --purge their data.")
+    revoke.add_argument("pseudonym")
+    revoke.add_argument("--purge", action="store_true", help="Also retire, exclude, suspend.")
+    revoke.add_argument("--restore", action="store_true", help="Reverse their latest purge.")
+    revoke.add_argument("--reason", help="Why (required with --purge).")
+    revoke.add_argument("--by", help="Who is acting (your pseudonym; needed for --purge).")
 
 
 def _correct_arguments(parser: argparse.ArgumentParser) -> None:
@@ -181,10 +197,9 @@ def _key_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _admin(args: argparse.Namespace) -> int:
     action: str = args.admin_action
-    if action == "key":
-        return _key(args)
-    if action == "correct":
-        return _correct(args)
+    delegated = {"key": _key, "correct": _correct, "revoke": _revoke}
+    if action in delegated:
+        return delegated[action](args)
     pseudonym: str = args.pseudonym
     if action == "invite" and not args.server:
         msg = "invite needs --server, the URL your friend will connect to."
@@ -239,6 +254,34 @@ def _key(args: argparse.Namespace) -> int:
         sys.stdout.write(onboarding.invite_message(args.server, new.key) + "\n")
     else:
         sys.stdout.write(new.key + "\n")
+    return 0
+
+
+def _revoke(args: argparse.Namespace) -> int:
+    pseudonym: str = args.pseudonym
+    with connect() as conn:
+        if not (args.purge or args.restore):
+            count = purges.revoke_all(conn, pseudonym)
+            sys.stdout.write(f"revoked {count} key(s) of {pseudonym}\n")
+            return 0
+        if not args.by:
+            msg = "--purge and --restore need --by <your pseudonym>."
+            raise InvalidInputError(msg)
+        actor = find_reporter(conn, args.by)
+        if actor is None:
+            msg = f"No reporter {args.by!r}."
+            raise NotFoundError(msg)
+        with acting_as(actor):
+            if args.restore:
+                done = purges.restore(conn, pseudonym)
+                verb = "restored"
+            else:
+                done = purges.purge(conn, pseudonym, args.reason or "")
+                verb = "purged"
+    sys.stdout.write(
+        f"{verb} {pseudonym}: {done.keys} key(s), {done.entries} entr(ies), "
+        f"{done.outcomes} outcome(s)\n"
+    )
     return 0
 
 

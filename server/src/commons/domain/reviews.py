@@ -67,3 +67,4 @@ class PendingEntry:
     proposed_by_model: str
     agent_reviews: int
     redaction_report: dict[str, object]
+    risk_report: dict[str, object]
