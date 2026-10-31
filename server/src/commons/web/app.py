@@ -25,10 +25,12 @@ from commons.domain.corrections import (
     Correction,
     parse_value,
 )
+from commons.domain.entries import Proposal
 from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializedError
 from commons.domain.keys import KEY_SCOPES, KeyOptions, KeyScope, NewKey, parse_duration
+from commons.domain.lifecycle import FixedIn
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
-from commons.service import corrections, keys, reviews
+from commons.service import corrections, keys, lifecycle, reviews
 from commons.service.identity import current_pseudonym, serving_hosted
 from commons.store import insights
 from commons.store.connection import Connection, connect
@@ -70,6 +72,7 @@ class Dashboard:
         data = await self._load(
             lambda conn: {
                 "entries": insights.entries(conn, status=status, query=query, order=order),
+                "stale": insights.stale_candidates(conn),
                 "query": query,
                 "status_filter": status,
                 "order": order,
@@ -104,6 +107,67 @@ class Dashboard:
     async def people(self, request: Request) -> Response:
         """Render reporters, their keys, and models."""
         return self._render(request, "people.html", "people", await self._load(_people_data))
+
+    async def edit_entry(self, request: Request) -> Response:
+        """Save edited entry text as a new revision (decision 0026)."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        form = await request.form()
+        text = {k: str(form.get(k) or "") for k in ("symptom", "cause", "fix", "repro", "reason")}
+        entry_id: UUID = request.path_params["entry_id"]
+
+        def run() -> str:
+            with self._connection() as conn:
+                current = insights.entry(conn, entry_id)
+                if current is None:
+                    msg = f"No entry {entry_id}."
+                    raise NotFoundError(msg)
+                content = Proposal(
+                    symptom=text["symptom"],
+                    environment=current["environment"],
+                    cause=text["cause"],
+                    fix=text["fix"],
+                    domains=tuple(current["domains"]),
+                    repro=text["repro"].strip() or None,
+                    task_id=UUID(int=0),
+                )
+                revision = lifecycle.edit_entry(conn, entry_id, content, text["reason"])
+            return f"Saved revision {revision}."
+
+        return await self._act(request, run)
+
+    async def retire_entry(self, request: Request) -> Response:
+        """Retire an entry, optionally naming the fix release or its replacement."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        form = await request.form()
+        fields = {k: str(form.get(k) or "").strip() for k in ("reason", "fixed_in", "replacement")}
+        entry_id: UUID = request.path_params["entry_id"]
+
+        def run() -> str:
+            fixed_in = FixedIn.parse(fields["fixed_in"]) if fields["fixed_in"] else None
+            successor = UUID(fields["replacement"]) if fields["replacement"] else None
+            with self._connection() as conn:
+                lifecycle.retire(
+                    conn, entry_id, fields["reason"], fixed_in=fixed_in, superseded_by=successor
+                )
+            return "Retired." if successor is None else "Superseded."
+
+        return await self._act(request, run)
+
+    async def restore_entry(self, request: Request) -> Response:
+        """Return a retired entry to search."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        reason = str((await request.form()).get("reason") or "")
+        entry_id: UUID = request.path_params["entry_id"]
+
+        def run() -> str:
+            with self._connection() as conn:
+                lifecycle.restore(conn, entry_id, reason)
+            return "Restored."
+
+        return await self._act(request, run)
 
     async def corrections(self, request: Request) -> Response:
         """Render every correction, with undo (decision 0030)."""
@@ -301,6 +365,7 @@ def _entry_data(conn: Connection, entry_id: UUID) -> dict[str, Any]:
     history = insights.score_history(conn, entry_id)
     return {
         "e": insights.entry(conn, entry_id),
+        "revisions": insights.entry_revisions(conn, entry_id),
         "reviews": insights.entry_reviews(conn, entry_id),
         "history": charts.line([(row["computed_at"], row["score"]) for row in history]),
         "retrievals": insights.entry_retrievals(conn, entry_id),
@@ -331,6 +396,9 @@ def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute
         ("/entries/{entry_id:uuid}/review", pages.review, "POST", "review"),
         ("/keys", pages.create_key, "POST", "admin"),
         ("/corrections", pages.corrections, "GET", "admin"),
+        ("/entries/{entry_id:uuid}/edit", pages.edit_entry, "POST", "admin"),
+        ("/entries/{entry_id:uuid}/retire", pages.retire_entry, "POST", "admin"),
+        ("/entries/{entry_id:uuid}/restore", pages.restore_entry, "POST", "admin"),
         ("/corrections", pages.correct, "POST", "admin"),
         ("/corrections/{correction_id:uuid}/undo", pages.undo_correction, "POST", "admin"),
         ("/tasks/{task_id:uuid}/exclude", pages.exclude_task, "POST", "admin"),

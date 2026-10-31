@@ -273,3 +273,50 @@ def corrections(conn: Connection, limit: int = 200) -> list[Row]:
         "ORDER BY created_at DESC LIMIT %(limit)s",
         {"limit": limit},
     )
+
+
+def entry_revisions(conn: Connection, entry_id: UUID) -> list[Row]:
+    """Every version of the entry's text, newest first (decision 0026)."""
+    return _rows(
+        conn,
+        "SELECT revision, created_at, source, edited_by, reason, symptom, cause, fix "
+        "FROM entry_revisions WHERE entry_id = %(id)s ORDER BY revision DESC",
+        {"id": entry_id},
+    )
+
+
+STALE_DAYS = 90
+
+
+def stale_candidates(conn: Connection, limit: int = 20) -> list[Row]:
+    """Approved entries to retire or revise (decision 0026, until Phase 3's flags).
+
+    Still retrieved in the last 90 days but no successful use in that time, or used at
+    least 3 times in the last 30 days with under half of those working.
+    """
+    return _rows(
+        conn,
+        "SELECT e.id, e.symptom, "
+        "(SELECT count(*) FROM counted_retrievals r WHERE r.entry_id = e.id "
+        "  AND r.created_at > now() - make_interval(days => %(days)s)) AS retrievals, "
+        "(SELECT max(o.created_at) FROM counted_outcomes o JOIN counted_retrievals r "
+        "  ON r.id = o.retrieval_id WHERE r.entry_id = e.id AND o.used IN ('yes', 'partial') "
+        "  AND o.outcome = ANY(%(success)s::outcome_kind[])) AS last_success, "
+        "recent.used, recent.worked "
+        "FROM entries e LEFT JOIN LATERAL ("
+        "  SELECT count(*) AS used, "
+        "    count(*) FILTER (WHERE o.outcome = ANY(%(success)s::outcome_kind[])) AS worked "
+        "  FROM counted_outcomes o JOIN counted_retrievals r ON r.id = o.retrieval_id "
+        "  WHERE r.entry_id = e.id AND o.used IN ('yes', 'partial') "
+        "  AND o.created_at > now() - interval '30 days') recent ON true "
+        "WHERE e.status = 'approved' AND e.superseded_by IS NULL "
+        "AND ((SELECT count(*) FROM counted_retrievals r WHERE r.entry_id = e.id "
+        "      AND r.created_at > now() - make_interval(days => %(days)s)) > 0 "
+        "     AND NOT EXISTS (SELECT 1 FROM counted_outcomes o JOIN counted_retrievals r "
+        "       ON r.id = o.retrieval_id WHERE r.entry_id = e.id "
+        "       AND o.used IN ('yes', 'partial') AND o.outcome = ANY(%(success)s::outcome_kind[]) "
+        "       AND o.created_at > now() - make_interval(days => %(days)s)) "
+        "  OR (recent.used >= 3 AND recent.worked * 2 < recent.used)) "
+        "ORDER BY retrievals DESC LIMIT %(limit)s",
+        {"days": STALE_DAYS, "limit": limit, **_SUCCESS},
+    )

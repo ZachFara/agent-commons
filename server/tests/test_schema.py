@@ -20,7 +20,7 @@ ENUMS = {
         "abandoned",
         "unknown",
     ],
-    "review_decision": ["approve", "reject"],
+    "review_decision": ["approve", "reject", "retire", "restore"],
     "review_source": ["agent", "human"],
 }
 
@@ -43,6 +43,23 @@ TABLES = {
         "task_id",
         "redaction_report",
         "search_vector",
+        "revision",
+        "superseded_by",
+        "fixed_in",
+    },
+    "entry_revisions": {
+        "entry_id",
+        "revision",
+        "symptom",
+        "environment",
+        "cause",
+        "fix",
+        "repro",
+        "domains",
+        "source",
+        "edited_by",
+        "reason",
+        "redaction_report",
     },
     "reviews": {"entry_id", "reviewed_by", "decision", "reason", "source"},
     "retrievals": {
@@ -54,6 +71,7 @@ TABLES = {
         "rank_position",
         "score_at_retrieval",
         "excluded",
+        "revision",
     },
     "searches": {
         "task_id",

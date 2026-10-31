@@ -68,6 +68,8 @@ class SearchHit:
     used_outcomes: int
     successes: int
     last_confirmed: datetime | None
+    revision: int = 1
+    fixed_in: dict[str, str] | None = None  # set only on a retired entry shown to older versions
 
     def provenance(self) -> str:
         """One line on where the entry came from and how it has held up."""
@@ -83,6 +85,9 @@ class SearchHit:
         parts = [f"proposed by {self.proposed_by_model}", rate, confirmed]
         if not self.human_reviewed:
             parts.append("unreviewed")
+        if self.fixed_in:
+            library, version = self.fixed_in.get("library"), self.fixed_in.get("version")
+            parts.append(f"fixed in {library} {version}; shown because you're on an older one")
         return "; ".join(parts)
 
 

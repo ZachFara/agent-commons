@@ -2,6 +2,7 @@ from dataclasses import fields
 
 from psycopg.rows import dict_row
 
+from commons.domain.lifecycle import shown_despite_fix
 from commons.domain.search import (
     GENERIC_WORDS,
     MIN_RELEVANCE,
@@ -27,7 +28,7 @@ SELECT
     coalesce(s.score, 0.5) AS score,
     m.name AS proposed_by_model, e.human_reviewed,
     coalesce(o.used_outcomes, 0) AS used_outcomes, coalesce(o.successes, 0) AS successes,
-    o.last_confirmed,
+    o.last_confirmed, e.revision, e.fixed_in, e.status::text AS status,
     tsvector_to_array(to_tsvector('english',
         e.symptom || ' ' || array_to_string(e.domains, ' '))) AS symptom_words,
     tsvector_to_array(to_tsvector('english', e.cause || ' ' || e.fix)) AS body_words
@@ -38,7 +39,8 @@ LEFT JOIN LATERAL (
 ) s ON true
 LEFT JOIN ({stats}) o ON o.entry_id = e.id
 WHERE q.text <> ''
-  AND e.status = 'approved'
+  AND e.superseded_by IS NULL
+  AND (e.status = 'approved' OR (e.status = 'retired' AND e.fixed_in IS NOT NULL))
   AND e.search_vector @@ q.text::tsquery
   AND (
       %(language)s::text IS NULL
@@ -86,6 +88,11 @@ def find_entries(conn: Connection, request: SearchRequest) -> list[SearchHit]:
     asked_libraries = (request.environment or {}).get("libraries")
     hits = []
     for candidate in candidates:
+        retired = candidate["status"] == "retired"
+        if retired and not shown_despite_fix(candidate["fixed_in"], asked_libraries):
+            continue  # retired, and the caller is on a fixed version (decision 0026)
+        if not retired:
+            candidate["fixed_in"] = None
         lexemes = Lexemes(
             query=query,
             symptom=frozenset(candidate["symptom_words"]),

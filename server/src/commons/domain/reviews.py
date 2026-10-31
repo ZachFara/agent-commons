@@ -8,11 +8,17 @@ from commons.domain.entries import EntryStatus
 from commons.domain.errors import InvalidInputError
 
 # Mirror the Postgres enums review_decision and review_source.
-ReviewDecision = Literal["approve", "reject"]
+# retire and restore are admin lifecycle actions (decision 0026), never agent reviews.
+ReviewDecision = Literal["approve", "reject", "retire", "restore"]
 ReviewSource = Literal["agent", "human"]
 REVIEW_DECISIONS: tuple[ReviewDecision, ...] = ("approve", "reject")
 
-_STATUS_FOR: dict[ReviewDecision, EntryStatus] = {"approve": "approved", "reject": "rejected"}
+_STATUS_FOR: dict[ReviewDecision, EntryStatus] = {
+    "approve": "approved",
+    "reject": "rejected",
+    "retire": "retired",
+    "restore": "approved",
+}
 
 
 @dataclass(frozen=True)
