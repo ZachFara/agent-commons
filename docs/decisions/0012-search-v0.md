@@ -1,5 +1,5 @@
 # 0012. Search v0: matching, ordering, environment, task id
-Status: Accepted (owner, 2026-10-24)
+Status: Accepted (owner, 2026-10-24); ordering superseded by 0025
 Date: 2026-10-24
 
 Context: DESIGN.md v0.1 left four things open for `search`: no `task_id` (but every retrievals

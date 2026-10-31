@@ -1,4 +1,4 @@
-.PHONY: setup db check fix infra-check eval-confirm eval-effects
+.PHONY: setup db check fix infra-check search-eval eval-confirm eval-effects
 
 setup:  ## Install dependencies and git hooks
 	uv sync
@@ -16,6 +16,9 @@ fix:  ## Auto-format and apply safe lint fixes, then check
 infra-check:  ## Validate infra/ with the official Terraform image (no local install needed)
 	docker run --rm -v "$(PWD)/infra:/infra" -w /infra -e TF_DATA_DIR=/tmp/tf --entrypoint sh \
 	  hashicorp/terraform:1.9 -c "terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate"
+
+search-eval:  ## Search precision@5 and recall@5 on the judged set (decision 0025). Needs `make db`.
+	uv run python tools/search_eval.py
 
 # Behavioral eval (decision 0023, docs/eval/README.md). Runs real Claude Code sessions on the
 # signed-in subscription: ~156 sessions, about an hour. Needs `make db`. Rerun with RESUME=1
