@@ -35,6 +35,19 @@ def test_used_is_unknown_when_the_fix_has_nothing_concrete() -> None:
     assert compute_used("Restart your editor and try again.", "anything") is None
 
 
+APOLLO_FIX = (
+    "Wrap the module in an array: buildSubgraphSchema([{ typeDefs, resolvers }]) where typeDefs "
+    "is a DocumentNode (parse(sdl) or gql`...`)."
+)
+
+
+def test_punctuation_is_not_an_artifact() -> None:
+    """A placeholder like `...` matched any ellipsis, so a lookup counted as a use (T39)."""
+    assert fix_artifacts(APOLLO_FIX) == set()
+    assert fix_artifacts("Replace `--` with `-` and pass `'...'`.") == set()
+    assert compute_used(APOLLO_FIX, "Loading...\ncurl -s localhost:8080 | head") is None
+
+
 AT = datetime(2026, 10, 25, tzinfo=UTC)
 
 
