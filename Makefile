@@ -1,4 +1,4 @@
-.PHONY: setup db check fix infra-check search-eval eval-confirm eval-effects
+.PHONY: setup db check fix infra-check search-eval eval-confirm eval-effects eval-reliability
 
 setup:  ## Install dependencies and git hooks
 	uv sync
@@ -34,6 +34,19 @@ eval-confirm:  ## Shipped text vs the original on both models, scenarios no roun
 	uv run python tools/agent_eval.py search --condition $(EVAL_CONDITION) --runs 3 \
 	  --concurrency 4 $(EVAL_MODELS) --config original --config shipped \
 	  $(foreach s,$(EVAL_CONFIRMATION),--scenario $(s)) $(if $(RESUME),--resume)
+
+# Decision 0034: the multi-turn scenarios plus controls, for the shipped text, the wider
+# propose trigger, and the per-turn nudge (a store setting). 2 models x 3 conditions x 4
+# scenarios x RUNS sessions; ask the owner before running (it uses the subscription).
+EVAL_0034_RUNS ?= 3
+EVAL_0034 = --scenario multi-turn-rename-then-default --scenario multi-turn-retry-then-timezone \
+  --scenario control-typo --scenario control-documented-flag --runs $(EVAL_0034_RUNS)
+eval-reliability:  ## Decision 0034's conditions on both models (asks nothing; costs usage)
+	for model in sonnet claude-opus-5-5; do \
+	  uv run python tools/agent_eval.py run $(EVAL_0034) --model $$model --condition r-shipped-$$model && \
+	  uv run python tools/agent_eval.py run $(EVAL_0034) --model $$model --variant wider-trigger --condition r-wider-$$model && \
+	  COMMONS_TURN_NUDGE=on uv run python tools/agent_eval.py run $(EVAL_0034) --model $$model --condition r-nudge-$$model; \
+	done
 
 eval-effects:  ## Per-model results of an eval condition (EVAL_CONDITION=...)
 	uv run python tools/agent_eval.py effects --condition $(EVAL_CONDITION)

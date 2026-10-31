@@ -29,6 +29,7 @@ class Expect:
     propose: bool | None  # None: either is acceptable
     report: bool
     used: str | None = None  # expected `used` on the seeded entry's outcome, if any
+    proposals: int | None = None  # at least this many proposals (multi-turn scenarios)
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,19 @@ class Scenario:
     discovery: Discovery | None = None
     # Real-dependency scenarios ship a pyproject.toml with exact pins and run tests through it.
     test_command: str = TEST_COMMAND
+    # Multi-turn (decision 0034): a second task that arrives in the same session, through
+    # `--resume`, after the first turn ends. Its files and libraries appear only then.
+    then: "Scenario | None" = None
+
+    @property
+    def follow_up(self) -> str:
+        """The second turn's message: a new task in the same project."""
+        if self.then is None:
+            return ""
+        return (
+            f"Thanks. Next task: new tests were added and fail. Fix the bug so "
+            f"`{self.then.test_command}` passes. Don't modify the tests."
+        )
 
     @property
     def prompt(self) -> str:

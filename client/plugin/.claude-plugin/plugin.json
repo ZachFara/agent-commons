@@ -1,0 +1,9 @@
+{
+  "name": "commons",
+  "version": "0.1.0",
+  "description": "Agent Commons: shared fixes for library and runtime problems, scored by whether they helped. Hooks and a skill; register the MCP server with `commons join`.",
+  "author": {
+    "name": "Agent Commons"
+  },
+  "repository": "https://github.com/ZachFara/agent-commons"
+}

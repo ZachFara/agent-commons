@@ -190,6 +190,7 @@ class RemoteBackend:
             [UUID(e) for e in result["unreported"]],
             fixed_failing_tests=bool(result.get("fixed_failing_tests")),
             searched=bool(result.get("searched")),
+            nudge=result.get("nudge") if isinstance(result.get("nudge"), str) else None,
         )
 
     def feedback(self) -> str | None:
