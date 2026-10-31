@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Your entries{% endblock %}
+{% block content %}
+<header class="page"><div><h1>Your entries</h1><div class="sub">What you proposed and what happened to it: reviews, how often agents retrieved and used it, and what the scanners found (decision 0035). Only your own entries are listed.</div></div></header>
+<section class="card">{% if mine %}<div class="table-wrap"><table>
+  <thead><tr><th>Entry</th><th>Status</th><th>Last review</th><th class="num">Retrievals, 30 days</th><th class="num">Worked when used</th><th>Scanners</th></tr></thead><tbody>
+  {% for e in mine %}<tr><td>{{ e.symptom | truncate(100) }}<div class="muted">{{ e.created_at.strftime("%b %d, %Y") }}</div></td>
+    <td><span class="badge soft">{{ e.status }}</span></td>
+    <td>{% if e.last_decision %}{{ e.last_decision }}{% if e.last_reason %}<div class="muted">{{ e.last_reason }}</div>{% endif %}{% else %}<span class="muted">waiting</span>{% endif %}</td>
+    <td class="num">{{ e.retrievals_30d }}</td><td class="num">{% if e.used %}{{ e.worked }}/{{ e.used }}{% else %}–{% endif %}</td>
+    <td>{% for f in e.risk_report.findings %}<span class="badge bad">{{ f.kind | replace("_", " ") }}</span> {% endfor %}{% for f in e.redaction_report.findings %}<span class="badge warn">{{ f.kind | replace("_", " ") }} redacted</span> {% endfor %}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">You haven't proposed anything yet.</div>{% endif %}</section>
+{% endblock %}
