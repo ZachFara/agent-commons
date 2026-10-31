@@ -177,6 +177,7 @@
   <main>
     {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
     {% if reviewed %}<div class="notice">Review recorded for <span class="mono">{{ reviewed }}</span>.</div>{% endif %}
+    {% if revoked %}<div class="notice">Key <span class="mono">{{ revoked }}</span> revoked.</div>{% endif %}
     {% block content %}{% endblock %}
   </main>
 </div>

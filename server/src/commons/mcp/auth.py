@@ -10,20 +10,20 @@ from fastmcp.server.dependencies import get_access_token
 from typing_extensions import override
 
 from commons.domain.errors import NotPermittedError
-from commons.domain.reporters import KeyHolder
+from commons.domain.keys import KeyHolder
 from commons.service.identity import acting_as
-from commons.service.keys import holder_of
+from commons.service.keys import check_key
 from commons.store.connection import Connection
 
 ConnectionFactory = Callable[[], AbstractContextManager[Connection]]
 
 
 class ApiKeyVerifier(TokenVerifier):
-    """Accept keys minted by `commons admin create-key`; reject everything else (401)."""
+    """Accept active agent and admin keys; unknown keys get 401, review keys 403 (0032)."""
 
     def __init__(self, connection: ConnectionFactory) -> None:
         """Look keys up through `connection`."""
-        super().__init__()
+        super().__init__(required_scopes=["agent"])
         self._connection = connection
 
     @override
@@ -34,13 +34,13 @@ class ApiKeyVerifier(TokenVerifier):
         return AccessToken(
             token=token,
             client_id=str(holder.reporter_id),
-            scopes=["admin"] if holder.is_admin else [],
+            scopes=list(holder.scopes()),
             claims={"reporter_id": str(holder.reporter_id), "privacy": holder.privacy_default},
         )
 
     def _lookup(self, token: str) -> KeyHolder | None:
         with self._connection() as conn:
-            return holder_of(conn, token)
+            return check_key(conn, token).holder
 
 
 @contextmanager

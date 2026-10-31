@@ -4,6 +4,7 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -16,6 +17,7 @@ from commons.domain.errors import (
     NotInitializedError,
     StoreUnavailableError,
 )
+from commons.domain.keys import KEY_SCOPES, KeyInfo, KeyOptions, KeyScope, parse_duration
 from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchRequest
@@ -119,31 +121,110 @@ def _status(_args: argparse.Namespace) -> int:
 
 
 def _admin_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("action", choices=["create-key", "invite"])
-    parser.add_argument("pseudonym", help="Reporter to mint a key for (created if new).")
-    parser.add_argument("--admin", action="store_true", help="May use the hosted dashboard.")
-    parser.add_argument("--server", help="Server URL to put in the invite (invite only).")
+    actions = parser.add_subparsers(dest="admin_action", required=True)
+    create = actions.add_parser("create-key", help="Mint a reporter's only key (others revoked).")
+    create.add_argument("pseudonym", help="Reporter to mint a key for (created if new).")
+    create.add_argument("--admin", action="store_true", help="An admin key (dashboard).")
+    invite = actions.add_parser("invite", help="Mint an agent key and print an invite.")
+    invite.add_argument("pseudonym", help="Friend to invite (created if new).")
+    invite.add_argument("--server", help="Server URL your friend will connect to.")
+    key = actions.add_parser("key", help="Manage keys: create, list, rotate, revoke.")
+    _key_arguments(key)
+
+
+def _key_arguments(parser: argparse.ArgumentParser) -> None:
+    actions = parser.add_subparsers(dest="key_action", required=True)
+    create = actions.add_parser("create", help="Add a key (existing keys keep working).")
+    create.add_argument("pseudonym")
+    create.add_argument("--scope", choices=KEY_SCOPES, default="agent")
+    create.add_argument("--label", help="Where the key is used, e.g. laptop.")
+    create.add_argument("--expires", help="Lifetime such as 90d; default never.")
+    create.add_argument("--test", action="store_true", help="Everything it writes is test data.")
+    listing = actions.add_parser("list", help="List keys (never the keys themselves).")
+    listing.add_argument("pseudonym", nargs="?")
+    rotate = actions.add_parser("rotate", help="Replace a key; the old one stops after a grace.")
+    rotate.add_argument("handle", help="The key's prefix (from `key list`).")
+    rotate.add_argument("--grace", default="24h", help="How long the old key keeps working.")
+    rotate.add_argument("--now", action="store_true", help="Revoke the old key at once.")
+    rotate.add_argument("--server", help="Print an invite for this server URL.")
+    revoke = actions.add_parser("revoke", help="Revoke a key now.")
+    revoke.add_argument("handle", help="The key's prefix (from `key list`).")
 
 
 def _admin(args: argparse.Namespace) -> int:
+    action: str = args.admin_action
+    if action == "key":
+        return _key(args)
     pseudonym: str = args.pseudonym
-    if args.action == "invite" and not args.server:
+    if action == "invite" and not args.server:
         msg = "invite needs --server, the URL your friend will connect to."
         raise InvalidInputError(msg)
     with connect() as conn:
-        key = keys.create_key(conn, pseudonym, admin=args.admin)
-    if args.action == "invite":
+        if action == "invite":
+            key = keys.issue_key(conn, pseudonym, "agent", replace=True).key
+        else:
+            key = keys.create_key(conn, pseudonym, admin=args.admin)
+    if action == "invite":
         sys.stdout.write(
             f"Send this to {pseudonym} privately (it contains their key; any older key stops "
             f"working):\n\n{onboarding.invite_message(args.server, key)}\n"
         )
         return 0
-    role = "admin" if args.admin else "reporter"
+    role = "admin" if args.admin else "agent"
     sys.stdout.write(
         f"API key for {pseudonym} ({role}). It is shown only once; any older key stops working:"
         f"\n{key}\n"
     )
     return 0
+
+
+def _key(args: argparse.Namespace) -> int:
+    action: str = args.key_action
+    with connect() as conn:
+        if action == "list":
+            _print_keys(keys.list_keys(conn, args.pseudonym))
+            return 0
+        if action == "revoke":
+            info = keys.revoke_key(conn, args.handle)
+            sys.stdout.write(f"revoked {info.handle()} ({info.pseudonym}, {info.scope})\n")
+            return 0
+        if action == "rotate":
+            grace = timedelta(0) if args.now else parse_duration(args.grace)
+            new = keys.rotate_key(conn, args.handle, grace)
+            when = "now" if args.now else f"in {args.grace}"
+            note = f"the old key stops working {when}"
+        else:
+            options = KeyOptions(
+                label=args.label,
+                expires_in=parse_duration(args.expires) if args.expires else None,
+                test=args.test,
+            )
+            new = keys.issue_key(conn, args.pseudonym, cast("KeyScope", args.scope), options)
+            note = "other keys keep working"
+    info = new.info
+    sys.stdout.write(
+        f"{info.scope} key {info.handle()} for {info.pseudonym}; shown only once, {note}:\n"
+    )
+    if action == "rotate" and args.server and info.scope == "agent":
+        sys.stdout.write(onboarding.invite_message(args.server, new.key) + "\n")
+    else:
+        sys.stdout.write(new.key + "\n")
+    return 0
+
+
+def _print_keys(found: list[KeyInfo]) -> None:
+    now = datetime.now(UTC)
+    for info in found:
+        used = f"{info.last_used_at:%Y-%m-%d %H:%M}" if info.last_used_at else "never"
+        state = info.state(now)
+        if state == "active" and info.expires_at:
+            state = f"expires {info.expires_at:%Y-%m-%d %H:%M}"
+        flags = " test" if info.test else ""
+        sys.stdout.write(
+            f"{info.handle():<10} {info.pseudonym:<16} {info.scope:<7} {state:<24} "
+            f"used {used:<16} {info.label or ''}{flags}\n"
+        )
+    sys.stdout.write(f"{len(found)} key(s)\n")
 
 
 def _connect_arguments(parser: argparse.ArgumentParser) -> None:

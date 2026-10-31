@@ -153,10 +153,13 @@ machine with Docker and a DNS name pointing at it (ports 80 and 443 open).
    docker compose -f db/compose.hosted.yml --env-file db/.env exec server commons admin invite <pseudonym> --server https://<domain>
    ```
 
-   Use `create-key <pseudonym> --admin` for an admin key. Minting again for the same pseudonym
-   replaces the old key.
+   An invite revokes that person's older keys. For more keys and their lifecycle (decision
+   0032), use `commons admin key create <pseudonym> --scope agent|review|admin [--label laptop]
+   [--expires 90d]`, `key list`, `key rotate <prefix>` (the old key keeps working for 24 hours
+   unless `--now`) and `key revoke <prefix>`. Keys can also be created and revoked on the
+   dashboard's People page. Agent sessions use agent keys; `commons join` refuses admin keys.
 4. Admins review proposals at `https://<domain>/`. The browser asks for a user name (anything)
-   and a password (an admin key).
+   and a password (an admin key, or a review key for the review pages only).
 
 Ranking refreshes itself when a session starts and snapshots are over a day old; no scheduler
 is needed. Back up the `pgdata` volume.

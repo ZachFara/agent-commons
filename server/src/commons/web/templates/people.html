@@ -11,6 +11,22 @@
     <td class="num">{{ r.proposed }}</td><td class="num">{{ r.approved }}</td><td class="num">{{ r.retrievals }}</td><td class="num">{{ r.outcomes }}</td>
     <td class="muted">{{ r.last_seen.strftime("%b %d") if r.last_seen else "never" }}</td></tr>{% else %}<tr><td colspan="8" class="empty">No reporters yet.</td></tr>{% endfor %}
   </tbody></table></div></section>
+<section class="card" style="margin-top: 16px"><h2>API keys <span class="hint">decision 0032: agent keys for sessions, admin or review keys for this dashboard</span></h2>
+  {% if new_key %}<div class="notice">New {{ new_key.info.scope }} key for {{ new_key.info.pseudonym }}. Copy it now; it is not shown again:<br><span class="mono" style="user-select: all">{{ new_key.key }}</span></div>{% endif %}
+  <form class="filters" method="post" action="/keys">
+    <input type="text" name="pseudonym" placeholder="Pseudonym" aria-label="Pseudonym" required>
+    <select name="scope" aria-label="Scope">{% for s in ["agent", "review", "admin"] %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+    <input type="text" name="label" placeholder="Label, e.g. laptop" aria-label="Label">
+    <input type="text" name="expires" placeholder="Expires, e.g. 90d" aria-label="Expires">
+    <button class="primary">Create key</button>
+  </form>
+  <div class="table-wrap"><table>
+  <thead><tr><th>Key</th><th>Reporter</th><th>Scope</th><th>Label</th><th>State</th><th>Last used</th><th></th></tr></thead><tbody>
+  {% for k in keys %}{% set state = k.state(now) %}<tr><td class="mono">{{ k.handle() }}</td><td>{{ k.pseudonym }}</td><td><span class="badge soft">{{ k.scope }}</span>{% if k.test %} <span class="badge soft">test</span>{% endif %}</td>
+    <td>{{ k.label or "" }}</td><td>{% if state == "active" and k.expires_at %}expires {{ k.expires_at.strftime("%b %d %H:%M") }}{% else %}{{ state }}{% endif %}</td>
+    <td class="muted">{{ k.last_used_at.strftime("%b %d %H:%M") if k.last_used_at else "never" }}</td>
+    <td>{% if state == "active" %}<form method="post" action="/keys/{{ k.key_id }}/revoke"><button class="reject">Revoke</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="7" class="empty">No keys yet.</td></tr>{% endfor %}
+  </tbody></table></div></section>
 <section class="card" style="margin-top: 16px"><h2>Models <span class="hint">DESIGN §7: model attribution</span></h2><div class="table-wrap"><table>
   <thead><tr><th>Model</th><th class="num">Retrievals</th><th class="num">Observed outcomes</th><th class="num">Observed success</th><th class="num">Entries proposed</th></tr></thead><tbody>
   {% for m in models %}<tr><td class="mono">{{ m.name }}</td><td class="num">{{ m.retrievals }}</td><td class="num">{{ m.observed }}</td>

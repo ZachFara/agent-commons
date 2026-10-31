@@ -76,7 +76,12 @@ reporters
 - pseudonym: text, unique. No email, no real name.
 - reliability: float. Fraction of this reporter's past outcomes whose agent_assessment matched the observed outcome, recomputed nightly.
 - privacy_default: enum local, entry, full_trace.
-- api_key_hash: text, hosted mode only.
+
+api_keys (hosted mode only; decision 0032)
+- reporter_id, prefix (first characters, shown in listings), key_hash (SHA-256, unique).
+- scope: enum agent (search, propose, report, status, hooks), review (dashboard reviews), admin (everything).
+- label, created_at, last_used_at (at most once a minute), expires_at, revoked_at: nullable.
+- test: boolean. Everything a test key writes is test data (decision 0030).
 
 reviews
 - entry_id, reviewed_by (reporter).

@@ -85,6 +85,15 @@ def test_join_saves_the_server_and_installs_hooks(
     assert onboarding.mcp_add_command(SERVER, key) in out
 
 
+def test_join_refuses_an_admin_key(
+    machine: Path, db: psycopg.Connection, capsys: pytest.CaptureFixture[str]
+) -> None:
+    key = create_key(db, "friend-admin", admin=True)
+    assert main(["join", "--server", SERVER, "--key", key]) == 1
+    assert "--scope agent" in capsys.readouterr().err
+    assert not (machine / "config.json").exists()
+
+
 def test_join_with_a_bad_key_changes_nothing(
     machine: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

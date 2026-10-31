@@ -9,6 +9,7 @@ import shlex
 import sys
 from pathlib import Path
 
+from commons.domain.errors import InvalidInputError
 from commons.service.hook_client import RemoteBackend, remote_client
 from commons.service.hook_install import default_settings_path, install_hooks
 from commons.service.identity import save_server
@@ -50,7 +51,13 @@ def join(args: argparse.Namespace) -> int:
     server: str = args.server.rstrip("/")
     key: str = args.key
     with remote_client(server, key) as client:
-        RemoteBackend(client).ping()
+        scope = RemoteBackend(client).ping()
+    if scope == "admin":
+        msg = (
+            "This is an admin key, meant for the dashboard. Agent sessions should use an agent "
+            "key (decision 0032): `commons admin key create <you> --scope agent`."
+        )
+        raise InvalidInputError(msg)
     config = save_server(server, key)
     settings: Path = args.settings or default_settings_path()
     install_hooks(settings)

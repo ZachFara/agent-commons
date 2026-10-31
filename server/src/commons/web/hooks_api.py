@@ -16,12 +16,12 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from commons.domain.errors import InvalidInputError, NotPermittedError
+from commons.domain.keys import KeyHolder
 from commons.domain.outcomes import Usage
-from commons.domain.reporters import KeyHolder
 from commons.privacy.redaction import scrub
 from commons.service import hooks
 from commons.service.identity import acting_as
-from commons.service.keys import holder_of
+from commons.service.keys import check_key
 from commons.store.connection import Connection
 
 ConnectionFactory = Callable[[], AbstractContextManager[Connection]]
@@ -36,44 +36,65 @@ MAX_COMMAND_LENGTH = 2000
 def hook_routes(connection: ConnectionFactory) -> list[Route]:
     """Return the hosted hook API: one POST route per hook step."""
     handlers: dict[str, Handler] = {
-        "ping": lambda _conn, _body: {},
+        "ping": lambda _conn, _body: {},  # answered with the key's scope
         "session-start": _session_start,
         "tool-use": _tool_use,
         "retrievals": _retrievals,
         "stop": _stop,
     }
     return [
-        Route(f"/api/hooks/{name}", _endpoint(connection, handler), methods=["POST"])
+        Route(
+            f"/api/hooks/{name}",
+            _endpoint(connection, handler, with_scope=name == "ping"),
+            methods=["POST"],
+        )
         for name, handler in handlers.items()
     ]
 
 
 def _endpoint(
-    connection: ConnectionFactory, handler: Handler
+    connection: ConnectionFactory, handler: Handler, *, with_scope: bool
 ) -> Callable[[Request], Awaitable[Response]]:
     async def endpoint(request: Request) -> Response:
         key = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         body = await request.json() if await request.body() else {}
         if not isinstance(body, dict):
             return _error(400, "invalid_input", "Body must be a JSON object.")
-        return await run_in_threadpool(_run, connection, handler, key, body)
+        result = await run_in_threadpool(_run, connection, handler, key, body)
+        if with_scope and isinstance(result, tuple):
+            return JSONResponse({**result[0], "scope": result[1]})
+        return result if isinstance(result, Response) else JSONResponse(result[0])
 
     return endpoint
 
 
-def _run(connection: ConnectionFactory, handler: Handler, key: str, body: Body) -> Response:
+def _run(
+    connection: ConnectionFactory, handler: Handler, key: str, body: Body
+) -> Response | tuple[Body, str]:
+    """Return the handler's result and the key's scope, or an error response."""
     with connection() as conn:
-        holder = holder_of(conn, key) if key else None
-        if holder is None:
-            return _error(401, "unauthorized", "Send `Authorization: Bearer <key>`.")
+        holder = _authorize(conn, key)
+        if isinstance(holder, Response):
+            return holder
         try:
             _check_privacy(holder)
             with acting_as(holder.reporter_id):
-                return JSONResponse(handler(conn, body))
+                return handler(conn, body), holder.scope
         except NotPermittedError as error:
             return _error(403, "forbidden", str(error))
         except (InvalidInputError, KeyError, TypeError, ValueError) as error:
             return _error(400, "invalid_input", str(error))
+
+
+def _authorize(conn: Connection, key: str) -> KeyHolder | Response:
+    """Return the key's holder, or the 401/403 response to send instead."""
+    check = check_key(conn, key) if key else None
+    if check is None or check.holder is None:
+        detail = check.message() if check else "send `Authorization: Bearer <key>`"
+        return _error(401, "unauthorized", f"Hook API: {detail}.")
+    if not check.holder.allows("agent"):
+        return _error(403, "forbidden", "Hooks need an agent key, not a review key.")
+    return check.holder
 
 
 def _check_privacy(holder: KeyHolder) -> None:
