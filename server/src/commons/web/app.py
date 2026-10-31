@@ -30,7 +30,7 @@ from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializ
 from commons.domain.keys import KEY_SCOPES, KeyOptions, KeyScope, NewKey, parse_duration
 from commons.domain.lifecycle import FixedIn
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
-from commons.service import corrections, keys, lifecycle, reviews
+from commons.service import corrections, duplicates, keys, lifecycle, reviews
 from commons.service.identity import current_pseudonym, serving_hosted
 from commons.store import insights
 from commons.store.connection import Connection, connect
@@ -61,7 +61,12 @@ class Dashboard:
 
     async def queue(self, request: Request) -> Response:
         """Render entries awaiting a human review."""
-        data = await self._load(lambda conn: {"pending": reviews.pending(conn)})
+        data = await self._load(
+            lambda conn: {
+                "pending": reviews.pending(conn),
+                "duplicates": insights.duplicate_flags(conn),
+            }
+        )
         return self._render(request, "queue.html", "queue", data)
 
     async def entries(self, request: Request) -> Response:
@@ -166,6 +171,25 @@ class Dashboard:
             with self._connection() as conn:
                 lifecycle.restore(conn, entry_id, reason)
             return "Restored."
+
+        return await self._act(request, run)
+
+    async def merge_duplicate(self, request: Request) -> Response:
+        """Merge a flagged duplicate into the entry it duplicates (decision 0027)."""
+        if not _same_origin(request, hosted=self._hosted):
+            return PlainTextResponse("Cross-origin request refused.", status_code=403)
+        form = await request.form()
+        entry_id: UUID = request.path_params["entry_id"]
+        other = str(form.get("other") or "")
+        keep = form.get("action") == "keep"
+
+        def run() -> str:
+            with self._connection() as conn:
+                if keep:
+                    duplicates.keep_both(conn, entry_id, UUID(other))
+                    return "Kept both; this pair won't be flagged again."
+                duplicates.merge(conn, entry_id, UUID(other))
+            return "Merged: the duplicate's wording now finds the canonical entry."
 
         return await self._act(request, run)
 
@@ -397,6 +421,7 @@ def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute
         ("/keys", pages.create_key, "POST", "admin"),
         ("/corrections", pages.corrections, "GET", "admin"),
         ("/entries/{entry_id:uuid}/edit", pages.edit_entry, "POST", "admin"),
+        ("/entries/{entry_id:uuid}/duplicate", pages.merge_duplicate, "POST", "review"),
         ("/entries/{entry_id:uuid}/retire", pages.retire_entry, "POST", "admin"),
         ("/entries/{entry_id:uuid}/restore", pages.restore_entry, "POST", "admin"),
         ("/corrections", pages.correct, "POST", "admin"),

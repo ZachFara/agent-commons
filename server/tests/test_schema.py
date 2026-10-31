@@ -46,7 +46,11 @@ TABLES = {
         "revision",
         "superseded_by",
         "fixed_in",
+        "aliases",
+        "duplicate_candidates",
+        "duplicate_of",
     },
+    "distinct_pairs": {"entry_a", "entry_b", "decided_by"},
     "entry_revisions": {
         "entry_id",
         "revision",

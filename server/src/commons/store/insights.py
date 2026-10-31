@@ -320,3 +320,21 @@ def stale_candidates(conn: Connection, limit: int = 20) -> list[Row]:
         "ORDER BY retrievals DESC LIMIT %(limit)s",
         {"days": STALE_DAYS, "limit": limit, **_SUCCESS},
     )
+
+
+def duplicate_flags(conn: Connection) -> dict[UUID, list[Row]]:
+    """Return, per entry awaiting review, the existing entries it looks like (decision 0027)."""
+    rows = _rows(
+        conn,
+        "SELECT e.id AS entry_id, (c->>'entry_id')::uuid AS other_id, (c->>'score')::float "
+        "AS score, coalesce((c->>'retry')::boolean, false) AS retry, o.symptom, "
+        "o.status::text AS status, (o.id = e.duplicate_of) AS linked "
+        "FROM entries e, jsonb_array_elements(e.duplicate_candidates) c "
+        "JOIN entries o ON o.id = (c->>'entry_id')::uuid "
+        "WHERE NOT e.human_reviewed ORDER BY score DESC",
+        {},
+    )
+    flags: dict[UUID, list[Row]] = {}
+    for row in rows:
+        flags.setdefault(row["entry_id"], []).append(row)
+    return flags

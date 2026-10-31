@@ -44,3 +44,22 @@ Consequences: the review queue stops filling with repeats, and aliases improve r
 canonical entry. The risk is merging two entries that look alike but differ by version or
 cause. The default action is only a flag, and "keep both" is remembered. Depends on 0026 for
 `superseded_by`; works before 0025 with trigram similarity.
+
+Implementation notes (T49, 2026-10-31):
+- Detection uses search's lexical relevance (decision 0025) against approved and pending
+  entries, with word frequencies over both. Trigram similarity was not needed.
+- Labeled pairs: the judged set's 60 queries as duplicates of their entries, and 32 distinct
+  proposals (its 12 negatives, and each entry's symptom with that entry excluded).
+
+  | threshold | duplicates caught | false merges |
+  |---|---|---|
+  | 0.35 | 0.933 | 0.031 |
+  | 0.40 (default) | 0.933 | 0.000 |
+  | 0.50 | 0.817 | 0.000 |
+
+- Built: `flag` (default) and `link`. `return` changes what `propose` replies, so it waits for
+  an eval run and is refused as a setting for now. Same-task retries are therefore flagged
+  as retries in the queue rather than returned to the agent.
+- Merge rejects a pending duplicate (or retires an approved one) with `superseded_by` set,
+  and appends its symptom to the canonical entry's `aliases`, which feed `search_vector`.
+  Reviewers (review keys) may merge or keep both.
