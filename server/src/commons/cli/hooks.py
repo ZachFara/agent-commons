@@ -32,7 +32,8 @@ def _session_start(payload: Payload) -> HookOutput:
         raise TypeError(msg)
     server = _current_server()
     bind_store(session_id, server)  # this session's hooks stay with this store (0031)
-    task_id = hook_client.on_session_start(backend_for(session_id), session_id, model)
+    backend = backend_for(session_id)
+    task_id = hook_client.on_session_start(backend, session_id, model)
     context = (
         f"Agent Commons task_id for this session: {task_id}. "
         "Pass it as task_id to every commons tool call."
@@ -40,6 +41,8 @@ def _session_start(payload: Payload) -> HookOutput:
     start_line = agent_text.variant().start_line
     if start_line:
         context = f"{context} {start_line}"
+    if feedback := backend.feedback():  # off unless the store turns it on (decision 0035)
+        context = f"{context} {feedback}"
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
 
 

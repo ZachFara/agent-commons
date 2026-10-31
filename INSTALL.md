@@ -132,6 +132,9 @@ sessions are affected. To move your good local entries over, run
 (`--yes` sends all). They go through redaction, scanning and review on the server again, and
 keep their original model and date. Seeds and rejected entries are never imported.
 
+To see what happened to what you proposed, run `commons mine`, or open `<server>/mine` and sign
+in with your key as the password (decision 0035).
+
 The key identifies the user on the server; their privacy mode is set there by the admin, and a
 `local` mode is refused because nothing in local mode leaves the machine.
 

@@ -25,9 +25,12 @@ _CHALLENGE = {"WWW-Authenticate": 'Basic realm="Agent Commons admin", charset="U
 
 
 def admin_only(
-    endpoint: Endpoint, connection: ConnectionFactory, need: KeyScope = "admin"
+    endpoint: Endpoint, connection: ConnectionFactory, need: KeyScope | None = "admin"
 ) -> Endpoint:
-    """Wrap an endpoint: 401 without a usable key, 403 for keys without the `need` scope."""
+    """Wrap an endpoint: 401 without a usable key, 403 for keys without the `need` scope.
+
+    `need=None` lets any active key in, as on "Your entries" (decision 0035).
+    """
 
     async def guarded(request: Request) -> Response:
         key = basic_password(request.headers.get("authorization", ""))
@@ -35,7 +38,7 @@ def admin_only(
         if check is None or check.holder is None:
             message = check.message() if check else "API key required."
             return PlainTextResponse(f"Dashboard: {message}.", 401, headers=_CHALLENGE)
-        if not check.holder.allows(need):
+        if need is not None and not check.holder.allows(need):
             return PlainTextResponse(f"This page needs a key with the {need} scope.", 403)
         with acting_as(check.holder.reporter_id, test=check.holder.test):
             return await endpoint(request)
