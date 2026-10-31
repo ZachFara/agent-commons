@@ -10,7 +10,13 @@ from typing import Literal
 
 import httpx2
 
-from commons.domain.errors import NotInitializedError, NotPermittedError, StoreUnavailableError
+from commons.domain.duplicates import DuplicateSettings
+from commons.domain.errors import (
+    InvalidInputError,
+    NotInitializedError,
+    NotPermittedError,
+    StoreUnavailableError,
+)
 from commons.service.hook_install import default_settings_path, is_commons_hook
 from commons.service.identity import config_path, current_reporter, hosted_server, read_config
 from commons.service.local_state import state_dir
@@ -42,7 +48,7 @@ def run_checks(connect: Connect, ping: Ping) -> list[Check]:
         checks += _local_database(connect)
     else:
         checks.append(_server(server, ping))
-    checks += [_hooks(), _mcp(hosted=server is not None), _hook_log()]
+    checks += [_hooks(), _mcp(hosted=server is not None), _hook_log(), _duplicates()]
     return checks
 
 
@@ -153,3 +159,12 @@ def _logged_at(stamp: str) -> datetime:
         return datetime.strptime(stamp[:19], "%Y-%m-%d %H:%M:%S").astimezone(UTC)
     except ValueError:
         return datetime.min.replace(tzinfo=UTC)
+
+
+def _duplicates() -> Check:
+    """Show the duplicate settings a server started here would use (decision 0027)."""
+    try:
+        current = DuplicateSettings.from_environment(os.environ)
+    except InvalidInputError as error:
+        return Check("duplicates", "fail", str(error))
+    return Check("duplicates", "ok", f"{current.action} at similarity {current.threshold}")

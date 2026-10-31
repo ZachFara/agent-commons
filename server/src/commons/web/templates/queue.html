@@ -16,6 +16,13 @@
     <dt>domains</dt><dd>{{ e.domains | join(", ") }}</dd>
     <dt>redacted</dt><dd>{% for f in e.redaction_report.findings %}<span class="badge warn">{{ f.count }} {{ f.kind | replace("_", " ") }} in {{ f.field }}</span> {% else %}{{ "nothing" if e.redaction_report.scanned else "not scanned (proposed before secret scanning)" }}{% endfor %}</dd>
   </dl>
+  {% for d in duplicates.get(e.entry_id, []) %}<div class="notice" style="margin: 8px 0">
+    {% if d.retry %}<span class="badge warn">same task: likely a retry</span> {% endif %}Looks like
+    <a href="/entries/{{ d.other_id }}">{{ d.symptom | truncate(100) }}</a> ({{ d.status }}, similarity {{ "%.2f" | format(d.score) }}){% if d.linked %} <span class="badge soft">linked</span>{% endif %}
+    <form method="post" action="/entries/{{ e.entry_id }}/duplicate" style="display: inline-flex; gap: 6px; margin-left: 8px">
+      <input type="hidden" name="other" value="{{ d.other_id }}">
+      {% if d.status == "approved" %}<button class="reject" name="action" value="merge">Merge into it</button>{% endif %}
+      <button name="action" value="keep">Keep both</button></form></div>{% endfor %}
   <form class="review" method="post" action="/entries/{{ e.entry_id }}/review">
     <input type="text" name="reason" placeholder="Reason (required to reject)" aria-label="Reason">
     <button class="approve" name="decision" value="approve">Approve</button>

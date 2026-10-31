@@ -3,6 +3,7 @@ from uuid import UUID
 
 from commons.domain.entries import EntryStatus, Proposal, validate_proposal
 from commons.privacy.redaction import redact_proposal
+from commons.service.duplicates import flag_duplicates
 from commons.service.identity import current_model, current_reporter
 from commons.store.connection import Connection
 from commons.store.entries import insert_entry
@@ -34,4 +35,6 @@ def propose(conn: Connection, proposal: Proposal, model: str | None) -> ProposeR
             created_by=reporter,
             created_by_model=model_row,
         )
+        # Flagged for the reviewer only: the reply to the agent is unchanged (decision 0027).
+        flag_duplicates(conn, entry_id, redacted, reporter)
     return ProposeResult(entry_id=entry_id, status="pending", redaction_report=redaction_report)

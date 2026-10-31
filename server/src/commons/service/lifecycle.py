@@ -67,6 +67,12 @@ def restore(conn: Connection, entry_id: UUID, reason: str) -> None:
         store.set_retirement(conn, entry_id, None, None)
 
 
+def mark_superseded(conn: Connection, entry_id: UUID, successor: UUID) -> None:
+    """Point a rejected duplicate at the entry it duplicates (decision 0027)."""
+    _check_successor(conn, entry_id, successor)
+    store.set_retirement(conn, entry_id, None, successor)
+
+
 def _check_successor(conn: Connection, entry_id: UUID, successor: UUID) -> None:
     if successor == entry_id:
         msg = "An entry can't supersede itself."

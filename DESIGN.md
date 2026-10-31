@@ -45,6 +45,7 @@ entries
 - status: enum pending, approved, rejected, retired. Follows the latest human review if any, else the latest agent review. Admins retire and restore entries as human reviews (decision 0026).
 - revision: integer, the current version of the text. Every version is kept in `entry_revisions` (text, source, editor, reason, redaction report); retrievals record the revision they showed.
 - superseded_by: entry id, nullable. A superseded entry never appears in search.
+- aliases: text[]. Wording of duplicates merged into this entry; search matches it like the symptom. duplicate_candidates (up to 3 {entry_id, score, retry}) and duplicate_of are set on propose for the reviewer (decision 0027); `distinct_pairs` remembers pairs a reviewer kept apart.
 - fixed_in: {library, version}, nullable, on retired entries. Such an entry still appears to a caller whose `environment.libraries` has an older version, marked "fixed in".
 - human_reviewed: boolean. False until at least one human review exists.
 - created_by: reporter id.
