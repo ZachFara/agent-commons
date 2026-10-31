@@ -95,8 +95,29 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 |---|---|---|---|
 | T38 | done | `propose` and `search` say which store they used: `"store": "local"` or the hosted server URL. Why: after the owner switched to production, a session that was already open kept its local MCP server while its hooks went to production. It proposed two entries to the local store and reported them as "pending review", while the owner looked at the production queue (2026-10-31). | Tests: local and hosted responses carry the right store. The tool descriptions were left alone: they are the eval-measured wording |
 | T39 | done | Investigate: a retrieval made only to check the store counted as a use. In production, entry `1f0aa91a` shows 1 used outcome and a 0% success rate after a session searched only to see whether the store was empty. That session had applied the same fix earlier, so the Stop hook's diff matching probably marked it `used`. Decide whether `used` should only count changes made after the retrieval (2026-10-31) | Cause confirmed with a test that reproduces it; fixed or recorded as accepted |
-| T40 | todo | Tunable duplicate resolution. Today the only guard is the instruction "search before proposing; report on an existing entry instead", so near-identical proposals reach the review queue (owner, 2026-10-31). On `propose`, find similar entries (same full-text match `search` uses, later pgvector) and resolve by a setting: flag the likely duplicate in the queue and dashboard, or link it to the existing entry, or return the existing entry to the agent so it can `report` instead. The similarity threshold and the action are configurable, and the eval measures false merges on distinct entries | Tests: a near-duplicate is detected at the default threshold and not below it; each action behaves as configured; distinct entries with shared words are left alone |
-| T41 | todo | `used` matching counts generic words and talk about an entry. On 2026-10-31 a deploy-check search returned the Keycloak entry, and Stop marked it `partial` + `tests_passed` from `re-run`, `--server` (from `commons join --server`) and `sslrequired=external` (typed into PROGRESS.md while writing up that session), plus a passing `make check`. Corrected by hand in production. Fix: stop ordinary hyphenated words and common flags from counting as distinctive; weigh commands run and code edits above prose (Markdown, docs); consider requiring a test run or command after the match | Tests from the 2026-10-31 case: the Keycloak fix against that session's text is `no`; true uses in the existing tests still match |
+| T40 | moved to T49 | Tunable duplicate resolution (now decision 0027, task T49). Today the only guard is the instruction "search before proposing; report on an existing entry instead", so near-identical proposals reach the review queue (owner, 2026-10-31). On `propose`, find similar entries (same full-text match `search` uses, later pgvector) and resolve by a setting: flag the likely duplicate in the queue and dashboard, or link it to the existing entry, or return the existing entry to the agent so it can `report` instead. The similarity threshold and the action are configurable, and the eval measures false merges on distinct entries | Tests: a near-duplicate is detected at the default threshold and not below it; each action behaves as configured; distinct entries with shared words are left alone |
+| T41 | moved to T46 | `used` matching counts generic words and talk about an entry. On 2026-10-31 a deploy-check search returned the Keycloak entry, and Stop marked it `partial` + `tests_passed` from `re-run`, `--server` (from `commons join --server`) and `sslrequired=external` (typed into PROGRESS.md while writing up that session), plus a passing `make check`. Corrected by hand in production. Fix: stop ordinary hyphenated words and common flags from counting as distinctive; weigh commands run and code edits above prose (Markdown, docs); consider requiring a test run or command after the match | Tests from the 2026-10-31 case: the Keycloak fix against that session's text is `no`; true uses in the existing tests still match |
+
+### Long-term gaps (decisions 0025-0036, owner-accepted 2026-10-31)
+
+Listed in the suggested order: urgent and protective first, then correctness, then scale.
+Dependencies are noted.
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T42 | todo | Rotate the owner's printed admin key with today's commands (0032 step 5) | Old key gets 401; owner's MCP and dashboard work on the new one |
+| T43 | todo | Operations: nightly encrypted `pg_dump` to GCS, monthly restore drill, uptime and error alerts, budget alerts in Terraform, retention job (0033) | A drill restores and matches row counts; a forced 5xx and a stopped service each email the owner |
+| T44 | todo | Keys: `api_keys` table, scopes (agent/review/admin), several keys per reporter, rotate/revoke/expire, `last_used_at` (0032) | Tests per scope and lifecycle step; `join` refuses admin keys; staging soak before production |
+| T45 | todo | Data correction: `corrections` table, `excluded` flags, dashboard and CLI actions, immediate rescoring, test keys (0030; test keys need T44) | Excluded rows vanish from ranking, status, charts and export (tested per reader); 2026-10-31 fixes backfilled |
+| T46 | todo | `used` detection v1: rarity weights, generic-token list, prose files at zero, test runs paired with matched work (0036; supersedes T41's sketch) | Labeled set from the eval plus the 2026-10-31 cases: precision up, recall on true uses held |
+| T47 | todo | Search relevance: judged set and `make search-eval`; IDF and coverage scoring with a cutoff; then pgvector hybrid with RRF; then version awareness (0025) | Each step ships only if precision@5 and recall@5 don't drop; numbers recorded in the PR |
+| T48 | todo | Entry lifecycle: `entry_revisions`, admin edits, agent `revises` (after an eval), `superseded_by`, retire with `fixed_in`, stale-candidates list (0026) | Tests for each transition; retrievals record the revision shown; search hides superseded and retired |
+| T49 | todo | Duplicate resolution: candidates on propose, threshold and action settings (default `flag`), merge and keep-both, same-task retries (0027; needs T48, replaces T40) | Labeled pairs: false merges at or below 1 in 20 at the default threshold; each action tested |
+| T50 | todo | Entry safety: risk scanner and report, Unicode stripping, provenance labels, per-key rate limits, `revoke --purge` and `--restore` (0029; needs T44) | A test per pattern, including false-positive cases; limits hold across two app instances; purge is reversible |
+| T51 | todo | Review at scale: roles, trust levels with sampled review, outcome confirmation, queue-age alert (0028; needs T44, T50, T43) | Tests per trust level and demotion; risky findings always force the queue |
+| T52 | todo | Switching stores: store bound at session start, stale local server refuses, `join` and `doctor` warn, `commons import --from-local` (0031; import needs T49) | Tests reproduce the 2026-10-31 split and show it can't happen; import dry run and real run |
+| T53 | todo | Contributor feedback: "Your entries" page and `commons mine`; SessionStart line and digest only after measurement (0035; needs T44 scopes) | Scoping test: one reporter can't see another's entries |
+| T54 | todo | Reliable propose and report: multi-turn eval scenarios, then measure the per-turn nudge, `/commons:record`, the SKILL.md plugin, a wider trigger; survey other clients' hooks (0034) | Each change adopted only on evidence on Sonnet and Opus, as in decision 0023 |
 
 ### DESIGN Phase 3 (after a month of data)
 
@@ -190,106 +211,12 @@ Anticipated next steps:
 
 ### Long-term gaps (owner, 2026-10-31)
 
-Each gap below is its own consideration, roughly in order of how much it would hurt as use
-grows. None is started. A gap becomes a numbered task once the owner picks it. Suggested
-first three: search relevance, editing and retiring entries, and backups with alerting.
-
-#### Under consideration: search relevance
-
-Search matches any shared word: a deploy-check search returned two unrelated Cosmo entries
-because both contain "error". As the store grows, agents get noisy results, report them as
-unhelpful, and learn to ignore commons.
-Next steps:
-1. Measure first: precision of the top results over logged searches (the `searches` table).
-2. Add a minimum-relevance cutoff.
-3. Add embeddings (pgvector is already planned, DESIGN §2).
-4. Add version-aware matching, so an entry about `@apollo/subgraph` 2.15 ranks lower for
-   someone on 3.x.
-
-#### Under consideration: entry lifecycle (edit, supersede, retire)
-
-Entries can only be proposed, approved or rejected. Nothing lets anyone edit one, mark it as
-replaced by a newer entry, or retire it once a library fixes the bug. Phase 3 lists flagging
-stale entries, but there is nothing to act on a flag with.
-Next steps:
-1. Add an admin edit, recorded as a review, so the history stays visible.
-2. Add `superseded_by`, and retire from the dashboard; `retired` already exists in the enum.
-3. Connect the Phase 3 staleness flags to these actions.
-
-#### Under consideration: duplicates
-
-Tracked as T40, tunable duplicate resolution.
-
-#### Under consideration: review bottleneck
-
-Every entry waits for the owner. With Tom and others proposing, that won't scale.
-Next steps:
-1. Allow more than one admin.
-2. Add per-reporter trust levels.
-3. Consider auto-approval after N observed successes, with the threshold measured before
-   it is trusted.
-
-#### Under consideration: entry poisoning and prompt injection
-
-Entries are agent-written text shown to other agents. The untrusted-data note and human
-review help, but a careless or malicious contributor could plant a harmful command in a fix.
-Next steps:
-1. Scan fixes and repros for risky commands (`curl | sh`, `rm -rf`, credential reads), flag
-   them in the review queue, and mark them in search provenance.
-2. Add rate limits per key.
-3. Add a one-step "revoke this key and pull everything this reporter wrote".
-
-#### Under consideration: data correction tooling
-
-Fixing the wrong `used` row from T39 needs a hand-written write to production, and the two
-deploy-check searches stay on the Searches page as noise.
-Next steps:
-1. Let an admin correct or delete outcomes from the dashboard.
-2. Let an admin hide or delete searches and retrievals that were tests.
-3. Record every correction with who made it and why.
-
-#### Under consideration: switching stores
-
-T38 shows the store in responses. Still missing:
-1. `commons join` should warn that sessions already open stay split, with hooks on the new
-   store and tools on the old one, until they are restarted.
-2. A supported way to move good local entries to a hosted store. It was done by hand on
-   2026-10-31: verify, then re-propose.
-
-#### Under consideration: keys and identity
-
-There is no rotation or revocation flow beyond re-inviting, and the owner's admin key was
-printed in a session on 2026-10-31 and is still live.
-Next steps:
-1. Add `commons admin rotate-key` and `commons admin revoke`.
-2. Rotate the owner's key.
-3. Add more than one admin, which overlaps with the review bottleneck above.
-
-#### Under consideration: operations
-
-No backups or restore test for the Neon database have been checked, and there is no alerting
-on server errors. Decision 0022 caps Cloud Run spend at $4; check whether hitting the cap
-stops production, and if so, how anyone would find out. Retention for `searches` and the
-call log is already an open question.
-Next steps:
-1. Confirm Neon's backup and point-in-time restore, and run one restore test.
-2. Alert on 5xx responses and on the budget.
-3. Decide the retention policy.
-
-#### Under consideration: getting agents to propose and report reliably
-
-Tracked by the SKILL.md and per-turn Stop hook considerations above, including the manual
-`/commons:record` command. Clients without hooks, such as Codex and Cursor, will always produce
-`unknown` outcomes, which weakens outcome-based ranking, the project's main point.
-Next step: find out what lifecycle hooks those clients offer.
-
-#### Under consideration: feedback to contributors
-
-Agents and people never learn whether their proposals were approved, rejected or used, so
-there is nothing to reward good contributions.
-Next steps:
-1. A "your entries" view per reporter: status, reviews, retrievals, outcomes.
-2. Possibly a `status` field in the tool response for the caller's own entries.
+Each gap now has a proposed decision and a task row (T42-T54 above):
+search relevance 0025 (T47); entry lifecycle 0026 (T48); duplicates 0027 (T49, was T40);
+review bottleneck 0028 (T51); entry safety 0029 (T50); data correction 0030 (T45);
+switching stores 0031 (T52); keys and identity 0032 (T42, T44); operations 0033 (T43);
+reliable propose and report 0034 (T54, covering the two considerations above); contributor
+feedback 0035 (T53); `used` detection 0036 (T46, was T41).
 
 ## Session log
 
@@ -503,3 +430,6 @@ Next steps:
   lookup (`81877c91`, used yes to unknown, the T39 `...` bug) and the Keycloak lookup from a
   deploy check (`ef8bcf57`, used partial to unknown, now T41). This session's untimestamped
   spool records were stamped as older, so its Stop hook doesn't redo the second.
+- 2026-10-31: proposed decisions 0025-0036 for the long-term gaps, each written to the
+  standard practice for its kind of problem, with task rows T42-T54 in suggested order.
+  Owner accepted all twelve the same day.
