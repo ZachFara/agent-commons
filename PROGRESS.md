@@ -473,3 +473,8 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
 - 2026-10-31 (T56): SessionStart also fires on compact and clear, and re-bound the session to
   the machine's current store while its running MCP server kept the old one. Compact and
   clear now keep the binding; startup and resume (MCP restarted) bind afresh.
+- 2026-10-31 (T56): an entry the agent didn't use was recorded `tests_failed` when a test
+  failed and the agent then fixed it another way; the outcome now follows the last run and
+  stays `unknown` there. Reliability skips pairs with nothing observed. Clock skew between
+  client and store in pairing is a known limit (decision 0036).
+

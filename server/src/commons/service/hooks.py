@@ -150,11 +150,17 @@ def _record_observation(
     paired: bool,
 ) -> None:
     after = [run for run in runs if run.at > item.retrieved_at]
-    if paired:
-        after = [run for run in after if run.exit_code != 0 or _follows_matched_work(run, seen)]
-    record = merge_observation(
-        locked_outcome(conn, item.retrieval_id), after[-1] if after else None
-    )
+    last = after[-1] if after else None
+    if (
+        paired
+        and last is not None
+        and last.exit_code == 0
+        and not _follows_matched_work(last, seen)
+    ):
+        # The tests ended passing without the entry's work: the run says nothing about it, and
+        # an earlier failure was fixed some other way, so it isn't the entry's either (0036).
+        last = None
+    record = merge_observation(locked_outcome(conn, item.retrieval_id), last)
     save_outcome(conn, item.retrieval_id, record)
     set_used(conn, item.retrieval_id, seen.used)
 

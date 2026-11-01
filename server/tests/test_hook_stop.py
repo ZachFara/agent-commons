@@ -252,3 +252,24 @@ def test_writing_the_fix_into_notes_is_not_a_use(session: Session) -> None:
     session.stop()
     used, outcome, _evidence, _model = session.outcome()
     assert (used, outcome) == ("no", "unknown")
+
+
+def test_an_unused_entry_is_not_blamed_for_a_failure_the_agent_then_fixed(
+    session: Session,
+) -> None:
+    """Audit 2026-10-31: fail, fix another way, pass recorded the entry as tests_failed."""
+    session.search()
+    session.tool("Bash", {"command": "pytest -q"}, error="Exit code 1\nFAILED")
+    session.tool("Edit", {"file_path": "/r/app.py", "new_string": "return total"})
+    session.tool("Bash", {"command": "pytest -q"})
+    session.stop()
+    used, outcome, _evidence, _model = session.outcome()
+    assert (used, outcome) == ("no", "unknown")
+
+
+def test_a_session_that_ends_failing_still_counts_the_failure(session: Session) -> None:
+    session.search()
+    session.tool("Bash", {"command": "pytest -q"}, error="Exit code 1\nFAILED")
+    session.stop()
+    _used, outcome, _evidence, _model = session.outcome()
+    assert outcome == "tests_failed"
