@@ -24,7 +24,7 @@ from commons.domain.observations import (
 )
 from commons.domain.usage import ArtifactFrequencies, Evidence, UseObservation, observe_use
 from commons.privacy.redaction import scrub
-from commons.service import hooks
+from commons.service import contributors, hooks
 from commons.service.hooks import StopResult
 from commons.service.identity import configured_test_runners
 from commons.service.local_state import (
@@ -70,6 +70,10 @@ class HookBackend(Protocol):
         """How common each fix artifact is across the store (decision 0036)."""
         ...
 
+    def feedback(self) -> str | None:
+        """Return a "since your last session" line, when the store turned that on (0035)."""
+        ...
+
 
 class LocalBackend:
     """Write straight to the database (local mode)."""
@@ -109,6 +113,11 @@ class LocalBackend:
         """Count artifacts across the store's approved fixes."""
         with self._connection() as conn:
             return hooks.artifact_frequencies(conn)
+
+    def feedback(self) -> str | None:
+        """Ask the local store for a feedback line (off unless enabled here)."""
+        with self._connection() as conn:
+            return contributors.session_feedback(conn)
 
 
 class RemoteBackend:
@@ -186,7 +195,21 @@ class RemoteBackend:
             [UUID(e) for e in result["unreported"]],
             fixed_failing_tests=bool(result.get("fixed_failing_tests")),
             searched=bool(result.get("searched")),
+            nudge=result.get("nudge") if isinstance(result.get("nudge"), str) else None,
         )
+
+    def feedback(self) -> str | None:
+        """Ask the server for a feedback line; None from servers without it."""
+        try:
+            line = self._post("feedback", {}).get("line")
+        except httpx2.HTTPError:
+            return None
+        return line if isinstance(line, str) else None
+
+    def mine(self) -> list[dict[str, Any]]:
+        """Return the key holder's entries, from the server (`commons mine`)."""
+        entries: list[dict[str, Any]] = self._post("mine", {})["entries"]
+        return entries
 
     def similar(self, text: str) -> list[tuple[str, float]]:
         """Return the server's live entries most like `text` (for imports, decision 0031)."""

@@ -133,6 +133,33 @@ NUDGE = (
 )
 
 
+# Per-turn nudge (decision 0034): sent by the store, not the hooks, so one server setting
+# (COMMONS_TURN_NUDGE=on) turns it on or off for everyone without upgrading installed hooks.
+# Off until an eval shows it helps; the agent may decline.
+TURN_NUDGE = (
+    "Agent Commons: in this turn a test went from failing to passing, and nothing was searched "
+    "or proposed. If the cause was a library or runtime behavior its docs don't state, call "
+    "`propose` now with task_id {task_id}. If it was this codebase's own logic, finish as planned."
+)
+
+
+# `/commons:record` (decision 0034): an MCP prompt, which clients show as a slash command. It
+# costs nothing unless invoked. Off unless COMMONS_RECORD_PROMPT=on, pending an eval of the
+# proposals it produces.
+RECORD_PROMPT = """\
+Review this session for what belongs in Agent Commons, then act:
+1. For each problem you solved, ask: was the cause a library or runtime behavior its docs \
+don't state (a version change, a changed default, a wrong doc, an error page with no error \
+text)? Judge by what you knew before you found it.
+2. For each that was: `search` with the error text. If an entry already covers it, `report` on \
+that entry instead. Otherwise call `propose` with the actual error text as `symptom`, the cause, \
+the fix, and pinned versions in `environment`.
+3. Call `report` for every entry `search` returned this session, saying honestly whether it \
+helped.
+Skip this codebase's own logic. If nothing qualifies, say so in one line.
+"""
+
+
 @dataclass(frozen=True)
 class Variant:
     """What one experiment shows the agent. Surfaces not listed are unchanged."""
@@ -261,6 +288,13 @@ PROPOSE_RULES = (
         "Propose before finishing if the next agent would have to rediscover what you found: a "
         "library or runtime behaving unlike its docs or an earlier version. One-line fixes count; "
         "fixes look obvious once found. Skip this codebase's own logic."
+    ),
+    # decision 0034 step 6: the shipped rule (option 5) widened to surprising defaults and
+    # error pages, the surprises an agent missed on 2026-10-31.
+    (
+        "Propose before finishing; fixes look obvious once found. If a library or runtime "
+        "behavior its docs don't state, a surprising default, or a bare error page caused it, "
+        "call `propose`, even for a one-line fix. Skip this codebase's own logic."
     ),
 )
 
@@ -460,6 +494,10 @@ def resolve(name: str) -> Variant:
 # proposal and no search on any control and every bug still fixed.
 SHIPPED = "w-a0b4c5d1e0f1g1h0n0s1"
 VARIANTS["baseline"] = resolve(SHIPPED)
+# The candidates decision 0034 measures against SHIPPED: the wider propose trigger, and the
+# shipped text with the per-session nudge (the per-turn nudge is a server setting instead).
+WIDER_TRIGGER = SHIPPED.replace("c5", f"c{len(PROPOSE_RULES) - 1}")
+VARIANTS["wider-trigger"] = resolve(WIDER_TRIGGER)
 
 
 def variant() -> Variant:

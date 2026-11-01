@@ -1,6 +1,7 @@
 """The Agent Commons MCP server (DESIGN.md §4). Tools are thin: parse, call service, shape JSON."""
 
 import argparse
+import os
 import uuid
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
@@ -174,7 +175,7 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
             result = status_service.status(conn)
         return _status_json(result)
 
-    return FastMCP(
+    server = FastMCP(
         "commons",
         instructions=shown.instructions,
         middleware=[CallLog(), StructuredValidationErrors()],
@@ -198,6 +199,21 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
             status,
         ],
     )
+    return _with_record_prompt(server)
+
+
+def _with_record_prompt(server: FastMCP) -> FastMCP:
+    """Offer `/commons:record` when COMMONS_RECORD_PROMPT=on (decision 0034; off by default)."""
+    if os.environ.get("COMMONS_RECORD_PROMPT", "off").strip().lower() == "on":
+        server.prompt(name="record", description="Review this session and record what to share.")(
+            _record
+        )
+    return server
+
+
+def _record() -> str:
+    """`/commons:record`: review the session against the propose and report rules (0034)."""
+    return agent_text.RECORD_PROMPT
 
 
 def _store() -> str:

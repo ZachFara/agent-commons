@@ -183,3 +183,11 @@ def refuse_if_switched() -> None:
             "it. Nothing was written to the local store."
         )
         raise NotPermittedError(msg)
+
+
+def hosted_server_or_none() -> tuple[str, str] | None:
+    """Return the hosted server this machine joined, or None (no config, or local mode)."""
+    try:
+        return hosted_server()
+    except NotInitializedError:
+        return None

@@ -53,3 +53,32 @@ Consequences: each change is adopted on evidence, since the 2026-10-25 eval show
 was often wrong. Multi-turn scenarios cost more eval sessions and usage. Steps 2-4 change what
 agents see, so the shipped wording's fingerprint test (`test_mcp_instructions.py`) is updated
 deliberately with each adoption.
+
+Implementation notes (T54, 2026-10-31). Everything below is built and off; nothing an agent sees
+changed. Each waits for an eval run the owner approves (`make eval-reliability`, about 72
+sessions at 3 runs).
+1. Multi-turn eval: `Scenario.then` adds a second task's files after the first turn, and the
+   runner resumes the same session (`claude --resume`) with "Next task: ...". There are two
+   scenarios, `multi-turn-rename-then-default` and `multi-turn-retry-then-timezone`, each
+   expecting 2 proposals. The second turn of the latter is a changed default. A scenario with
+   an error page and no error text is still to write.
+2. Per-turn nudge: decided by the store, not the hooks. With `COMMONS_TURN_NUDGE=on` (server
+   environment), Stop's response carries the nudge when this turn saw a failing test become a
+   passing one with no search or proposal in the turn (`tasks.last_stop_at` marks turns).
+   Installed hooks show whatever the store sends, so one deploy turns it on or off. The old
+   per-session `nudge` variant stays for the eval.
+3. `/commons:record`: an MCP prompt `record`, registered only with `COMMONS_RECORD_PROMPT=on`.
+4. Skill plugin: `client/plugin/` holds the hooks and a skill with exact argument shapes. A test
+   checks the description and body budgets, checks that its proposal example passes
+   validation, and keeps its hooks equal to what `commons join` installs. It is not installed
+   by `join` or the invite.
+5. Other clients (survey, 2026-10-31):
+   - Codex CLI has JSON-over-stdin hooks including SessionStart, PostToolUse and a blocking
+     Stop (generally available May 2026).
+   - Cursor has `hooks.json` with `afterShellExecution`, `afterFileEdit` and `stop` (project
+     hooks also run in cloud agents).
+   Both can carry the same observations as our Claude Code hooks, so adapters are feasible: a
+   follow-up task, since each needs its own payload parsing and tests. Until then those
+   clients' outcomes stay `self_reported`.
+6. Wording candidate: variant `wider-trigger`, the shipped text with the propose rule widened to
+   "a surprising default, or a bare error page" (within the instructions' size limit).

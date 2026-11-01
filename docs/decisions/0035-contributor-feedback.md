@@ -26,3 +26,15 @@ Consequences: contributors can see and act on their own track record, and trust 
 become legible ("2 more approved entries to reach TL1"). Opening the dashboard to non-admin
 keys widens what an agent key can reach. Scopes (0032) keep it to the reporter's own data, and
 a test checks that one reporter cannot see another's entries.
+
+Implementation notes (T53, 2026-10-31):
+- "Your entries" is `/mine` on the dashboard, open to any active key and scoped to its
+  reporter. Every other page still needs a review or admin key, and the page omits the
+  store-wide queue count.
+- `commons mine` prints the same: from the hosted server (a `mine` hook-API step) on joined
+  machines, from the local store otherwise.
+- The SessionStart line is built but off: the store sends it only with
+  `COMMONS_SESSION_FEEDBACK=on` (set on the server for hosted users), so turning it on or off is
+  one deploy and installed hooks need no upgrade. It waits for an eval run.
+- The weekly digest is not built: reporters are pseudonymous and the store has no email
+  addresses for them. Revisit if contributors ask for it.

@@ -31,6 +31,7 @@ from commons.domain.keys import KEY_SCOPES, KeyOptions, KeyScope, NewKey, parse_
 from commons.domain.lifecycle import FixedIn
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
 from commons.service import (
+    contributors,
     corrections,
     duplicates,
     keys,
@@ -117,6 +118,13 @@ class Dashboard:
             }
         )
         return self._render(request, "searches.html", "searches", data)
+
+    async def mine(self, request: Request) -> Response:
+        """Render the caller's own entries and what happened to them (decision 0035)."""
+        data = await self._load(
+            lambda conn: {"mine": contributors.my_entries(conn)}, store_wide=False
+        )
+        return self._render(request, "mine.html", "mine", data)
 
     async def people(self, request: Request) -> Response:
         """Render reporters, their keys, and models."""
@@ -352,10 +360,15 @@ class Dashboard:
             return _back(request, {"error": str(error)})
         return _back(request, {"reviewed": str(review_request.entry_id)})
 
-    async def _load(self, loader: Callable[[Connection], dict[str, Any]]) -> dict[str, Any]:
+    async def _load(
+        self, loader: Callable[[Connection], dict[str, Any]], *, store_wide: bool = True
+    ) -> dict[str, Any]:
+        """Run `loader`; add the queue count for the nav, unless the page is per-reporter."""
+
         def run() -> dict[str, Any]:
             with self._connection() as conn:
-                return {**loader(conn), "awaiting": insights.kpis(conn)["awaiting"]}
+                awaiting = insights.kpis(conn)["awaiting"] if store_wide else None
+                return {**loader(conn), "awaiting": awaiting}
 
         return await run_in_threadpool(run)
 
@@ -441,7 +454,8 @@ def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute
     """Return the dashboard routes, plus the hook API when hosted (reused by `commons.hosted`)."""
     pages = Dashboard(connection, hosted=hosted)
     # Review keys reach the review pages; everything else needs an admin key (decision 0032).
-    endpoints: list[tuple[str, Endpoint, str, KeyScope]] = [
+    endpoints: list[tuple[str, Endpoint, str, KeyScope | None]] = [
+        ("/mine", pages.mine, "GET", None),
         ("/", pages.overview, "GET", "admin"),
         ("/queue", pages.queue, "GET", "review"),
         ("/entries", pages.entries, "GET", "review"),

@@ -13,6 +13,7 @@ from commons.domain.errors import NotInitializedError
 from commons.domain.observations import ToolUse, exit_code_from_error
 from commons.service import agent_text, hook_client
 from commons.service.hook_client import HookBackend, LocalBackend, RemoteBackend, remote_client
+from commons.service.hooks import StopResult
 from commons.service.identity import hosted_server
 from commons.service.local_state import bind_store, bound_store, state_dir
 from commons.store.connection import connect
@@ -32,7 +33,8 @@ def _session_start(payload: Payload) -> HookOutput:
         raise TypeError(msg)
     server = _current_server()
     bind_store(session_id, server)  # this session's hooks stay with this store (0031)
-    task_id = hook_client.on_session_start(backend_for(session_id), session_id, model)
+    backend = backend_for(session_id)
+    task_id = hook_client.on_session_start(backend, session_id, model)
     context = (
         f"Agent Commons task_id for this session: {task_id}. "
         "Pass it as task_id to every commons tool call."
@@ -40,6 +42,8 @@ def _session_start(payload: Payload) -> HookOutput:
     start_line = agent_text.variant().start_line
     if start_line:
         context = f"{context} {start_line}"
+    if feedback := backend.feedback():  # off unless the store turns it on (decision 0035)
+        context = f"{context} {feedback}"
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
 
 
@@ -143,17 +147,24 @@ def _stop(payload: Payload) -> HookOutput:
     )
     if result is None or payload.get("stop_hook_active"):
         return None
+    reason = _stop_reason(result)
+    return {"decision": "block", "reason": reason} if reason else None
+
+
+def _stop_reason(result: StopResult) -> str | None:
+    """Return what to ask before the agent finishes: unreported entries, then a nudge."""
     if result.unreported:
         ids = ", ".join(str(entry_id) for entry_id in result.unreported)
-        reason = (
+        return (
             f"Before finishing, call the commons `report` tool with task_id {result.task_id} for "
             f"each entry you retrieved this session but haven't reported on: {ids}. Say honestly "
             "whether it helped."
         )
-        return {"decision": "block", "reason": reason}
-    nudge = agent_text.variant().nudge
+    if result.nudge:  # the store's per-turn nudge (decision 0034), off unless it turns it on
+        return result.nudge
+    nudge = agent_text.variant().nudge  # the eval's per-session variant
     if nudge and result.fixed_failing_tests and not result.searched:
-        return {"decision": "block", "reason": nudge.format(task_id=result.task_id)}
+        return nudge.format(task_id=result.task_id)
     return None
 
 

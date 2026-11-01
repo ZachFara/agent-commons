@@ -24,7 +24,7 @@ from commons.domain.observations import command_tail
 from commons.domain.outcomes import Usage
 from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
-from commons.service import hooks, imports
+from commons.service import contributors, hooks, imports
 from commons.service.identity import acting_as
 from commons.service.keys import check_key
 from commons.store.connection import Connection
@@ -47,6 +47,8 @@ def hook_routes(connection: ConnectionFactory) -> list[Route]:
         "stop": _stop,
         "artifact-frequencies": _artifact_frequencies,
         "similar": _similar,
+        "mine": _mine,
+        "feedback": lambda conn, _body: {"line": contributors.session_feedback(conn)},
         "import": _import,
     }
     return [
@@ -188,6 +190,23 @@ def _retrievals(conn: Connection, body: Body) -> Body:
     }
 
 
+def _mine(conn: Connection, _body: Body) -> Body:
+    return {"entries": [_mine_json(entry) for entry in contributors.my_entries(conn)]}
+
+
+def _mine_json(entry: dict[str, Any]) -> Body:
+    return {
+        **{k: entry[k] for k in ("symptom", "status", "last_decision", "last_reason")},
+        "entry_id": str(entry["id"]),
+        "created_at": entry["created_at"].isoformat(),
+        "retrievals_30d": entry["retrievals_30d"],
+        "used": entry["used"],
+        "worked": entry["worked"],
+        "risks": len(entry["risk_report"].get("findings", [])),
+        "redactions": len(entry["redaction_report"].get("findings", [])),
+    }
+
+
 def _similar(conn: Connection, body: Body) -> Body:
     text = body["text"]
     if not isinstance(text, str) or not text.strip():
@@ -244,4 +263,5 @@ def _stop(conn: Connection, body: Body) -> Body:
         "unreported": [str(e) for e in result.unreported],
         "fixed_failing_tests": result.fixed_failing_tests,
         "searched": result.searched,
+        "nudge": result.nudge,
     }

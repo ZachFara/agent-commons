@@ -79,3 +79,25 @@ def set_task_model(conn: Connection, task_id: UUID, model_id: UUID) -> None:
         "AND e.created_by_model <> %s",
         (model_id, task_id, model_id),
     )
+
+
+def end_turn(conn: Connection, task_id: UUID) -> datetime | None:
+    """Record that a turn just ended; return when the previous one did (None: the first)."""
+    row = conn.execute(
+        "UPDATE tasks t SET last_stop_at = clock_timestamp() FROM (SELECT last_stop_at FROM tasks "
+        "WHERE id = %s FOR UPDATE) old WHERE t.id = %s RETURNING old.last_stop_at",
+        (task_id, task_id),
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+def acted_in_turn(conn: Connection, task_id: UUID, since: datetime | None) -> bool:
+    """Whether the task searched or proposed since `since` (or ever, if None)."""
+    row = conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM searches WHERE task_id = %(t)s "
+        "  AND (%(since)s::timestamptz IS NULL OR created_at > %(since)s)) "
+        "OR EXISTS (SELECT 1 FROM entries WHERE task_id = %(t)s "
+        "  AND (%(since)s::timestamptz IS NULL OR created_at > %(since)s))",
+        {"t": task_id, "since": since},
+    ).fetchone()
+    return bool(row and row[0])

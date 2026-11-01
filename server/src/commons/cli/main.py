@@ -31,6 +31,7 @@ from commons.domain.reviews import REVIEW_DECISIONS, ReviewDecision, ReviewReque
 from commons.domain.search import MAX_LIMIT, SearchRequest
 from commons.domain.trust import ROLES
 from commons.service import (
+    contributors,
     corrections,
     doctor,
     keys,
@@ -45,7 +46,12 @@ from commons.service import search as search_service
 from commons.service import status as status_service
 from commons.service.hook_client import RemoteBackend, remote_client
 from commons.service.hook_install import default_settings_path, install_hooks
-from commons.service.identity import acting_as, init_reporter, save_server
+from commons.service.identity import (
+    acting_as,
+    hosted_server_or_none,
+    init_reporter,
+    save_server,
+)
 from commons.store import insights
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
@@ -442,6 +448,31 @@ def _show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mine(_args: argparse.Namespace) -> int:
+    server = hosted_server_or_none()
+    if server is not None:
+        with remote_client(*server) as client:
+            entries = RemoteBackend(client).mine()
+    else:
+        with connect() as conn:
+            entries = [
+                {**e, "entry_id": e["id"], "risks": len(e["risk_report"]["findings"])}
+                for e in contributors.my_entries(conn)
+            ]
+    for e in entries:
+        used = f"{e['worked']}/{e['used']} worked" if e["used"] else "not used yet"
+        review = e["last_decision"] or "waiting for review"
+        if e.get("last_reason"):
+            review += f" ({e['last_reason']})"
+        risks = f", {e['risks']} risk finding(s)" if e.get("risks") else ""
+        sys.stdout.write(
+            f"{e['status']:<9} {str(e['symptom'])[:70]}\n          {review}; "
+            f"{e['retrievals_30d']} retrievals in 30 days; {used}{risks}\n"
+        )
+    sys.stdout.write(f"{len(entries)} entr(ies)\n")
+    return 0
+
+
 def _rank(_args: argparse.Namespace) -> int:
     with connect() as conn:
         count = ranking.rank(conn)
@@ -517,6 +548,7 @@ COMMANDS: dict[str, Command] = {
     "doctor": Command("Check this machine's setup and say what to fix.", _doctor),
     "search": Command("Preview search results (no retrieval logged).", _search, _search_arguments),
     "show": Command("Show one entry.", _show, _show_arguments),
+    "mine": Command("Show your own entries and what happened to them.", _mine),
     "rank": Command("Write ranking snapshots (runs daily on its own).", _rank),
     "queue-check": Command(
         "Exit 1 if the review queue's oldest item is too old.", _queue_check, _queue_check_arguments
