@@ -70,8 +70,8 @@ def check_key(conn: Connection, key: str) -> KeyCheck:
     found = api_keys.find_by_hash(conn, _hash(key)) if key.startswith(KEY_PREFIX) else None
     if found is None:
         return KeyCheck(None, "unknown")
-    holder, revoked_at, expires_at = found
-    problem = _problem(revoked_at, expires_at)
+    holder, revoked_at, expires_at, suspended = found
+    problem = _problem(revoked_at, expires_at) or ("suspended" if suspended else None)
     if problem is None:
         api_keys.touch(conn, holder.key_id)
     return KeyCheck(None if problem else holder, problem)
@@ -116,7 +116,9 @@ def rotate_key(conn: Connection, handle: str, grace: timedelta = DEFAULT_GRACE) 
         msg = f"Key {old.handle()} is already {old.state(datetime.now(UTC))}."
         raise InvalidInputError(msg)
     with conn.transaction():
-        new = issue_key(conn, old.pseudonym, old.scope, KeyOptions(label=old.label, test=old.test))
+        lifetime = None if old.expires_at is None else old.expires_at - old.created_at
+        options = KeyOptions(label=old.label, expires_in=lifetime, test=old.test)
+        new = issue_key(conn, old.pseudonym, old.scope, options)
         if grace:
             api_keys.expire_at(conn, old.key_id, datetime.now(UTC) + grace)
         else:

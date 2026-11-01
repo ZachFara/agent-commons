@@ -467,3 +467,6 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
   never shows a suspended reporter's entries. Restore no longer fails when the purge's
   exclusions were undone by hand. Undoing a correction is refused while a newer correction of
   the same value stands (it used to write the old value over it).
+- 2026-10-31 (T56): lowering a reporter's role now revokes the review or admin keys it no
+  longer allows; a suspended reporter's keys (even ones issued after the purge) get 401
+  "reporter suspended"; a rotated key keeps the old key's lifetime instead of never expiring.

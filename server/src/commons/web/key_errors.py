@@ -27,7 +27,7 @@ def explain_refused_keys(app: ASGIApp, connection: ConnectionFactory) -> ASGIApp
             await app(scope, receive, send)
             return
         check = await anyio.to_thread.run_sync(_check, connection, token)
-        if check.problem in {"revoked", "expired"}:
+        if check.problem in {"revoked", "expired", "suspended"}:
             await _refuse(send, check.message())
             return
         with remembered_check(token, check):

@@ -20,8 +20,10 @@ from commons.cli.main import main
 from commons.domain.errors import InvalidInputError, NotFoundError
 from commons.domain.keys import KeyOptions, KeyScope, parse_duration
 from commons.hosted.app import build_hosted_app
-from commons.service import keys
+from commons.service import keys, purges, trust
+from commons.service.identity import acting_as
 from commons.store.connection import Connection
+from commons.store.reporters import find_reporter
 
 ORIGIN = "https://commons.example"
 MCP_LIST = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
@@ -350,3 +352,60 @@ def test_key_commands(
 
     assert main(["admin", "key", "list", who]) == 0
     assert capsys.readouterr().out.count("revoked") == 2
+
+
+# Audit 2026-10-31: role changes, suspension and rotation
+
+
+def test_lowering_a_role_revokes_the_keys_it_no_longer_allows(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    new_key(db, "demoted", "agent")  # creates the reporter
+    trust.set_role(db, "demoted", "admin")
+    admin_key = new_key(db, "demoted", "admin")
+    review_key = new_key(db, "demoted", "review")
+    agent_key = new_key(db, "demoted", "agent")
+
+    trust.set_role(db, "demoted", "reviewer")
+    assert page(app, admin_key, "/queue")[0] == 401
+    assert page(app, review_key, "/queue")[0] == 200
+
+    trust.set_role(db, "demoted", "contributor")
+    assert page(app, review_key, "/queue")[0] == 401
+    assert mcp(app, agent_key)[0] == 200
+
+
+def test_a_suspended_reporters_keys_are_refused_even_new_ones(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    new_key(db, "suspendee", "agent")
+    new_key(db, "suspender", "agent")
+    admin = find_reporter(db, "suspender")
+    assert admin
+    with acting_as(admin):
+        purges.purge(db, "suspendee", "spam")
+    fresh = new_key(db, "suspendee", "agent")
+
+    status, text = mcp(app, fresh)
+    assert (status, "suspended" in text) == (401, True)
+
+    with acting_as(admin):
+        purges.restore(db, "suspendee")
+    assert mcp(app, fresh)[0] == 200
+
+
+def test_rotation_keeps_the_keys_lifetime(db: psycopg.Connection) -> None:
+    old = new_key(db, "rotate-life", "agent", KeyOptions(expires_in=timedelta(days=90)))
+    old_info = keys.find_key(db, prefix(old))
+    new = keys.rotate_key(db, prefix(old))
+    assert new.info.expires_at is not None
+    assert old_info.expires_at is not None
+    lifetime = new.info.expires_at - new.info.created_at
+    assert abs(lifetime - timedelta(days=90)) < timedelta(minutes=1)
+
+
+def test_a_rotation_grace_never_extends_an_expiring_key(db: psycopg.Connection) -> None:
+    old = new_key(db, "rotate-soon", "agent", KeyOptions(expires_in=timedelta(hours=1)))
+    before = keys.find_key(db, prefix(old)).expires_at
+    keys.rotate_key(db, prefix(old), grace=timedelta(hours=24))
+    assert keys.find_key(db, prefix(old)).expires_at == before
