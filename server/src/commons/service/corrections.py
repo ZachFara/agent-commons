@@ -60,6 +60,9 @@ def undo(conn: Connection, correction_id: UUID, *, by: str) -> int:
             msg = f"No standing correction {correction_id}."
             raise NotFoundError(msg)
         for row in standing:
+            if (later := store.later_correction(conn, row["id"])) is not None:
+                msg = f"Correction {later} changed the same value later; undo that first."
+                raise InvalidInputError(msg)
             store.write_value(conn, row["table"], row["field"], row["row_id"], row["old_value"])
             store.mark_undone(conn, row["id"], by)
         rank(conn)

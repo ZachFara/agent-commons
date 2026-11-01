@@ -362,3 +362,24 @@ def test_correct_commands(
         )
         == 1
     )
+
+
+def test_undoing_an_older_correction_waits_for_a_newer_one_on_the_same_value(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    """Audit 2026-10-31: undoing A after B wrote A's old value back over B."""
+    _entry_id, _retrieval_id, outcome_id = used_outcome(db, reporter)
+    older = corrections.correct(db, set_field(outcome_id, "used", "no"))
+    newer = corrections.correct(db, set_field(outcome_id, "used", "partial"))
+
+    with pytest.raises(InvalidInputError, match="undo that first"):
+        corrections.undo(db, older, by="owner")
+
+    assert db.execute("SELECT used FROM outcomes WHERE id = %s", (outcome_id,)).fetchone() == (
+        "partial",
+    )
+    corrections.undo(db, newer, by="owner")
+    corrections.undo(db, older, by="owner")
+    assert db.execute("SELECT used FROM outcomes WHERE id = %s", (outcome_id,)).fetchone() == (
+        "yes",
+    )

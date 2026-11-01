@@ -49,7 +49,8 @@ def insert_correction(
     """Record the correction; return its id."""
     cursor = conn.execute(
         "INSERT INTO corrections (batch_id, corrected_by, target_table, target_id, field, "
-        "old_value, new_value, reason) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        "old_value, new_value, reason, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp()) RETURNING id",
         (
             batch_id,
             correction.by,
@@ -75,6 +76,19 @@ def standing_corrections(conn: Connection, correction_id: UUID) -> list[dict[str
     ).fetchall()
     names = ("id", "table", "row_id", "field", "old_value")
     return [dict(zip(names, row, strict=True)) for row in rows]
+
+
+def later_correction(conn: Connection, correction_id: UUID) -> UUID | None:
+    """Return a standing correction of the same value made after this one (not in its batch)."""
+    row = conn.execute(
+        "SELECT l.id FROM corrections c JOIN corrections l ON l.target_table = c.target_table "
+        "AND l.target_id = c.target_id AND l.field = c.field AND l.created_at > c.created_at "
+        "WHERE c.id = %s AND l.undone_at IS NULL "
+        "AND NOT (l.batch_id IS NOT NULL AND l.batch_id IS NOT DISTINCT FROM c.batch_id) "
+        "ORDER BY l.created_at DESC LIMIT 1",
+        (correction_id,),
+    ).fetchone()
+    return None if row is None else row[0]
 
 
 def mark_undone(conn: Connection, correction_id: UUID, by: str) -> None:
