@@ -54,8 +54,22 @@ Implementation notes (T49, 2026-10-31):
   | threshold | duplicates caught | false merges |
   |---|---|---|
   | 0.35 | 0.933 | 0.031 |
-  | 0.40 (default) | 0.933 | 0.000 |
+  | 0.40 (default until 2026-10-31) | 0.933 | 0.000 |
   | 0.50 | 0.817 | 0.000 |
+
+- Retuned 2026-10-31 (T56): the table above scored duplicates without the proposal's own
+  words, but `propose` stores the proposal first, so they count in the rarity weights (a word
+  no other entry has is evidence of a different problem). Scored that way:
+
+  | threshold | duplicates caught | false flags |
+  |---|---|---|
+  | 0.30 | 0.883 | 0.062 |
+  | 0.35 (default) | 0.833 | 0.031 |
+  | 0.38 | 0.817 | 0.000 |
+  | 0.40 | 0.767 | 0.000 |
+
+  The default is now 0.35, the lowest with false flags under 1 in 20: a flag only asks the
+  reviewer, so a missed duplicate costs more than a false flag.
 
 - Built: `flag` (default) and `link`. `return` changes what `propose` replies, so it waits for
   an eval run and is refused as a setting for now. Same-task retries are therefore flagged

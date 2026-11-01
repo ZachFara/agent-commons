@@ -21,6 +21,7 @@ from commons.service import duplicates
 from commons.store import insights
 from commons.store.connection import Connection
 from commons.store.migrate import apply_migrations
+from commons.store.reporters import upsert_reporter
 from commons.store.search import similar_entries
 from commons.web.app import build_app
 from conftest import ADMIN_URL
@@ -197,21 +198,32 @@ def test_the_default_threshold_keeps_false_merges_under_one_in_twenty(
     judged_db: psycopg.Connection,
 ) -> None:
     """Labeled pairs: each judged query is a duplicate of its entry; negatives and each entry
-    proposed again with itself excluded are distinct."""
+    proposed again with itself excluded are distinct.
+
+    Scored as `propose` does: the proposal is stored first, so its own words count in the
+    rarity weights (a word no other entry has is evidence it's different). Scoring without it,
+    as before the 2026-10-31 audit, put the catch rate at 0.933 instead of 0.767 at 0.4.
+    """
     ids = load_judged(judged_db)
     data = json.loads(JUDGED.read_text(encoding="utf-8"))
+    owner = upsert_reporter(judged_db, "search-eval", "entry")
 
-    def best(text: str, exclude: list[uuid.UUID]) -> tuple[uuid.UUID | None, float]:
-        found = similar_entries(judged_db, text, exclude, 1)
+    def proposed(text: str) -> tuple[uuid.UUID | None, float]:
+        with judged_db.transaction(force_rollback=True):
+            draft = factories.entry(judged_db, owner, symptom=text, status="pending")
+            found = similar_entries(judged_db, text, [draft], 1)
         return found[0] if found else (None, 0.0)
 
-    same = [(best(q, []), ids[e["id"]]) for e in data["entries"] for q in e["queries"]]
-    distinct = [best(q, []) for q in data["negatives"]]
-    distinct += [best(e["symptom"], [ids[e["id"]]]) for e in data["entries"]]
+    def again(entry: dict[str, Any]) -> tuple[uuid.UUID | None, float]:
+        found = similar_entries(judged_db, entry["symptom"], [ids[entry["id"]]], 1)
+        return found[0] if found else (None, 0.0)
+
+    same = [(proposed(q), ids[e["id"]]) for e in data["entries"] for q in e["queries"]]
+    distinct = [proposed(q) for q in data["negatives"]] + [again(e) for e in data["entries"]]
     caught = sum(s >= DEFAULT_THRESHOLD and got == want for (got, s), want in same) / len(same)
     false = sum(s >= DEFAULT_THRESHOLD for _, s in distinct) / len(distinct)
     assert false <= 1 / 20
-    assert caught >= 0.93
+    assert caught >= 0.83
 
 
 def test_an_entry_cannot_be_kept_apart_from_itself(
