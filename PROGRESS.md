@@ -459,3 +459,7 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
   table emptied in the dump fails the count check; the monthly copy is taken on the month's
   first successful night; the drill fails on a backup over 48 hours old.
 
+- 2026-10-31 (T56): merging a scanner-flagged pending duplicate demoted its proposer to TL0 for
+  good (the merge's rejection counted as harm); merged duplicates no longer count. Trust
+  settings must be positive (a sample rate of 0 broke trusted proposes); keep-both refuses
+  an entry paired with itself.

@@ -64,10 +64,14 @@ def pending_entries(conn: Connection, limit: int) -> list[PendingEntry]:
 
 
 def proposer_and_risk(conn: Connection, entry_id: UUID) -> tuple[UUID, bool]:
-    """Return who proposed the entry, and whether the risk scanner found anything in it."""
+    """Return who proposed the entry, and whether rejecting it counts as rejecting harm.
+
+    That is: the risk scanner found something, and it isn't a duplicate merged into another
+    entry (decision 0028).
+    """
     row = conn.execute(
-        "SELECT created_by, jsonb_array_length(risk_report->'findings') > 0 FROM entries "
-        "WHERE id = %s",
+        "SELECT created_by, jsonb_array_length(risk_report->'findings') > 0 "
+        "AND superseded_by IS NULL FROM entries WHERE id = %s",
         (entry_id,),
     ).fetchone()
     if row is None:
