@@ -8,9 +8,10 @@ from uuid import UUID
 from commons.domain.errors import InvalidInputError
 
 DuplicateAction = Literal["flag", "link"]
-# Tuned on labeled pairs from the judged set (decision 0027 step 5, test_duplicates.py): 0.4
-# catches 93% of duplicates with no false merge; 0.35 catches the same with 1 in 32 false.
-DEFAULT_THRESHOLD = 0.4
+# Tuned on labeled pairs from the judged set, scored as propose scores them (decision 0027
+# step 5, test_duplicates.py; retuned 2026-10-31): 0.35 catches 83% of duplicates with 1 of 32
+# distinct proposals flagged; 0.4 caught 77% with none. A flag only asks the reviewer.
+DEFAULT_THRESHOLD = 0.35
 MAX_CANDIDATES = 3
 
 

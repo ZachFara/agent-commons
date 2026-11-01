@@ -484,3 +484,6 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
 - 2026-10-31 (T56): the gated "since your last session" line counted a use again every time a
   later Stop re-saved its outcome, and counted your own uses; it now counts each use by
   others once, by retrieval time.
+- 2026-10-31 (T56): the duplicate threshold had been tuned without the proposal's own words in
+  the rarity weights, but propose stores the proposal first. Scored as propose does, 0.4 caught
+  77% (not 93%); the default is now 0.35 (83% caught, 1 of 32 distinct proposals flagged).
