@@ -79,10 +79,20 @@ Targets: lose at most a day of data (RPO 24 h), and be back within an hour (RTO 
 - **Backups**: `.github/workflows/backup.yml` runs nightly. It dumps production through the
   read-only `commons_backup` role, restores the dump into a scratch Postgres to prove it works,
   encrypts it with `age`, and uploads it to `gs://agent-commons-512623-backups/daily/<time>/`
-  (also `monthly/` on the 1st). The bucket keeps 14 daily and 6 monthly copies.
+  (also `monthly/` on the month's first successful night). The bucket deletes daily copies
+  after 14 days and monthly ones after 6 months, by age.
+- **Nothing is skipped quietly**: if the repository variables (`BACKUP_BUCKET`,
+  `BACKUP_AGE_RECIPIENTS`, `GCP_OPERATIONS`) or the drill secret are missing, the run fails
+  with an error naming them, and GitHub emails you about the failed run. A table that has rows
+  in production but none in the dump also fails the run.
 - **Restore drill**: on the 2nd of each month the same workflow decrypts the newest backup,
-  restores it, and checks every table's row count against the counts saved at backup time.
-  Run it any time with `gh workflow run backup -f drill=true`.
+  restores it, and checks every table's row count against the counts saved at backup time. It
+  fails if the newest backup is over 48 hours old (nightly backups have stopped). Run it any
+  time with `gh workflow run backup -f drill=true`.
+- **GitHub pauses schedules** in a repository with no activity for 60 days. The daily copies
+  would then age out after 14 days with no failed run to warn you; a push re-enables them.
+  (Cloud Monitoring can't alert on a missing nightly write: its absence window is at most
+  23.5 hours.)
 - **Keys**: backups are encrypted to two age keys. The recovery key
   (`~/.config/agent-commons/backup-recovery.agekey`) belongs in your password manager and nowhere
   else. The drill key lives only in the GitHub secret `BACKUP_DRILL_IDENTITY`; rotate it by
