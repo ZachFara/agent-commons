@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -33,17 +34,17 @@ def insert_key(
 
 def find_by_hash(
     conn: Connection, key_hash: str
-) -> tuple[KeyHolder, datetime | None, datetime | None] | None:
-    """Return the key's holder with its revoked_at and expires_at, or None if unknown."""
+) -> tuple[KeyHolder, datetime | None, datetime | None, bool] | None:
+    """Return the key's holder, revoked_at, expires_at and suspension; None if unknown."""
     row = conn.execute(
         "SELECT k.reporter_id, k.id, k.scope::text, rp.privacy_default::text, k.test, "
-        "k.revoked_at, k.expires_at FROM api_keys k JOIN reporters rp ON rp.id = k.reporter_id "
-        "WHERE k.key_hash = %s",
+        "k.revoked_at, k.expires_at, rp.suspended_at IS NOT NULL "
+        "FROM api_keys k JOIN reporters rp ON rp.id = k.reporter_id WHERE k.key_hash = %s",
         (key_hash,),
     ).fetchone()
     if row is None:
         return None
-    return KeyHolder(*row[:5]), row[5], row[6]
+    return KeyHolder(*row[:5]), row[5], row[6], row[7]
 
 
 def touch(conn: Connection, key_id: UUID) -> None:
@@ -98,3 +99,13 @@ def revoke_others(conn: Connection, reporter_id: UUID, keep: UUID) -> None:
         "WHERE reporter_id = %s AND id <> %s AND revoked_at IS NULL",
         (reporter_id, keep),
     )
+
+
+def revoke_scopes_except(conn: Connection, reporter_id: UUID, allowed: Sequence[str]) -> int:
+    """Revoke the reporter's working keys whose scope isn't allowed; return how many."""
+    cursor = conn.execute(
+        "UPDATE api_keys SET revoked_at = now() WHERE reporter_id = %s AND revoked_at IS NULL "
+        "AND NOT (scope::text = ANY(%s))",
+        (reporter_id, allowed),
+    )
+    return cursor.rowcount

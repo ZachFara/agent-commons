@@ -11,7 +11,7 @@ from commons.domain.reporters import PrivacyDefault
 
 KeyScope = Literal["agent", "review", "admin"]
 KEY_SCOPES: tuple[KeyScope, ...] = get_args(KeyScope)
-KeyProblem = Literal["unknown", "revoked", "expired"]
+KeyProblem = Literal["unknown", "revoked", "expired", "suspended"]
 
 _DURATION = re.compile(r"(\d+)([mhd])")
 _UNITS = {"m": "minutes", "h": "hours", "d": "days"}
@@ -71,6 +71,7 @@ class KeyCheck:
         return {
             "revoked": "key revoked: ask the admin for a new one",
             "expired": "key expired: ask the admin for a new one",
+            "suspended": "reporter suspended: ask the admin",
         }.get(self.problem or "", "unknown API key")
 
 

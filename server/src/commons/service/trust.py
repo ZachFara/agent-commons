@@ -5,6 +5,7 @@ import secrets
 from uuid import UUID
 
 from commons.domain.errors import InvalidInputError, NotFoundError
+from commons.domain.keys import KEY_SCOPES
 from commons.domain.trust import (
     Role,
     TrustLevel,
@@ -15,6 +16,7 @@ from commons.domain.trust import (
     validate_role,
 )
 from commons.store import trust as store
+from commons.store.api_keys import revoke_scopes_except
 from commons.store.connection import Connection
 from commons.store.reporters import find_reporter
 
@@ -82,7 +84,10 @@ def set_role(conn: Connection, pseudonym: str, role: str) -> Role:
     if reporter is None:
         msg = f"No reporter {pseudonym!r}."
         raise NotFoundError(msg)
-    store.set_role(conn, reporter, checked)
+    with conn.transaction():
+        store.set_role(conn, reporter, checked)
+        allowed = [scope for scope in KEY_SCOPES if may_hold(checked, scope)]
+        revoke_scopes_except(conn, reporter, allowed)  # a lowered role takes its keys (0032)
     return checked
 
 
