@@ -84,7 +84,7 @@ def test_the_session_line_is_off_by_default_and_counts_news_when_on(
     entry_id = factories.entry(db, reporter, status="pending")
     with acting_as(reporter):
         reviews.review(db, ReviewRequest(entry_id, "approve", None, "human"))
-    factories.outcome(db, entry_id, reporter)
+    factories.outcome(db, entry_id, other_reporter(db))
 
     with acting_as(reporter):
         assert contributors.session_feedback(db) is None
@@ -121,3 +121,35 @@ def test_mine_command_prints_your_entries(
     assert "pending   my cli entry" in out
     assert "waiting for review" in out
     assert "1 entr(ies)" in out
+
+
+def other_reporter(db: psycopg.Connection) -> uuid.UUID:
+    row = db.execute(
+        "INSERT INTO reporters (pseudonym) VALUES (%s) RETURNING id", (uuid.uuid4().hex[:10],)
+    ).fetchone()
+    assert row
+    found: uuid.UUID = row[0]
+    return found
+
+
+def test_the_session_line_counts_each_use_once_and_not_your_own(
+    db: psycopg.Connection, reporter: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit 2026-10-31: every Stop re-saved old outcomes, so old uses counted again."""
+    monkeypatch.setenv("COMMONS_SESSION_FEEDBACK", "on")
+    entry_id = factories.entry(db, reporter)
+    factories.outcome(db, entry_id, other_reporter(db), created_at="2000-01-01")
+    start_task(db, f"s-{uuid.uuid4()}", reporter, None)
+    db.execute(
+        "UPDATE tasks SET created_at = now() - interval '1 day' WHERE reporter_id = %s", (reporter,)
+    )
+    start_task(db, f"s-{uuid.uuid4()}", reporter, None)
+    db.execute(  # a later Stop re-saves the old outcome
+        "UPDATE outcomes SET evidence = evidence || '{}' FROM retrievals r "
+        "WHERE r.id = outcomes.retrieval_id AND r.entry_id = %s",
+        (entry_id,),
+    )
+    factories.outcome(db, entry_id, reporter)  # your own session using your entry
+
+    with acting_as(reporter):
+        assert contributors.session_feedback(db) is None

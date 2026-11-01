@@ -47,19 +47,23 @@ def previous_session_start(conn: Connection, reporter_id: UUID) -> datetime | No
 
 
 def news_since(conn: Connection, reporter_id: UUID, since: datetime) -> tuple[int, int, int]:
-    """Count, since `since`: their entries approved, uses of them, and successes."""
+    """Count, since `since`: their entries approved, uses of them by others, and successes.
+
+    A use counts once, when its retrieval happened: outcome rows are re-saved on every Stop of
+    their task, so their update time would count old uses again.
+    """
     row = conn.execute(
         "SELECT "
         "(SELECT count(DISTINCT r.entry_id) FROM reviews r JOIN entries e ON e.id = r.entry_id "
         " WHERE e.created_by = %(me)s AND r.decision = 'approve' AND r.created_at > %(since)s), "
         "(SELECT count(*) FROM counted_outcomes o JOIN counted_retrievals r "
         " ON r.id = o.retrieval_id JOIN entries e ON e.id = r.entry_id "
-        " WHERE e.created_by = %(me)s AND o.used IN ('yes', 'partial') "
-        " AND o.updated_at > %(since)s), "
+        " WHERE e.created_by = %(me)s AND r.reporter_id <> %(me)s AND o.used IN ('yes', 'partial') "
+        " AND r.created_at > %(since)s), "
         "(SELECT count(*) FROM counted_outcomes o JOIN counted_retrievals r "
         " ON r.id = o.retrieval_id JOIN entries e ON e.id = r.entry_id "
-        " WHERE e.created_by = %(me)s AND o.used IN ('yes', 'partial') "
-        " AND o.outcome = ANY(%(success)s::outcome_kind[]) AND o.updated_at > %(since)s)",
+        " WHERE e.created_by = %(me)s AND r.reporter_id <> %(me)s AND o.used IN ('yes', 'partial') "
+        " AND o.outcome = ANY(%(success)s::outcome_kind[]) AND r.created_at > %(since)s)",
         {"me": reporter_id, "since": since, "success": list(SUCCESS_OUTCOMES)},
     ).fetchone()
     return (0, 0, 0) if row is None else (int(row[0]), int(row[1]), int(row[2]))
