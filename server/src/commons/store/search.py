@@ -20,11 +20,15 @@ from commons.store.outcome_stats import OUTCOME_STATS, OUTCOME_STATS_PARAMS
 CANDIDATES = 50
 
 # What search can show: approved entries, and retired ones with a fix version (shown to callers
-# before the fix, decision 0026). Word rarity is counted over the same set, or a retired entry's
-# own words would count as unknown and it could never match.
+# before the fix, decision 0026), never those of a suspended (purged) reporter (0029). Word
+# rarity is counted over the same set, or a retired entry's own words would count as unknown
+# and it could never match.
 _SEARCHABLE = """(
     e.superseded_by IS NULL
     AND (e.status = 'approved' OR (e.status = 'retired' AND e.fixed_in IS NOT NULL))
+    AND NOT EXISTS (
+        SELECT 1 FROM reporters sr WHERE sr.id = e.created_by AND sr.suspended_at IS NOT NULL
+    )
 )"""
 
 # Decision 0025, replacing 0012's ordering. Candidates share at least one stemmed word with

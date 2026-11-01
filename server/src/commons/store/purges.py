@@ -84,8 +84,12 @@ def mark_restored(conn: Connection, purge_id: UUID, by: str) -> None:
 
 
 def first_correction(conn: Connection, batch_id: UUID) -> UUID | None:
-    """Return any correction in the batch (undoing one undoes them all)."""
+    """Return any standing correction in the batch (undoing one undoes them all).
+
+    None when someone already undid the batch by hand.
+    """
     row = conn.execute(
-        "SELECT id FROM corrections WHERE batch_id = %s LIMIT 1", (batch_id,)
+        "SELECT id FROM corrections WHERE batch_id = %s AND undone_at IS NULL LIMIT 1",
+        (batch_id,),
     ).fetchone()
     return None if row is None else row[0]

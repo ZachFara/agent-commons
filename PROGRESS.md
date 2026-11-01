@@ -463,3 +463,7 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
   good (the merge's rejection counted as harm); merged duplicates no longer count. Trust
   settings must be positive (a sample rate of 0 broke trusted proposes); keep-both refuses
   an entry paired with itself.
+- 2026-10-31 (T56): a purged reporter's retired-but-fixed entries stayed in search; search now
+  never shows a suspended reporter's entries. Restore no longer fails when the purge's
+  exclusions were undone by hand. Undoing a correction is refused while a newer correction of
+  the same value stands (it used to write the old value over it).

@@ -11,7 +11,8 @@ from fastmcp import FastMCP
 import factories
 from commons.cli.main import main
 from commons.domain.errors import NotFoundError, RateLimitedError
-from commons.service import keys, purges
+from commons.domain.lifecycle import FixedIn
+from commons.service import corrections, keys, lifecycle, purges
 from commons.service.identity import acting_as
 from commons.service.rates import limit
 from commons.service.reviews import pending
@@ -169,3 +170,52 @@ def test_revoke_command(
     assert f"restored {who}" in capsys.readouterr().out
     assert main(["admin", "revoke", who]) == 0
     assert "revoked 1 key(s)" in capsys.readouterr().out
+
+
+def test_restore_works_after_the_purge_exclusions_were_undone_by_hand(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    """Audit 2026-10-31: restore undid an undone batch, failed, and rolled back."""
+    keys.issue_key(db, "trudy", "agent")
+    trudy = find_reporter(db, "trudy")
+    assert trudy
+    factories.outcome(db, factories.entry(db, reporter), trudy)
+    purges.purge(db, "trudy", "spam")
+    batch = db.execute(
+        "SELECT correction_batch FROM purges WHERE reporter_id = %s", (trudy,)
+    ).fetchone()
+    assert batch
+    some = db.execute("SELECT id FROM corrections WHERE batch_id = %s LIMIT 1", batch).fetchone()
+    assert some
+    corrections.undo(db, some[0], by="owner")
+
+    back = purges.restore(db, "trudy")
+
+    assert back.outcomes == 0
+    assert not next(r for r in insights.reporters(db) if r["pseudonym"] == "trudy")["suspended_at"]
+
+
+def test_a_purged_reporters_fixed_entries_leave_search_too(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    """Audit 2026-10-31: purge retired approved entries only; fixed ones still showed."""
+    del reporter
+    keys.issue_key(db, "victor", "agent")
+    victor = find_reporter(db, "victor")
+    assert victor
+    word = f"purgefixed{uuid.uuid4().hex[:6]}"
+    fixed = factories.entry(db, victor, symptom=f"{word} renders blank")
+    lifecycle.retire(db, fixed, "fixed upstream", fixed_in=FixedIn.parse("Jinja2==3.1.0"))
+    older = {
+        "query": word,
+        "task_id": str(uuid.uuid4()),
+        "model": "m",
+        "environment": {"libraries": {"jinja2": "3.0.3"}},
+    }
+    assert [r["entry_id"] for r in call(server, "search", older)["data"]] == [str(fixed)]
+
+    purges.purge(db, "victor", "spam")
+    assert call(server, "search", older)["data"] == []
+
+    purges.restore(db, "victor")
+    assert [r["entry_id"] for r in call(server, "search", older)["data"]] == [str(fixed)]
