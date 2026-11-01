@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from commons.domain.duplicates import DuplicateSettings
-from commons.domain.errors import InvalidInputError
+from commons.domain.errors import InvalidInputError, RateLimitedError
 from commons.service.hook_client import RemoteBackend, remote_client
 from commons.service.hook_install import default_settings_path, install_hooks
 from commons.service.identity import hosted_server, save_server
@@ -117,7 +117,11 @@ def import_local(args: argparse.Namespace) -> int:
                 continue
             if not args.yes and input("  send it? [y/N] ").strip().lower() != "y":
                 continue
-            new = backend.import_entry(_entry_json(entry), _origin(entry))
+            try:
+                new = backend.import_entry(_entry_json(entry), _origin(entry))
+            except RateLimitedError:
+                sys.stdout.write(f"\n{sent} sent; run it again later for the rest\n")
+                raise
             sent += 1
             sys.stdout.write(f"  sent as {new} (pending review there)\n")
     sys.stdout.write(f"\n{sent} sent\n" if not args.dry_run else "\ndry run: nothing sent\n")

@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from commons.domain.entries import Proposal
-from commons.domain.errors import InvalidInputError, NotPermittedError
+from commons.domain.errors import InvalidInputError, NotPermittedError, RateLimitedError
 from commons.domain.keys import KeyHolder
 from commons.domain.observations import command_tail
 from commons.domain.outcomes import Usage
@@ -87,12 +87,23 @@ def _run(
             return holder
         try:
             _check_privacy(holder)
-            with acting_as(holder.reporter_id, test=holder.test):
+            with acting_as(holder.reporter_id, test=holder.test, key_id=holder.key_id):
                 return handler(conn, body), holder.scope
-        except NotPermittedError as error:
-            return _error(403, "forbidden", str(error))
-        except (InvalidInputError, KeyError, TypeError, ValueError) as error:
-            return _error(400, "invalid_input", str(error))
+        except (PermissionError, InvalidInputError, KeyError, TypeError, ValueError) as error:
+            return _refusal(error)
+
+
+def _refusal(error: Exception) -> Response:
+    """Return the response for an error a handler raised: 429, 403, or 400 for bad input."""
+    if isinstance(error, RateLimitedError):
+        limited = _error(429, "rate_limited", str(error))
+        limited.headers["retry-after"] = str(error.retry_after)
+        return limited
+    if isinstance(error, NotPermittedError):
+        return _error(403, "forbidden", str(error))
+    if isinstance(error, PermissionError):
+        raise error
+    return _error(400, "invalid_input", str(error))
 
 
 def _authorize(conn: Connection, key: str) -> KeyHolder | Response:

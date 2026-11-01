@@ -444,3 +444,10 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
 - 2026-10-31: audited decisions 0025-0036 against the code (T56). First fix: agent keys could
   approve or reject entries over MCP, so a proposer could approve its own; both tools now need
   the review scope in hosted mode.
+- 2026-10-31 (T56): the hook API's import step skipped the per-key propose limit (it acted
+  without the key id). It now counts, answers 429 with `retry-after`, and `commons import`
+  stops with how many it sent.
+- 2026-10-31 (T56): retiring and restoring (also by purge and restore) marked unreviewed
+  entries human-reviewed; only a human approve or reject after the last reopen counts now.
+  Retired entries with `fixed_in` could never match a query whose words were only in them
+  (word rarity counted approved entries only); rarity now counts what search can show.

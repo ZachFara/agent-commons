@@ -44,12 +44,16 @@ def review_state(
 ) -> tuple[EntryStatus, bool]:
     """Return (status, human_reviewed) from reviews in the order they were made.
 
-    Status follows the latest human review if there is one, else the latest agent review.
+    A reopen starts over. After it, status follows the latest human decision (including
+    retire and restore) if there is one, else the latest agent or automatic one. Only a human
+    approve or reject counts as human-reviewed: retiring and restoring don't judge the content.
     """
-    human = [decision for decision, source in reviews if source == "human"]
-    deciding = human or [decision for decision, _source in reviews]
+    reopened = [i for i, (decision, _source) in enumerate(reviews) if decision == "reopen"]
+    since = list(reviews[reopened[-1] :]) if reopened else list(reviews)
+    human = [decision for decision, source in since if source == "human"]
+    deciding = human or [decision for decision, _source in since]
     status: EntryStatus = _STATUS_FOR[deciding[-1]] if deciding else "pending"
-    return status, bool(human)
+    return status, any(decision in REVIEW_DECISIONS for decision in human)
 
 
 @dataclass(frozen=True)
