@@ -119,6 +119,7 @@ Dependencies are noted.
 | T53 | done (session line off until an eval; no digest) | Contributor feedback: "Your entries" page and `commons mine`; SessionStart line and digest only after measurement (0035; needs T44 scopes) | Scoping test: one reporter can't see another's entries |
 | T54 | built, off; waits for an eval run | Reliable propose and report: multi-turn eval scenarios, then measure the per-turn nudge, `/commons:record`, the SKILL.md plugin, a wider trigger; survey other clients' hooks (0034) | Each change adopted only on evidence on Sonnet and Opus, as in decision 0023 |
 | T55 | todo | Hook adapters for Codex CLI and Cursor (decision 0034 step 5): parse their hook payloads into the same derived observations | Tests per client payload; a session on each records test runs and turn ends |
+| T56 | in progress | Fix what the 2026-10-31 audit of decisions 0025-0036 found: agent keys reviewing, import skipping rate limits, purge/restore gaps, demotion on merge, used/outcome pairing, silent backup skips, scanner misses | A failing test first for each bug |
 
 ### DESIGN Phase 3 (after a month of data)
 
@@ -440,3 +441,6 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
   the drill key into a repository secret, so the owner runs `setup-backup-keys.sh`.
 - 2026-10-31: fixed hook test runs over 2,000 characters (a heredoc then pytest) being refused
   with 400 and lost; the server and hooks now keep the command's last 2,000 characters.
+- 2026-10-31: audited decisions 0025-0036 against the code (T56). First fix: agent keys could
+  approve or reject entries over MCP, so a proposer could approve its own; both tools now need
+  the review scope in hosted mode.

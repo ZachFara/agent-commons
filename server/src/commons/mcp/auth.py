@@ -69,3 +69,18 @@ def calling_reporter() -> Iterator[None]:
         key_id=UUID(str(key)) if key else None,
     ):
         yield
+
+
+def require_review_scope() -> None:
+    """Refuse a hosted review unless the key may review (decision 0032).
+
+    Agent keys propose, so letting them approve would let a proposer approve its own entry.
+    Local stdio is the owner's own store, so it may review there.
+    """
+    token = get_access_token()
+    if token is not None and "review" not in token.scopes:
+        msg = (
+            "Reviewing entries needs a key with the review scope; agent keys can't approve "
+            "or reject. A reviewer can use the dashboard queue instead."
+        )
+        raise NotPermittedError(msg)

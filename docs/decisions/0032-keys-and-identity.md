@@ -51,3 +51,6 @@ Implementation notes (T44, 2026-10-31):
   adds a key alongside them.
 - `reporters.is_admin` was dropped with `api_key_hash`: being an admin now means holding an
   active admin key, until roles arrive (0028).
+- Fixed 2026-10-31 (T56): the MCP `approve` and `reject` tools only needed the `agent` scope,
+  so an agent key could still approve, including its own proposals. They now need `review`
+  (admin keys have it) over hosted MCP; local stdio is unchanged.

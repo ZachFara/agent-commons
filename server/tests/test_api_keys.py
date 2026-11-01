@@ -15,6 +15,7 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+import factories
 from commons.cli.main import main
 from commons.domain.errors import InvalidInputError, NotFoundError
 from commons.domain.keys import KeyOptions, KeyScope, parse_duration
@@ -99,6 +100,59 @@ def test_review_keys_reach_review_pages_only(app: Starlette, db: psycopg.Connect
         assert (status, "admin scope" in text) == (403, True), path
     assert mcp(app, key)[0] == 403
     assert hook(app, key)[0] == 403
+
+
+def call_tool(app: Starlette, key: str, name: str, arguments: dict[str, Any]) -> str:
+    request = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": name, "arguments": arguments},
+    }
+    headers = {
+        "authorization": f"Bearer {key}",
+        "accept": "application/json, text/event-stream",
+    }
+    with TestClient(app) as client:
+        return client.post("/mcp", json=request, headers=headers).text
+
+
+def entry_status(db: psycopg.Connection, entry_id: uuid.UUID) -> str:
+    found = db.execute("SELECT status::text FROM entries WHERE id = %s", (entry_id,)).fetchone()
+    assert found
+    return str(found[0])
+
+
+@pytest.mark.parametrize("tool", ["approve", "reject"])
+def test_agent_keys_cannot_review_entries(
+    app: Starlette, db: psycopg.Connection, tool: str
+) -> None:
+    """0032: an agent key can no longer approve entries (a proposer could approve its own)."""
+    key = new_key(db, f"scope-noreview-{tool}", "agent")
+    owner = db.execute(
+        "INSERT INTO reporters (pseudonym) VALUES (%s) RETURNING id", (uuid.uuid4().hex[:10],)
+    ).fetchone()
+    assert owner
+    held = factories.entry(db, owner[0], status="pending")
+
+    text = call_tool(app, key, tool, {"entry_id": str(held), "reason": "looks fine"})
+
+    assert "forbidden" in text
+    assert "review" in text
+    assert entry_status(db, held) == "pending"
+
+
+def test_admin_keys_can_still_review_over_mcp(app: Starlette, db: psycopg.Connection) -> None:
+    key = new_key(db, "scope-admin-review", "admin")
+    owner = db.execute(
+        "INSERT INTO reporters (pseudonym) VALUES (%s) RETURNING id", (uuid.uuid4().hex[:10],)
+    ).fetchone()
+    assert owner
+    held = factories.entry(db, owner[0], status="pending")
+
+    call_tool(app, key, "approve", {"entry_id": str(held)})
+
+    assert entry_status(db, held) == "approved"
 
 
 def test_admin_keys_do_everything(app: Starlette, db: psycopg.Connection) -> None:
