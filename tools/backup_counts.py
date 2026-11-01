@@ -6,7 +6,8 @@ Usage:
 
 `compare` exits 1 and names each table whose count is off. With a tolerance, a table may
 differ by that share of its expected rows (at least 25), for comparing against a live
-database that kept taking writes after the dump.
+database that kept taking writes after the dump; a table with rows that comes back empty
+always fails.
 """
 
 import argparse
@@ -46,7 +47,8 @@ def differences(expected: dict[str, int], actual: dict[str, int], tolerance: flo
             problems.append(f"{table}: missing")
             continue
         slack = 0 if tolerance == 0 else max(MIN_SLACK, round(rows * tolerance))
-        if abs(actual[table] - rows) > slack:
+        emptied = rows > 0 and actual[table] == 0  # never within tolerance
+        if emptied or abs(actual[table] - rows) > slack:
             problems.append(f"{table}: expected {rows}, found {actual[table]}")
     problems += [f"{table}: unexpected table" for table in sorted(actual.keys() - expected)]
     if not expected.get("entries"):

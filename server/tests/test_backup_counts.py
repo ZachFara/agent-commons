@@ -34,3 +34,10 @@ def test_a_backup_without_entries_fails() -> None:
 def test_counts_cover_every_table(database_url: str) -> None:
     counts = count_rows(database_url)
     assert {"entries", "searches", "search_months", "schema_migrations"} <= counts.keys()
+
+
+def test_a_table_left_empty_fails_whatever_the_tolerance() -> None:
+    """Audit 2026-10-31: 20 live rows and 0 restored passed under the 25-row slack."""
+    assert differences({"entries": 3, "outcomes": 20}, {"entries": 3, "outcomes": 0}, 0.05) == [
+        "outcomes: expected 20, found 0"
+    ]

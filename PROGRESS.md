@@ -454,4 +454,8 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
 - 2026-10-31: ran `make eval-reliability` (72 sessions). Adopted the wider propose trigger as
   the shipped text (Sonnet both proposals 6/6 vs 4/6; Opus 6/6 either way; no control
   proposals). The per-turn nudge stays off (3/6 on Sonnet). Results in decision 0034.
+- 2026-10-31 (T56): the backup workflow skipped itself, with no email, whenever its variables
+  were unset (as now, before `setup-backup-keys.sh`). It now fails naming what's missing; a
+  table emptied in the dump fails the count check; the monthly copy is taken on the month's
+  first successful night; the drill fails on a backup over 48 hours old.
 
