@@ -478,3 +478,6 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
   stays `unknown` there. Reliability skips pairs with nothing observed. Clock skew between
   client and store in pairing is a known limit (decision 0036).
 
+- 2026-10-31 (T56): the risk scanner missed `rm -rf "$HOME"`, `$HOME/*`, long options,
+  `| sudo -E bash`, and pip installs pinned to a branch; it now catches them (with new
+  look-alikes that must stay clean) and also scans and strips the `environment` field.
