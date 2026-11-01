@@ -23,6 +23,7 @@ logger = logging.getLogger("commons.hooks")
 Payload = dict[str, Any]
 HookOutput = dict[str, Any] | None
 OUTPUT_TAIL = 4000  # characters; summaries sit at the end
+KEEPS_MCP_SERVER = frozenset({"compact", "clear"})  # SessionStart sources in the same process
 
 
 def _session_start(payload: Payload) -> HookOutput:
@@ -31,8 +32,10 @@ def _session_start(payload: Payload) -> HookOutput:
     if not isinstance(session_id, str) or not (model is None or isinstance(model, str)):
         msg = "session_id must be a string and model a string if present"
         raise TypeError(msg)
-    server = _current_server()
-    bind_store(session_id, server)  # this session's hooks stay with this store (0031)
+    # This session's hooks stay with this store (0031). Compact and clear keep the running MCP
+    # server, so they keep the binding; startup and resume (MCP restarted) bind afresh.
+    if payload.get("source") not in KEEPS_MCP_SERVER or bound_store(session_id) is None:
+        bind_store(session_id, _current_server())
     backend = backend_for(session_id)
     task_id = hook_client.on_session_start(backend, session_id, model)
     context = (
