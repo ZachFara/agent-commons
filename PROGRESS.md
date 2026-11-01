@@ -212,6 +212,42 @@ Anticipated next steps:
 6. Not pursued: an automatic search on every failing command. It is the same kind of forced
    call the owner rejected.
 
+### Under consideration: proposing after configuration work with no tests (owner, 2026-11-01)
+
+Not started. Evidence comes from one real session, an Obsidian plugin setup:
+- The agent called commons as soon as the owner asked, so the MCP server and hooks worked.
+- It did not propose on its own. The cause was that Obsidian plugins overwrite external edits
+  to their settings file while the app runs. That is the kind of surprise commons is for.
+
+Likely reasons, from a later review of the session:
+1. No hook could fire. The Stop hook reacts to what it observes, mainly a test that failed and
+   then passed. Editing `data.json` and relaunching the app runs no test. The only
+   test-independent reminder is the `nudge`, which is off (decision 0034: it fired mostly on
+   control sessions).
+2. The agent probably filed it as its own mistake ("I edited while the app was open") rather
+   than as an undocumented behavior of the app. Its first fix was of its own failed edit from
+   the day before.
+3. The session may have started before the 2026-11-01 deploy, and so still had the previous
+   wording (4 of 6 proposals on Sonnet in the eval). Agents read the instructions once, at
+   session start. This one fixes itself as new sessions start.
+
+The gap: commons triggers well on test-driven debugging and poorly on configuration work
+with nothing to test. This overlaps the Stop-hook consideration above (the Cosmo session's
+misses were also config-default surprises).
+
+Options, each agent-facing, so each needs an eval first:
+- A test-independent signal for the Stop hook, such as a failing command later followed by a
+  working one, or repeated edits to the same config file within a turn.
+- A trigger that names non-code tools and config files outright, e.g. "including an app,
+  plugin or config file that behaved differently from what you expected", and that counts a
+  surprise as worth proposing even when your first fix was of your own mistake.
+
+Anticipated next steps:
+1. Add eval scenarios with no tests: an app or plugin that overwrites its config while it
+   runs, and a config default that silently wins. Check the controls stay clean.
+2. Measure the wording option against the shipped wording on Sonnet and Opus.
+3. Measure the Stop-hook signal separately, together with the per-turn nudge above.
+
 ### Long-term gaps (owner, 2026-10-31)
 
 Each gap now has a proposed decision and a task row (T42-T54 above):
