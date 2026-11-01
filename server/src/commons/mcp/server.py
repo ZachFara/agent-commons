@@ -17,7 +17,7 @@ from commons.domain.outcomes import OutcomeKind, Report
 from commons.domain.reviews import PendingEntry, ReviewRequest
 from commons.domain.search import MAX_LIMIT, SearchHit, SearchRequest
 from commons.domain.status import StoreStatus
-from commons.mcp.auth import ApiKeyVerifier, calling_reporter
+from commons.mcp.auth import ApiKeyVerifier, calling_reporter, require_review_scope
 from commons.mcp.call_log import CallLog, log_calls_to_stdout
 from commons.mcp.errors import StructuredValidationErrors, structured_errors
 from commons.service import agent_text, proposals, reports, reviews
@@ -149,6 +149,7 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
             entry_id=entry_id, decision="approve", reason=reason, source="agent"
         )
         with structured_errors(), calling_reporter(), connection() as conn:
+            require_review_scope()
             result = reviews.review(conn, request)
         return _review_json(entry_id, result)
 
@@ -160,6 +161,7 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
         """Provisionally reject an entry. Recorded as an agent review; a human confirms later."""
         request = ReviewRequest(entry_id=entry_id, decision="reject", reason=reason, source="agent")
         with structured_errors(), calling_reporter(), connection() as conn:
+            require_review_scope()
             result = reviews.review(conn, request)
         return _review_json(entry_id, result)
 
