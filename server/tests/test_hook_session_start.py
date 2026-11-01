@@ -1,3 +1,4 @@
+import json
 import uuid
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 from commons.domain.errors import NotPermittedError
 from commons.service import hooks
 from commons.service.identity import acting_as
+from commons.service.local_state import bound_store
 from commons.store.reporters import upsert_reporter
 from hook_env import HookEnv
 
@@ -93,3 +95,36 @@ def test_a_session_belongs_to_one_reporter(db: psycopg.Connection) -> None:
         (session,),
     ).fetchone()
     assert events == (0,)
+
+
+@pytest.mark.parametrize(("source", "store"), [("compact", "local"), ("clear", "local")])
+def test_compact_and_clear_keep_the_store_the_session_started_with(
+    env: HookEnv, tmp_path: Path, source: str, store: str
+) -> None:
+    """Audit 2026-10-31: SessionStart also fires on compact and clear, and re-bound the session
+    to the machine's new store while its MCP server (still running) kept the old one."""
+    env.init()
+    session = str(uuid.uuid4())
+    env.run("session-start", {"session_id": session, "source": "startup"})
+    config = tmp_path / "config.json"
+    switched = {**json.loads(config.read_text()), "server": "https://x.example", "key": "ac_x"}
+    config.write_text(json.dumps(switched))
+
+    env.run("session-start", {"session_id": session, "source": source})
+
+    assert bound_store(session) == {"store": store}
+
+
+def test_resume_binds_to_the_store_the_restarted_mcp_server_uses(
+    env: HookEnv, tmp_path: Path
+) -> None:
+    env.init()
+    session = str(uuid.uuid4())
+    env.run("session-start", {"session_id": session, "source": "startup"})
+    config = tmp_path / "config.json"
+    switched = {**json.loads(config.read_text()), "server": "https://x.example", "key": "ac_x"}
+    config.write_text(json.dumps(switched))
+
+    env.run("session-start", {"session_id": session, "source": "resume"})
+
+    assert bound_store(session) == {"store": "https://x.example", "key": "ac_x"}
