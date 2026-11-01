@@ -15,7 +15,7 @@ from uuid import UUID
 
 import httpx2
 
-from commons.domain.errors import NotInitializedError, NotPermittedError
+from commons.domain.errors import NotInitializedError, NotPermittedError, RateLimitedError
 from commons.domain.observations import (
     ToolUse,
     command_tail,
@@ -135,6 +135,9 @@ class RemoteBackend:
             raise NotInitializedError(msg)
         if response.status_code == httpx2.codes.FORBIDDEN:
             raise NotPermittedError(response.json()["error"]["message"])
+        if response.status_code == httpx2.codes.TOO_MANY_REQUESTS:
+            wait = int(response.headers.get("retry-after", "60"))
+            raise RateLimitedError(response.json()["error"]["message"], wait)
         response.raise_for_status()
         result: dict[str, Any] = response.json()
         return result

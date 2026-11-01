@@ -185,3 +185,38 @@ def test_import_sends_new_local_entries_through_review_and_skips_the_rest(
 
 def test_the_store_field_still_names_local_for_local_sessions(server: FastMCP) -> None:
     assert call(server, "status", {})  # a local session on an unswitched machine still works
+
+
+def test_import_counts_against_the_propose_limit(
+    machine: Path,
+    local_store: str,
+    db: psycopg.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Audit 2026-10-31: the import step skipped the per-key propose limit (decision 0029)."""
+    monkeypatch.setenv("COMMONS_RATE_LIMIT_PROPOSE", "1")
+    key = create_key(db, "limited-importer", admin=False)
+    with psycopg.connect(local_store) as conn:
+        me = upsert_reporter(conn, "switcher", "entry")
+        factories.entry(conn, me, symptom="importlimit one zephyrine overflow")
+        factories.entry(conn, me, symptom="importlimit two quillback deadlock")
+    write_config(machine, server=SERVER, key=key)
+
+    @contextmanager
+    def test_connection() -> Iterator[Connection]:
+        yield db
+
+    app = build_app(test_connection, hosted=True)
+    monkeypatch.setattr(
+        "commons.cli.onboarding.remote_client",
+        lambda _url, k: TestClient(app, headers={"authorization": f"Bearer {k}"}),
+    )
+
+    assert main(["import", "--from-local", "--yes"]) == 1
+
+    out = capsys.readouterr()
+    assert "Too many propose calls" in out.err
+    assert "1 sent" in out.out
+    sent = db.execute("SELECT count(*) FROM entries WHERE symptom LIKE 'importlimit%'").fetchone()
+    assert sent == (1,)

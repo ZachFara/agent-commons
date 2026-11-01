@@ -23,6 +23,8 @@ from commons.domain.errors import (
     InvalidInputError,
     NotFoundError,
     NotInitializedError,
+    NotPermittedError,
+    RateLimitedError,
     StoreUnavailableError,
 )
 from commons.domain.keys import KEY_SCOPES, KeyInfo, KeyOptions, KeyScope, parse_duration
@@ -580,6 +582,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         InvalidInputError,
         NotFoundError,
         NotInitializedError,
+        NotPermittedError,
+        RateLimitedError,
         StoreUnavailableError,
     ) as error:
         sys.stderr.write(f"error: {error}\n")
