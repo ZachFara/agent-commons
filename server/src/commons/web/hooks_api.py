@@ -20,6 +20,7 @@ from starlette.routing import Route
 from commons.domain.entries import Proposal
 from commons.domain.errors import InvalidInputError, NotPermittedError
 from commons.domain.keys import KeyHolder
+from commons.domain.observations import command_tail
 from commons.domain.outcomes import Usage
 from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
@@ -34,7 +35,6 @@ Handler = Callable[[Connection, Body], Body]
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _USAGES: frozenset[Usage | None] = frozenset({"yes", "partial", "no", None})
-MAX_COMMAND_LENGTH = 2000
 
 
 def hook_routes(connection: ConnectionFactory) -> list[Route]:
@@ -153,12 +153,12 @@ def _test_run(value: object) -> dict[str, object] | None:
         isinstance(value, dict)
         and set(value) == {"command", "exit_code"}
         and isinstance(value["command"], str)
-        and len(value["command"]) <= MAX_COMMAND_LENGTH
         and isinstance(value["exit_code"], int)
     ):
         msg = "test_run must be {command: str, exit_code: int}."
         raise InvalidInputError(msg)
-    return {"command": scrub(value["command"]), "exit_code": value["exit_code"]}
+    # Older hooks send long commands whole; keep the end, where the test runner is.
+    return {"command": scrub(command_tail(value["command"])), "exit_code": value["exit_code"]}
 
 
 def _file_change(value: object) -> dict[str, object] | None:

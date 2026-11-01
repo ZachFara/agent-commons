@@ -116,3 +116,11 @@ def exit_code_from_error(error: str) -> int | None:
     """Parse the exit code from Claude Code's Bash failure text ("Exit code 3 ..."), else None."""
     match = _EXIT_CODE.match(error)
     return int(match.group(1)) if match else None
+
+
+MAX_COMMAND_LENGTH = 2000
+
+
+def command_tail(command: str) -> str:
+    """Keep a test run's command short: its last characters, where the runner usually is."""
+    return command[-MAX_COMMAND_LENGTH:]
