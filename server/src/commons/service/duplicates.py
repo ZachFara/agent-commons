@@ -63,13 +63,17 @@ def merge(conn: Connection, duplicate: UUID, into: UUID) -> None:
         if found["status"] == "approved":
             lifecycle.retire(conn, duplicate, reason, superseded_by=into)
         else:
-            reviews.review(conn, ReviewRequest(duplicate, "reject", reason, "human"))
+            # Superseded first: a merged duplicate isn't a harmful rejection (decision 0028).
             lifecycle.mark_superseded(conn, duplicate, into)
+            reviews.review(conn, ReviewRequest(duplicate, "reject", reason, "human"))
         store.add_alias(conn, into, found["symptom"])
 
 
 def keep_both(conn: Connection, first: UUID, second: UUID, reason: str = "distinct") -> None:
     """Record that two entries are different problems, so they are never flagged again."""
     require_reason(reason)
+    if first == second:
+        msg = "An entry can't be kept apart from itself."
+        raise InvalidInputError(msg)
     with conn.transaction():
         store.add_distinct_pair(conn, first, second, current_pseudonym(conn))

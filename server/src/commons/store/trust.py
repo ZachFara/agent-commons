@@ -11,7 +11,8 @@ SELECT rp.id,
   (SELECT count(*) FROM entries e WHERE e.created_by = rp.id AND e.status = 'approved'),
   (SELECT count(*) FROM entries e WHERE e.created_by = rp.id),
   (SELECT count(*) FROM entries e WHERE e.created_by = rp.id AND e.status = 'rejected'
-     AND e.human_reviewed AND jsonb_array_length(e.risk_report->'findings') > 0)
+     AND e.human_reviewed AND jsonb_array_length(e.risk_report->'findings') > 0
+     AND e.superseded_by IS NULL)
    + (SELECT count(*) FROM purges p WHERE p.reporter_id = rp.id AND p.restored_at IS NULL),
   (SELECT count(*) FROM entries e WHERE e.created_by = rp.id AND e.status = 'rejected'
      AND e.superseded_by IS NOT NULL),

@@ -36,10 +36,13 @@ class TrustSettings:
             if raw is None:
                 continue
             try:
-                values[name] = type(default)(raw)
+                value = type(default)(raw)
             except ValueError:
-                msg = f"COMMONS_TRUST_{name.upper()} must be a number."
-                raise InvalidInputError(msg) from None
+                value = 0
+            if value <= 0:  # a sample rate of 0 would make every trusted propose fail
+                msg = f"COMMONS_TRUST_{name.upper()} must be a positive number."
+                raise InvalidInputError(msg)
+            values[name] = value
         return replace(cls(), **values)
 
 

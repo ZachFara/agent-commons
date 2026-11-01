@@ -212,3 +212,11 @@ def test_the_default_threshold_keeps_false_merges_under_one_in_twenty(
     false = sum(s >= DEFAULT_THRESHOLD for _, s in distinct) / len(distinct)
     assert false <= 1 / 20
     assert caught >= 0.93
+
+
+def test_an_entry_cannot_be_kept_apart_from_itself(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    entry_id = factories.entry(db, reporter)
+    with pytest.raises(InvalidInputError, match="itself"):
+        duplicates.keep_both(db, entry_id, entry_id)
