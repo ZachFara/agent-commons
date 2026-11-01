@@ -487,3 +487,6 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
 - 2026-10-31 (T56): the duplicate threshold had been tuned without the proposal's own words in
   the rarity weights, but propose stores the proposal first. Scored as propose does, 0.4 caught
   77% (not 93%); the default is now 0.35 (83% caught, 1 of 32 distinct proposals flagged).
+- 2026-10-31 (T56): trust levels counted a contributor's own unreviewed provisional entries as
+  approved (TL2 reachable on entries no human saw); they count once a human reviews them or
+  outcomes confirm them. Queue age counts a reopened entry from its reopening.

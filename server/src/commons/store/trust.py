@@ -8,7 +8,8 @@ from commons.store.reviews import add_review
 
 _HISTORIES = """
 SELECT rp.id,
-  (SELECT count(*) FROM entries e WHERE e.created_by = rp.id AND e.status = 'approved'),
+  (SELECT count(*) FROM entries e WHERE e.created_by = rp.id AND e.status = 'approved'
+     AND NOT (e.provisional AND NOT e.human_reviewed AND e.confirmed_at IS NULL)),
   (SELECT count(*) FROM entries e WHERE e.created_by = rp.id),
   (SELECT count(*) FROM entries e WHERE e.created_by = rp.id AND e.status = 'rejected'
      AND e.human_reviewed AND jsonb_array_length(e.risk_report->'findings') > 0
@@ -121,9 +122,14 @@ def role_of(conn: Connection, reporter_id: UUID) -> Role:
 
 
 def queue_age_days(conn: Connection) -> tuple[int, float | None]:
-    """How many entries wait for a human, and how many days the oldest has waited."""
+    """How many entries wait for a human, and how many days the oldest has waited.
+
+    A reopened entry waits from its reopening, not from when it was first proposed.
+    """
     row = conn.execute(
-        "SELECT count(*), extract(epoch FROM now() - min(e.created_at)) / 86400 "
+        "SELECT count(*), extract(epoch FROM now() - min(greatest(e.created_at, ("
+        "  SELECT max(v.created_at) FROM reviews v WHERE v.entry_id = e.id "
+        "  AND v.decision = 'reopen')))) / 86400 "
         "FROM entries e JOIN reporters rp ON rp.id = e.created_by "
         "WHERE NOT e.human_reviewed AND e.status <> 'retired' AND rp.suspended_at IS NULL "
         "AND (NOT e.provisional OR e.sampled)"
