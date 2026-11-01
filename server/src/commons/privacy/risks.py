@@ -26,7 +26,7 @@ RISKS = (
     RiskPattern(
         "pipe_to_shell",
         re.compile(
-            r"\b(curl|wget)\b[^\n|;]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b"
+            r"\b(curl|wget)\b[^\n|;]*\|\s*(sudo(\s+-[a-z]+)*\s+)?(ba|z|da|k)?sh\b"
             r"|\b(ba|z)?sh\s+<\(\s*(curl|wget)\b"
             r"|\biex\s*\(?\s*\(?\s*(iwr|invoke-webrequest|irm|invoke-restmethod|new-object\s+net\.webclient)\b",
             _FLAGS,
@@ -35,8 +35,9 @@ RISKS = (
     RiskPattern(
         "destructive_delete",
         re.compile(
-            r"\brm\s+(-[a-z]+\s+)*-[a-z]*r[a-z]*\s+(-[a-z-]+\s+)*"
-            r"(/|/\*|~|~/|~/\*|\$home|\$\{home\}|\*|\.|\.\.)(?=\s|$|;|&|\)|`|'|\")",
+            # rm with a recursive flag (short or long, anywhere), aimed at /, home, * or ..
+            r"\brm(?=[^\n;&|]*\s(-[a-z]*r[a-z]*|--recursive)(\s|$))[^\n;&|]*?\s['\"]?"
+            r"((~|\$home|\$\{home\})/?\*?|/\*?|\*|\.\.?)['\"]?(?=$|[\s;&|)`])",
             _FLAGS,
         ),
     ),
@@ -76,7 +77,9 @@ RISKS = (
     RiskPattern(
         "unpinned_install",
         re.compile(
-            r"\bpip3?\s+install\s+[^\n]*\b(git\+)?https?://[^\s@]+(?=\s|$)(?<!\.git@)"
+            # a URL with no ref, or a ref that isn't a commit or a version tag (a branch moves)
+            r"\bpip3?\s+install\s+[^\n]*\b(git\+)?https?://[^\s@#]+"
+            r"(@(?![0-9a-f]{7,40}\b|v?\d)[^\s#]+)?(?=[\s#]|$)"
             r"|\bnpm\s+(i|install)\s+[^\n]*\bhttps?://"
             r"|\bgo\s+install\s+\S+@latest\b",
             _FLAGS,
@@ -123,8 +126,10 @@ def scan_proposal(proposal: Proposal) -> tuple[Proposal, dict[str, object]]:
             counts[f"{field}:invisible_unicode"] += invisible
         for kind, count in scan_text(text).items():
             counts[f"{field}:{kind}"] += count
+    environment = _scan_values(proposal.environment, counts)
     stripped = replace(
         proposal,
+        environment=environment,
         symptom=cleaned["symptom"] or "",
         cause=cleaned["cause"] or "",
         fix=cleaned["fix"] or "",
@@ -135,3 +140,23 @@ def scan_proposal(proposal: Proposal) -> tuple[Proposal, dict[str, object]]:
         for key, count in sorted(counts.items())
     ]
     return stripped, {"scanned": True, "findings": findings}
+
+
+def _scan_values(environment: dict[str, object], counts: Counter[str]) -> dict[str, object]:
+    """Strip and scan every string in the environment (search returns it to agents too)."""
+    return {key: _scan_value(value, counts) for key, value in environment.items()}
+
+
+def _scan_value(value: object, counts: Counter[str]) -> object:
+    if isinstance(value, str):
+        text, invisible = strip_invisible(value)
+        if invisible:
+            counts["environment:invisible_unicode"] += invisible
+        for kind, count in scan_text(text).items():
+            counts[f"environment:{kind}"] += count
+        return text
+    if isinstance(value, dict):
+        return {key: _scan_value(item, counts) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scan_value(item, counts) for item in value]
+    return value
