@@ -247,3 +247,38 @@ def test_thresholds_and_sample_rates_must_be_positive(value: str) -> None:
     """Audit 2026-10-31: a sample rate of 0 made every trusted propose fail."""
     with pytest.raises(InvalidInputError, match="positive"):
         TrustSettings.from_environment({"COMMONS_TRUST_TL1_SAMPLE_ONE_IN": value})
+
+
+def test_unreviewed_provisional_entries_do_not_raise_trust(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    """Audit 2026-10-31: a TL1 contributor could reach TL2 on entries no human had seen."""
+    for _ in range(5):
+        factories.entry(db, reporter, provisional=True)
+    rank(db)
+    level = db.execute("SELECT trust_level FROM reporters WHERE id = %s", (reporter,)).fetchone()
+    assert level == (0,)
+
+
+def test_queue_age_counts_from_when_an_entry_was_reopened(
+    database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit 2026-10-31: a reopened old entry set off the 3-day alert at once."""
+    monkeypatch.setenv("COMMONS_DATABASE_URL", database_url)
+    with psycopg.connect(database_url) as conn:
+        owner = conn.execute(
+            "INSERT INTO reporters (pseudonym) VALUES (%s) RETURNING id", (uuid.uuid4().hex[:10],)
+        ).fetchone()
+        assert owner
+        old = factories.entry(conn, owner[0], status="pending", created_at="2000-01-01")
+        conn.execute(
+            "INSERT INTO reviews (entry_id, reviewed_by, decision, reason, source) "
+            "VALUES (%s, %s, 'reopen', 'demoted', 'auto')",
+            (old, owner[0]),
+        )
+    try:
+        assert main(["queue-check", "--max-age", "3d"]) == 0
+    finally:
+        with psycopg.connect(database_url) as conn:
+            conn.execute("UPDATE entries SET status = 'retired' WHERE id = %s", (old,))
