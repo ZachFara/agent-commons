@@ -492,12 +492,15 @@ def resolve(name: str) -> Variant:
 # empty search, and the "connected" session-start line. On 13 scenarios no round was tuned on,
 # good proposals rose from 18/27 to 25/27 on Opus 5.5 and from 2/27 to 18/27 on Sonnet, with no
 # proposal and no search on any control and every bug still fixed.
-SHIPPED = "w-a0b4c5d1e0f1g1h0n0s1"
+PREVIOUS_SHIPPED = "w-a0b4c5d1e0f1g1h0n0s1"
+VARIANTS["previous"] = resolve(PREVIOUS_SHIPPED)
+# Adopted 2026-10-31 (decision 0034): the propose rule widened to surprising defaults and bare
+# error pages. On the two multi-turn scenarios Sonnet filed both proposals in 6 of 6 sessions
+# (4 of 6 with the previous text) and Opus in 6 of 6 either way, with no proposal on any of
+# the 12 control sessions in either condition.
+WIDER_TRIGGER = PREVIOUS_SHIPPED.replace("c5", f"c{len(PROPOSE_RULES) - 1}")
+SHIPPED = WIDER_TRIGGER
 VARIANTS["baseline"] = resolve(SHIPPED)
-# The candidates decision 0034 measures against SHIPPED: the wider propose trigger, and the
-# shipped text with the per-session nudge (the per-turn nudge is a server setting instead).
-WIDER_TRIGGER = SHIPPED.replace("c5", f"c{len(PROPOSE_RULES) - 1}")
-VARIANTS["wider-trigger"] = resolve(WIDER_TRIGGER)
 
 
 def variant() -> Variant:

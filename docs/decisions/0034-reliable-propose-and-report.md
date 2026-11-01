@@ -82,3 +82,22 @@ sessions at 3 runs).
    clients' outcomes stay `self_reported`.
 6. Wording candidate: variant `wider-trigger`, the shipped text with the propose rule widened to
    "a surprising default, or a bare error page" (within the instructions' size limit).
+
+Results (2026-10-31, `make eval-reliability`, 3 runs per scenario per condition, 72 sessions,
+no errors; trials in `docs/eval/trials.jsonl`). "Both" means both proposals of a multi-turn
+scenario were filed:
+
+| Condition | Sonnet: both | Opus 5.5: both | Proposals on 6 control sessions |
+|---|---|---|---|
+| previous shipped text | 4 of 6 | 6 of 6 | 0 (each model) |
+| `wider-trigger` | 6 of 6 | 6 of 6 | 0 (each model) |
+| per-turn nudge on | 3 of 6 | 6 of 6 | 0 (each model) |
+
+- Adopted `wider-trigger` as the shipped text (owner, 2026-10-31). The sample is small; the
+  previous text stays as variant `previous` for later comparisons.
+- The per-turn nudge stays off. It fired in 7 Sonnet sessions, 6 of them controls (agents
+  rightly declined), and the one miss it reached was declined too. It never fires on a turn
+  that searched without proposing, which is where Sonnet's misses were.
+- `/commons:record` and the skill were not measured: the eval has no condition for them yet,
+  so both stay off.
+

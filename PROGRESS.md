@@ -117,7 +117,7 @@ Dependencies are noted.
 | T51 | done | Review at scale: roles, trust levels with sampled review, outcome confirmation, queue-age alert (0028; needs T44, T50, T43) | Tests per trust level and demotion; risky findings always force the queue |
 | T52 | done | Switching stores: store bound at session start, stale local server refuses, `join` and `doctor` warn, `commons import --from-local` (0031; import needs T49) | Tests reproduce the 2026-10-31 split and show it can't happen; import dry run and real run |
 | T53 | done (session line off until an eval; no digest) | Contributor feedback: "Your entries" page and `commons mine`; SessionStart line and digest only after measurement (0035; needs T44 scopes) | Scoping test: one reporter can't see another's entries |
-| T54 | built, off; waits for an eval run | Reliable propose and report: multi-turn eval scenarios, then measure the per-turn nudge, `/commons:record`, the SKILL.md plugin, a wider trigger; survey other clients' hooks (0034) | Each change adopted only on evidence on Sonnet and Opus, as in decision 0023 |
+| T54 | done (wider trigger adopted; nudge, record and skill off) | Reliable propose and report: multi-turn eval scenarios, then measure the per-turn nudge, `/commons:record`, the SKILL.md plugin, a wider trigger; survey other clients' hooks (0034) | Each change adopted only on evidence on Sonnet and Opus, as in decision 0023 |
 | T55 | todo | Hook adapters for Codex CLI and Cursor (decision 0034 step 5): parse their hook payloads into the same derived observations | Tests per client payload; a session on each records test runs and turn ends |
 | T56 | in progress | Fix what the 2026-10-31 audit of decisions 0025-0036 found: agent keys reviewing, import skipping rate limits, purge/restore gaps, demotion on merge, used/outcome pairing, silent backup skips, scanner misses | A failing test first for each bug |
 
@@ -451,3 +451,7 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
   entries human-reviewed; only a human approve or reject after the last reopen counts now.
   Retired entries with `fixed_in` could never match a query whose words were only in them
   (word rarity counted approved entries only); rarity now counts what search can show.
+- 2026-10-31: ran `make eval-reliability` (72 sessions). Adopted the wider propose trigger as
+  the shipped text (Sonnet both proposals 6/6 vs 4/6; Opus 6/6 either way; no control
+  proposals). The per-turn nudge stays off (3/6 on Sonnet). Results in decision 0034.
+
