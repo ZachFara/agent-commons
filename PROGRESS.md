@@ -481,3 +481,6 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
 - 2026-10-31 (T56): the risk scanner missed `rm -rf "$HOME"`, `$HOME/*`, long options,
   `| sudo -E bash`, and pip installs pinned to a branch; it now catches them (with new
   look-alikes that must stay clean) and also scans and strips the `environment` field.
+- 2026-10-31 (T56): the gated "since your last session" line counted a use again every time a
+  later Stop re-saved its outcome, and counted your own uses; it now counts each use by
+  others once, by retrieval time.
