@@ -44,7 +44,7 @@ EVAL_0034 = --scenario multi-turn-rename-then-default --scenario multi-turn-retr
 eval-reliability:  ## Decision 0034's conditions on both models (asks nothing; costs usage)
 	for model in sonnet claude-opus-5-5; do \
 	  uv run python tools/agent_eval.py run $(EVAL_0034) --model $$model --condition r-shipped-$$model && \
-	  uv run python tools/agent_eval.py run $(EVAL_0034) --model $$model --variant wider-trigger --condition r-wider-$$model && \
+	  uv run python tools/agent_eval.py run $(EVAL_0034) --model $$model --variant previous --condition r-previous-$$model && \
 	  COMMONS_TURN_NUDGE=on uv run python tools/agent_eval.py run $(EVAL_0034) --model $$model --condition r-nudge-$$model; \
 	done
 

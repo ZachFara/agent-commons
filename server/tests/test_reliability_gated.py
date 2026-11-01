@@ -86,14 +86,17 @@ def test_the_record_prompt_is_offered_only_when_turned_on(monkeypatch: pytest.Mo
     assert prompts(monkeypatch, "on") == ["record"]
 
 
-def test_the_wider_trigger_differs_from_the_shipped_text_only_in_the_propose_rule() -> None:
-    shipped, wider = agent_text.resolve(agent_text.SHIPPED), agent_text.VARIANTS["wider-trigger"]
-    assert "a bare error page" in wider.instructions
-    assert "a bare error page" not in shipped.instructions
-    assert (wider.propose, wider.search, wider.start_line) == (
-        shipped.propose,
-        shipped.search,
-        shipped.start_line,
+def test_the_shipped_text_is_the_wider_trigger_and_differs_only_in_the_propose_rule() -> None:
+    previous, shipped = agent_text.VARIANTS["previous"], agent_text.resolve(agent_text.SHIPPED)
+    assert (
+        shipped == agent_text.resolve(agent_text.WIDER_TRIGGER) == agent_text.VARIANTS["baseline"]
+    )
+    assert "a bare error page" in shipped.instructions
+    assert "a bare error page" not in previous.instructions
+    assert (shipped.propose, shipped.search, shipped.start_line) == (
+        previous.propose,
+        previous.search,
+        previous.start_line,
     )
 
 
