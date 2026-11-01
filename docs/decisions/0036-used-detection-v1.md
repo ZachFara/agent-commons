@@ -57,3 +57,13 @@ Implementation notes (T46, 2026-10-31):
 - Labeled set (`test_used_labeled.py`, 12 sessions: 7 true uses, 5 not): precision 0.70 to
   1.00, recall 1.00 to 1.00. Eval transcripts are not kept, so the set is built from the eval's
   known-entry scenarios, the production entries, and the 2026-10-31 cases.
+- Amended 2026-10-31 (T56): the outcome is judged by the last test run after the retrieval.
+  When that is a pass with no matched work, the outcome stays `unknown`, even if an earlier
+  run failed (the agent fixed it another way). Previously the pass was dropped and the earlier
+  failure recorded, blaming an entry the agent never applied. A session that ends failing
+  still records `tests_failed`. Reliability (0017) now also skips pairs where the hooks
+  observed nothing, instead of counting them as disagreements.
+- Known limit: run times are the store's clock and `matched_at` the client's. A client clock
+  running ahead by more than the gap between an edit and the next test run drops that run's
+  credit. Sending the client's run time with each test run would fix it; not done yet.
+

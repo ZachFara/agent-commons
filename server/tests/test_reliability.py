@@ -22,6 +22,8 @@ Pairs = list[tuple[OutcomeKind, OutcomeKind]]
         ([("tests_passed", "tests_failed")] * 5, 0.0),
         ([("tests_passed", "tests_passed")] * 4 + [("user_accepted", "tests_failed")], 0.8),
         ([("unknown", "tests_failed")] * 3 + [("tests_failed", "tests_failed")] * 4, None),
+        # nothing observed is not a disagreement (audit 2026-10-31)
+        ([("tests_passed", "unknown")] * 3 + [("tests_passed", "tests_passed")] * 5, 1.0),
     ],
 )
 def test_reliability(pairs: Pairs, expected: float | None) -> None:
