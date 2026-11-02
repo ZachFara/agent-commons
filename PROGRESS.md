@@ -527,3 +527,6 @@ feedback 0035 (T53); `used` detection 0036 (T46, was T41).
 - 2026-10-31 (T56): trust levels counted a contributor's own unreviewed provisional entries as
   approved (TL2 reachable on entries no human saw); they count once a human reviews them or
   outcomes confirm them. Queue age counts a reopened entry from its reopening.
+- 2026-11-02: the first backup runs since #85 failed as intended (backup variables unset), but
+  the review-queue job failed with an unrelated gcloud "project" error. It now names the
+  missing `GCP_OPERATIONS` variable, as the backup and drill jobs do.
