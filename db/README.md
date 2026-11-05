@@ -26,4 +26,6 @@ built the same way. Data lives in the `agent-commons_pgdata` volume;
 
 `compose.hosted.yml` runs a group server: Postgres, `commons-server --migrate` (MCP, hook API,
 and dashboard in one process), and Caddy (`Caddyfile`) for HTTPS on `$DOMAIN`. The image is built
-from `server/Dockerfile`. See INSTALL.md, "Hosting".
+from `server/Dockerfile`. See INSTALL.md, "Hosting". Setting `OTEL_EXPORTER_OTLP_ENDPOINT` (and,
+if needed, `OTEL_EXPORTER_OTLP_HEADERS`) in `db/.env` makes the server export traces, metrics
+and logs there (decision 0037; `observability/README.md`).

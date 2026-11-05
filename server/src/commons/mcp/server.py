@@ -20,7 +20,7 @@ from commons.domain.status import StoreStatus
 from commons.mcp.auth import ApiKeyVerifier, calling_reporter, require_review_scope
 from commons.mcp.call_log import CallLog, log_calls_to_stdout
 from commons.mcp.errors import StructuredValidationErrors, structured_errors
-from commons.service import agent_text, proposals, reports, reviews
+from commons.service import agent_text, proposals, reports, reviews, telemetry
 from commons.service import search as search_service
 from commons.service import status as status_service
 from commons.service.identity import serving_hosted
@@ -34,6 +34,7 @@ UNTRUSTED_NOTE = (
 )
 
 LOCAL_STORE = "local"
+SERVICE = "commons-mcp"
 
 TaskIdArg = Annotated[uuid.UUID, Field(description="The current task id.")]
 EntryIdArg = Annotated[uuid.UUID, Field(description="The entry's id.")]
@@ -309,6 +310,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address.")
     parser.add_argument("--port", type=int, default=8000, help="HTTP port.")
     args = parser.parse_args(argv)
+    telemetry.configure(SERVICE)
     if not args.http:
         build_server().run(show_banner=False)
         return

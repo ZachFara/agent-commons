@@ -10,7 +10,8 @@ from fastmcp.server.dependencies import get_access_token
 from typing_extensions import override
 
 from commons.domain.errors import NotPermittedError
-from commons.domain.keys import KeyHolder
+from commons.domain.keys import KeyCheck
+from commons.service import events
 from commons.service.identity import acting_as, refuse_if_switched
 from commons.service.keys import check_key
 from commons.store.connection import Connection
@@ -28,9 +29,17 @@ class ApiKeyVerifier(TokenVerifier):
 
     @override
     async def verify_token(self, token: str) -> AccessToken | None:
-        holder = await anyio.to_thread.run_sync(self._lookup, token)
-        if holder is None:
+        check = await anyio.to_thread.run_sync(self._lookup, token)
+        if check.holder is None:
+            events.event(
+                "key_refused",
+                severity="WARNING",
+                where="/mcp",
+                problem=check.problem or "unknown",
+                key=events.short_key(token),
+            )
             return None
+        holder = check.holder
         return AccessToken(
             token=token,
             client_id=str(holder.reporter_id),
@@ -43,9 +52,9 @@ class ApiKeyVerifier(TokenVerifier):
             },
         )
 
-    def _lookup(self, token: str) -> KeyHolder | None:
+    def _lookup(self, token: str) -> KeyCheck:
         with self._connection() as conn:
-            return check_key(conn, token).holder
+            return check_key(conn, token)
 
 
 @contextmanager

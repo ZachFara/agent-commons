@@ -1,0 +1,11 @@
+# Dashboards are files in this repository (observability/grafana/dashboards), not UI state.
+apiVersion: 1
+
+providers:
+  - name: agent-commons
+    folder: Agent Commons
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

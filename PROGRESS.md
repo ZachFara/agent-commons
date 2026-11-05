@@ -89,6 +89,12 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 |---|---|---|---|
 | T37 | done | Log every search, misses included, by privacy mode; one structured log line per MCP tool call; dashboard Searches page (decision 0024) | Tests: misses logged, query redacted, full_trace extras only in full_trace (DB check too), task mode wins, preview and invalid calls log nothing, call lines carry no query text; page renders |
 
+### Observability stack (owner request, 2026-11-05)
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T58 | done | The LGTM stack (decision 0037): OTLP export of traces, metrics and logs from every entry point when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; event lines for hook calls, refused keys, admin actions and unhandled exceptions; `observability/` with Alloy (plus Postgres statistics), Loki, Tempo, Mimir and Grafana (provisioned data sources with cross-links; four dashboards from `tools/grafana_dashboards.py`: overview, tools and agents, incidents and debugging, database); Terraform variables for a hosted endpoint; the MCP app as an explicit `/mcp` route | Tests: a tool call leaves a labelled span, a duration sample and a log line sharing one trace id; SQL spans hold templates only; request spans are named by route with query strings redacted; nothing in any signal holds the query text. 2026-11-05: `make observe` boots; a server exporting to it shows the trace, metrics and log lines in Grafana. Left: pick a hosted destination for production (Grafana Cloud free tier expected) and set `otlp_endpoint` in Terraform; move the error alert of decision 0033 there or keep both |
+
 ### Follow-ups (owner, 2026-10-31)
 
 | ID | Status | Task | Done when |
@@ -133,6 +139,8 @@ Raise new ones here. Do not resolve a question by guessing in code.
 
 - Retention: nothing prunes `searches`, and Cloud Logging keeps call lines for its default 30
   days. Fine at current volume; decide a policy before the store has many users (decision 0024).
+- Telemetry destination for production (decision 0037): Grafana Cloud's free tier, or a
+  self-hosted `observability/` stack somewhere? Nothing is exported until `otlp_endpoint` is set.
 
 Resolved 2026-10-24 by owner: review model (decision 0005), hook location (decision 0006),
 seed entries come from real use rather than a manual batch (T18), admin dashboard added (T19-T20),
@@ -247,6 +255,22 @@ Anticipated next steps:
    runs, and a config default that silently wins. Check the controls stay clean.
 2. Measure the wording option against the shipped wording on Sonnet and Opus.
 3. Measure the Stop-hook signal separately, together with the per-turn nudge above.
+
+### Under consideration: integrate an external data source (owner, 2026-11-05)
+
+Not started; investigate only. The idea: connect commons to an external source agents already
+consult, Context7 (library docs) being the example, and bring commons' own features to it:
+crowdsourced usefulness per model (did the retrieved doc actually help, by model), the
+observed-outcome signal from the Stop hook, and the ranking that follows from it.
+Questions to answer before it becomes a task:
+- Direction: do we ingest external content as entries (then entries need provenance, licensing
+  and a refresh story), or only record retrievals against external ids and publish the
+  usefulness signal back (a thinner adapter, no content copied)?
+- Which source first, and what does its API expose: Context7 docs lookups, package registries,
+  issue trackers?
+- How the usefulness signal is attributed when the fix came partly from commons and partly from
+  the external source (`used` detection, decision 0036).
+- Whether this is a Phase 3 item (model attribution, `commons export` share machinery) or earlier.
 
 ### Long-term gaps (owner, 2026-10-31)
 
