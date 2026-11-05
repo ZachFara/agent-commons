@@ -38,6 +38,7 @@ from commons.service import (
     lifecycle,
     purges,
     reviews,
+    telemetry,
     trust,
 )
 from commons.service.identity import current_pseudonym, serving_hosted
@@ -46,12 +47,14 @@ from commons.store.connection import Connection, connect
 from commons.web import charts
 from commons.web.admin_auth import Endpoint, admin_only
 from commons.web.hooks_api import hook_routes
+from commons.web.telemetry import instrument
 
 ConnectionFactory = Callable[[], AbstractContextManager[Connection]]
 
 # Jinja2Templates autoescapes .html templates. Entries are agent-written, untrusted text.
 TEMPLATES = Jinja2Templates(directory=Path(__file__).with_name("templates"))
 DEFAULT_PORT = 8765
+SERVICE = "commons-dashboard"
 LOCAL_HOSTNAMES = frozenset({"127.0.0.1", "localhost"})
 
 
@@ -447,7 +450,7 @@ def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) 
     Locally: the dashboard, open on 127.0.0.1. Hosted: the hook API plus the dashboard for
     admin keys only (decision 0018).
     """
-    return Starlette(routes=web_routes(connection, hosted=hosted))
+    return instrument(Starlette(routes=web_routes(connection, hosted=hosted)))
 
 
 def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute]:
@@ -524,6 +527,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (hosted mode only).")
     parser.add_argument("--open", action="store_true", help="Open the dashboard in a browser.")
     args = parser.parse_args(argv)
+    telemetry.configure(SERVICE)
     port: int = args.port
     if not args.hosted:
         if args.open:

@@ -16,7 +16,9 @@ QUERY = "zyxwvut frobnicator exploded in qwertyuiop"
 
 
 def lines(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
-    return [json.loads(r.getMessage()) for r in caplog.records if r.name == "commons.calls"]
+    """Call lines, without the trace ids they carry once a tracer is installed (test_telemetry)."""
+    parsed = [json.loads(r.getMessage()) for r in caplog.records if r.name == "commons.calls"]
+    return [{k: v for k, v in line.items() if k not in {"trace_id", "span_id"}} for line in parsed]
 
 
 def test_each_tool_call_logs_one_line_without_the_query(

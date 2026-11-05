@@ -7,6 +7,8 @@ COPY pyproject.toml uv.lock ./
 COPY server ./server
 RUN uv sync --locked --no-dev --package commons
 ENV PATH=/app/.venv/bin:$PATH
+# Health probes stay out of request spans and metrics (decision 0037).
+ENV OTEL_PYTHON_STARLETTE_EXCLUDED_URLS=/healthz?\$
 RUN useradd --system --uid 10001 commons
 USER commons
 # Cloud Run sets $PORT. Migrations are applied on start (serialized by an advisory lock).

@@ -1,0 +1,65 @@
+# 0037. Observability on the LGTM stack: OTLP from the app, Loki, Grafana, Tempo, Mimir
+Status: Accepted (owner, 2026-11-05)
+Date: 2026-11-05
+
+Context: The owner asked for the LGTM stack for visibility. What exists is a structured call
+log (decision 0024) read by Cloud Logging, and Cloud Monitoring's uptime check and error alert
+(decision 0033). There is no view of request latency, of which tools are slow or failing, or
+of what one slow call did in the database, and no local equivalent at all: the local server
+and dashboard log nothing. The standard shape for this is OpenTelemetry in the app and one
+backend per signal: Loki for logs, Tempo for traces, Mimir for metrics, Grafana over all three,
+with Alloy collecting. FastMCP 4 already creates MCP spans through the OpenTelemetry API when
+an SDK is configured; Cloud Run cannot be scraped, so metrics must be pushed.
+
+Decision:
+1. The app speaks OTLP, nothing else. `commons.service.telemetry.configure()` runs in every
+   entry point (`commons-server`, `commons-mcp`, `commons-dashboard`) and does nothing unless
+   `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Then it exports three signals to that endpoint over
+   HTTP/protobuf: spans, metrics, and the `commons` loggers' records. Headers for an
+   authenticated endpoint come from `OTEL_EXPORTER_OTLP_HEADERS`. No `/metrics` endpoint.
+2. What is recorded:
+   - HTTP: a span per request named by route (`POST /mcp`, `GET /entries/{entry_id}`) and the
+     `http.server.request.duration` histogram, from the Starlette instrumentation. The MCP app
+     is now an explicit `/mcp` route of the hosted app instead of a catch-all mount, so its
+     requests carry `http.route`. Query strings are replaced by `REDACTED` (dashboard search
+     text travels there). Health probes are excluded in the image.
+   - MCP: FastMCP's `tools/call <tool>` span, which the call-log middleware labels with the
+     same fields as its log line under `commons.*` (reporter id, task id, model, result count,
+     error code). The middleware also records `commons.tool_call.duration` by tool and
+     `error.type`. Log lines gain `trace_id` and `span_id`.
+   - SQL: a span per statement from the psycopg instrumentation, holding the statement
+     template with `%s` placeholders, never parameter values.
+   - Logs: the records of `commons.*` loggers, with the active trace's ids, so Loki links a
+     line to its trace. Third-party loggers stay on stdout and stderr.
+   The privacy rule of decision 0024 holds for all of it: ids, counts, timings, routes and
+   templates; no queries, entry text or parameters. Tests check each signal for the query.
+3. A new top-level `observability/` directory holds the stack for a machine: a Compose file
+   with Alloy (OTLP in on 4317 and 4318; container logs from the Docker socket), Loki, Tempo,
+   Mimir, and Grafana with provisioned data sources (exemplars to traces, traces to logs and
+   metrics, logs to traces by trace id) and the "Agent Commons" dashboard. Everything binds to
+   127.0.0.1. `make observe` starts it. The versions are pinned.
+4. Production exports to a hosted OTLP endpoint rather than running the stack: Terraform takes
+   `otlp_endpoint` and `otlp_headers` (the latter through Secret Manager, like the database
+   URL) and sets `deployment.environment.name` per environment. Grafana Cloud's free tier is
+   the expected destination; the owner has not chosen one yet, so nothing is set.
+5. The semantic conventions are pinned in code: `OTEL_SEMCONV_STABILITY_OPT_IN` defaults to
+   `http,database`, so metric and attribute names (which the dashboard queries) don't depend on
+   a deployment's environment.
+
+Consequences: one environment variable turns on all three signals, locally against the Compose
+stack or in production against a hosted endpoint, and a slow tool call can be followed from a
+latency bucket to its trace, its SQL, and its log lines. Costs: four OpenTelemetry packages in
+the image, a background export thread per process, and about 1 KB of telemetry per request.
+Cloud Logging and Cloud Monitoring keep working unchanged; the alerting of decision 0033 stays
+where it is until a hosted destination exists. Grafana 13 treats anonymous users as viewers,
+so Explore needs the local admin login. Over stdio the local MCP server loses whatever is
+unflushed when Claude Code kills it (at most the last few seconds).
+
+Implementation notes (2026-11-05):
+- The SDK's `LoggingHandler` is deprecated in favour of one in
+  `opentelemetry-instrumentation-logging`, which at 0.66b2 ships none; the app has its own
+  small handler over the public `LogRecord` API instead.
+- Tempo 3 removed the `ingester` and `compactor` blocks and the `local-blocks` processor;
+  retention is `overrides.defaults.compaction.block_retention`. Its image has no shell, so it
+  has no Compose healthcheck.
+- The ASGI instrumentation opens a span per receive and send event; a sampler drops them.
