@@ -1,0 +1,80 @@
+# Grafana data sources for the LGTM stack (decision 0037), with the links between them:
+# metrics -> traces through exemplars, traces -> logs and metrics, logs -> traces by trace id.
+# Grafana expands $VAR in these files, so literal dollars are written $$.
+apiVersion: 1
+
+datasources:
+  - name: Mimir
+    uid: mimir
+    type: prometheus
+    access: proxy
+    url: http://mimir:9009/prometheus
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      prometheusType: Mimir
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        # Lines the app sent over OTLP carry the trace id as structured metadata.
+        - name: trace
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+          urlDisplayLabel: View trace
+        # Lines tailed from a container's stdout carry it inside the JSON body.
+        - name: trace (json)
+          matcherType: regex
+          matcherRegex: '"trace_id":\s*"(\w+)"'
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+          urlDisplayLabel: View trace
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        filterByTraceID: true
+        filterBySpanID: false
+        tags:
+          - key: service.name
+            value: service_name
+      tracesToMetrics:
+        datasourceUid: mimir
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        tags:
+          - key: service.name
+            value: service_name
+        queries:
+          - name: Request rate
+            query: sum(rate(traces_spanmetrics_calls_total{$$__tags}[5m]))
+          - name: Latency p95
+            query: histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m])) by (le))
+      serviceMap:
+        datasourceUid: mimir
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: loki
+      streamingEnabled:
+        search: true
+        metrics: true

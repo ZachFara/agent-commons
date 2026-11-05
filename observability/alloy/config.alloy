@@ -1,0 +1,108 @@
+// Alloy pipelines for Agent Commons (decision 0037).
+//
+// 1. OTLP in from the app, fanned out by signal: metrics to Mimir, traces to Tempo, logs to Loki.
+// 2. Container logs from the Docker host (Postgres, Caddy, this stack) to Loki.
+
+otelcol.receiver.otlp "app" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.app.input]
+    logs    = [otelcol.processor.batch.app.input]
+    traces  = [otelcol.processor.batch.app.input]
+  }
+}
+
+otelcol.processor.batch "app" {
+  output {
+    metrics = [otelcol.exporter.otlphttp.mimir.input]
+    logs    = [otelcol.exporter.otlphttp.loki.input]
+    traces  = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+// Mimir and Loki both ingest OTLP natively; the exporter appends /v1/metrics and /v1/logs.
+otelcol.exporter.otlphttp "mimir" {
+  client {
+    endpoint = "http://mimir:9009/otlp"
+  }
+}
+
+otelcol.exporter.otlphttp "loki" {
+  client {
+    endpoint = "http://loki:3100/otlp"
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// Container logs. Labels follow Loki's conventions: service_name is the compose service.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service_name"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+
+  // The hosted server ships its own logs over OTLP (db/compose.hosted.yml); tailing its
+  // container too would store every line twice.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project", "__meta_docker_container_label_com_docker_compose_service"]
+    separator     = "/"
+    regex         = "agent-commons-hosted/server"
+    action        = "drop"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = {job = "docker"}
+  forward_to = [loki.process.containers.receiver]
+}
+
+// A newly found container is read from its first line; Loki refuses lines older than a week.
+loki.process "containers" {
+  stage.drop {
+    older_than          = "168h"
+    drop_counter_reason = "older_than_retention"
+  }
+
+  forward_to = [loki.write.loki.receiver]
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

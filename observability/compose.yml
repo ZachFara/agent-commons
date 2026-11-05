@@ -1,0 +1,95 @@
+# The LGTM stack for Agent Commons (decision 0037): Loki for logs, Grafana, Tempo for traces,
+# Mimir for metrics, with Alloy collecting. Everything binds to 127.0.0.1. From the repo root:
+#   make observe        (docker compose -f observability/compose.yml up -d --wait)
+# Then open http://127.0.0.1:3000 and start any entry point with
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+# See README.md in this directory. Data lives in named volumes; `down -v` deletes it.
+name: agent-commons-observability
+
+# Loki, Tempo and Mimir ship without a shell, so they have no Compose healthchecks: they answer
+# /ready some seconds after starting, and Alloy and Grafana retry until they do.
+services:
+  # One OTLP door for the app (metrics to Mimir, traces to Tempo, logs to Loki), plus the logs
+  # of every container on this Docker host (Postgres, Caddy, this stack itself).
+  alloy:
+    image: grafana/alloy:v1.21.3
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    ports:
+      - "127.0.0.1:4317:4317" # OTLP over gRPC
+      - "127.0.0.1:4318:4318" # OTLP over HTTP: what OTEL_EXPORTER_OTLP_ENDPOINT points at
+      - "127.0.0.1:12345:12345" # Alloy's own UI: pipeline health
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on: [loki, tempo, mimir]
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.7.9
+    command: -config.file=/etc/loki/loki.yaml
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:3.1.1
+    command: -config.file=/etc/tempo/tempo.yaml
+    ports:
+      - "127.0.0.1:3200:3200"
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    restart: unless-stopped
+
+  mimir:
+    image: grafana/mimir:3.2.4
+    command: -config.file=/etc/mimir/mimir.yaml
+    ports:
+      - "127.0.0.1:9009:9009"
+    volumes:
+      - ./mimir/mimir.yaml:/etc/mimir/mimir.yaml:ro
+      - mimir-data:/data
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    environment:
+      # Local only (bound to 127.0.0.1): dashboards and Explore open without signing in.
+      # Sign in as admin / admin to edit anything.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health | grep -q ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      - loki
+      - tempo
+      - mimir
+    restart: unless-stopped
+
+volumes:
+  alloy-data:
+  loki-data:
+  tempo-data:
+  mimir-data:
+  grafana-data:

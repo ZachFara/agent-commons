@@ -29,6 +29,10 @@ services:
     environment:
       COMMONS_DATABASE_URL: postgresql://commons:${COMMONS_DB_PASSWORD:?set COMMONS_DB_PASSWORD}@postgres:5432/commons
       PORT: "8080"
+      # Telemetry (decision 0037): set these in db/.env to send traces, metrics and logs to an
+      # OTLP endpoint (observability/README.md). Unset, nothing is sent.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
     depends_on:
       postgres:
         condition: service_healthy

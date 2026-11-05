@@ -1,4 +1,4 @@
-.PHONY: setup db check fix infra-check search-eval eval-confirm eval-effects eval-reliability
+.PHONY: setup db observe check fix infra-check search-eval eval-confirm eval-effects eval-reliability
 
 setup:  ## Install dependencies and git hooks
 	uv sync
@@ -6,6 +6,10 @@ setup:  ## Install dependencies and git hooks
 
 db:  ## Start local Postgres (needed by the tests)
 	cd db && docker compose up -d --wait
+
+observe:  ## Start the local LGTM stack (decision 0037): Grafana on http://127.0.0.1:3000
+	docker compose -f observability/compose.yml up -d --wait
+	@echo "Grafana: http://127.0.0.1:3000   Export with OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318"
 
 check:  ## The one check command (same as pre-commit and CI)
 	uv run python tools/check.py
