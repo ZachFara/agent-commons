@@ -185,11 +185,8 @@ def test_a_tool_call_leaves_a_span_a_sample_and_a_line_that_share_a_trace(
     }
     assert span.status.status_code is StatusCode.UNSET
 
-    (point,) = [
-        p
-        for p in captured.points(TOOL_HISTOGRAM)
-        if dict(p.attributes or {}) == {TOOL_NAME: "search"}
-    ]
+    miss = {TOOL_NAME: "search", "commons.results": "none"}
+    (point,) = [p for p in captured.points(TOOL_HISTOGRAM) if dict(p.attributes or {}) == miss]
     assert point.count >= 1
     assert list(point.explicit_bounds)[:3] == [0.005, 0.01, 0.025]
 

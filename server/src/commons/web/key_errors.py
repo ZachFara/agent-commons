@@ -12,6 +12,7 @@ import anyio
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from commons.domain.keys import KeyCheck
+from commons.service import events
 from commons.service.keys import check_key, remembered_check
 from commons.store.connection import Connection
 
@@ -34,6 +35,13 @@ class ExplainRefusedKeys:
             return
         check = await anyio.to_thread.run_sync(_check, self._connection, token)
         if check.problem in {"revoked", "expired", "suspended"}:
+            events.event(
+                "key_refused",
+                severity="WARNING",
+                where=str(scope.get("path")),
+                problem=check.problem,
+                key=events.short_key(token),
+            )
             await _refuse(send, check.message())
             return
         with remembered_check(token, check):

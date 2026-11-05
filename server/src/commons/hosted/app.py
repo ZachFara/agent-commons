@@ -21,7 +21,7 @@ from commons.service import telemetry
 from commons.service.identity import serving_hosted
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
-from commons.web.app import ConnectionFactory, web_routes
+from commons.web.app import UNHANDLED, ConnectionFactory, web_routes
 from commons.web.key_errors import ExplainRefusedKeys
 from commons.web.telemetry import instrument
 
@@ -49,6 +49,7 @@ def build_hosted_app(connection: ConnectionFactory = connect) -> Starlette:
             ),
         ],
         lifespan=mcp_app.lifespan,
+        exception_handlers=UNHANDLED,
     )
     return instrument(app)
 

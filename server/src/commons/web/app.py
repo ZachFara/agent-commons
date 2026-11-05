@@ -34,6 +34,7 @@ from commons.service import (
     contributors,
     corrections,
     duplicates,
+    events,
     keys,
     lifecycle,
     purges,
@@ -41,7 +42,7 @@ from commons.service import (
     telemetry,
     trust,
 )
-from commons.service.identity import current_pseudonym, serving_hosted
+from commons.service.identity import current_key, current_pseudonym, serving_hosted
 from commons.store import insights
 from commons.store.connection import Connection, connect
 from commons.web import charts
@@ -278,7 +279,9 @@ class Dashboard:
         try:
             message = await run_in_threadpool(action)
         except (InvalidInputError, NotFoundError, NotInitializedError, ValueError) as error:
+            _acted(request, error=str(error))
             return _back(request, {"error": str(error)})
+        _acted(request, result=message)
         return _back(request, {"corrected": message})
 
     async def purge_reporter(self, request: Request) -> Response:
@@ -313,7 +316,9 @@ class Dashboard:
         try:
             new = await run_in_threadpool(self._issue, values)
         except (InvalidInputError, NotFoundError) as error:
+            _acted(request, error=str(error))
             return _back(request, {"error": str(error)})
+        _acted(request, result=f"key for {values['pseudonym']} ({values['scope']})")
         data = await self._load(_people_data)
         return self._render(request, "people.html", "people", {**data, "new_key": new})
 
@@ -328,6 +333,7 @@ class Dashboard:
                 keys.revoke_key(conn, handle)
 
         await run_in_threadpool(revoke)
+        _acted(request, result=f"revoked {handle[:8]}")
         return _back(request, {"revoked": handle[:8]})
 
     def _issue(self, values: dict[str, str]) -> NewKey:
@@ -360,7 +366,9 @@ class Dashboard:
         try:
             await run_in_threadpool(self._record, review_request)
         except (InvalidInputError, NotFoundError, NotInitializedError) as error:
+            _acted(request, error=str(error))
             return _back(request, {"error": str(error)})
+        _acted(request, result=decision)
         return _back(request, {"reviewed": str(review_request.entry_id)})
 
     async def _load(
@@ -450,7 +458,31 @@ def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) 
     Locally: the dashboard, open on 127.0.0.1. Hosted: the hook API plus the dashboard for
     admin keys only (decision 0018).
     """
-    return instrument(Starlette(routes=web_routes(connection, hosted=hosted)))
+    app = Starlette(routes=web_routes(connection, hosted=hosted), exception_handlers=UNHANDLED)
+    return instrument(app)
+
+
+async def log_unhandled(request: Request, error: Exception) -> Response:
+    """Log an unhandled exception with its traceback (decision 0037); Starlette re-raises it."""
+    events.failure("unhandled_error", error, method=request.method, path=request.url.path)
+    return PlainTextResponse("Internal error.", status_code=500)
+
+
+UNHANDLED: dict[Any, Any] = {Exception: log_unhandled}
+
+
+def _acted(request: Request, *, result: str | None = None, error: str | None = None) -> None:
+    """Note an admin action (decision 0037): what was done, by which key, or why it failed."""
+    actor = current_key()
+    events.event(
+        "admin_action",
+        severity="WARNING" if error else "NOTICE",
+        action=request.url.path,
+        ok=error is None,
+        result=result,
+        error=error,
+        key_id=None if actor is None else str(actor),
+    )
 
 
 def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute]:

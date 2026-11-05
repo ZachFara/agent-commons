@@ -17,8 +17,10 @@ from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from opentelemetry import metrics, trace
 from opentelemetry.semconv.attributes.error_attributes import ERROR_TYPE
-from opentelemetry.trace import Span, StatusCode, format_span_id, format_trace_id
+from opentelemetry.trace import Span, StatusCode
 from typing_extensions import override
+
+from commons.service.events import trace_fields
 
 logger = logging.getLogger("commons.calls")
 # INFO lines reach whichever handlers are installed (stdout when hosted, OTLP when configured);
@@ -69,17 +71,17 @@ class CallLog(Middleware):
             seconds = time.perf_counter() - started
             line["ms"] = round(seconds * 1000)
             _observe(span, line, seconds)
-            logger.info(json.dumps({**line, **_trace_fields(span)}))
+            logger.info(json.dumps({**line, **trace_fields(span)}))
 
 
 def log_calls_to_stdout() -> None:
-    """Write call lines to stdout, where Cloud Run collects them.
+    """Write call lines, event lines and this package's warnings to stdout, for the host's logs.
 
     Never use this over stdio: there stdout is the MCP channel itself.
     """
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter("%(message)s"))
-    logger.handlers = [handler]
+    logging.getLogger("commons").handlers = [handler]
 
 
 def _describe(message: object) -> dict[str, Any]:
@@ -102,6 +104,8 @@ def _observe(span: Span, line: dict[str, Any], seconds: float) -> None:
     on the same span after this runs.
     """
     labels = {TOOL_NAME: str(line["tool"])}
+    if line.get("results") is not None:  # a listing tool: a search miss is "none"
+        labels["commons.results"] = "none" if line["results"] == 0 else "some"
     if not line["ok"]:
         labels[ERROR_TYPE] = str(line["error"])
     _duration.record(seconds, labels)
@@ -109,17 +113,6 @@ def _observe(span: Span, line: dict[str, Any], seconds: float) -> None:
     for key in ("reporter_id", "task_id", "model", "results", "error"):
         if line.get(key) is not None:
             span.set_attribute(f"commons.{key}", line[key])
-
-
-def _trace_fields(span: Span) -> dict[str, str]:
-    """Return the ids that link a line to its trace, when one is being recorded."""
-    context = span.get_span_context()
-    if not context.is_valid or not context.trace_flags.sampled:
-        return {}
-    return {
-        "trace_id": format_trace_id(context.trace_id),
-        "span_id": format_span_id(context.span_id),
-    }
 
 
 def _short(value: object) -> str | None:

@@ -95,6 +95,7 @@ def test_hosted_servers_write_the_lines_to_stdout(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     logger = logging.getLogger("commons.calls")
+    monkeypatch.setattr(logging.getLogger("commons"), "handlers", [])
     monkeypatch.setattr(logger, "handlers", [])
     monkeypatch.setattr(logger, "propagate", logger.propagate)
     monkeypatch.setattr(logger, "level", logger.level)

@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from commons.domain.errors import InvalidInputError, NotFoundError
 from commons.domain.keys import KeyCheck, KeyInfo, KeyOptions, KeyProblem, KeyScope, NewKey
 from commons.domain.reporters import validate_pseudonym
+from commons.service.identity import current_key
 from commons.store import api_keys
 from commons.store.connection import Connection
 from commons.store.reporters import ensure_reporter, promote_to_admin
@@ -154,6 +155,7 @@ def _log(event: str, pseudonym: str, handle: str, scope: KeyScope) -> None:
                 "pseudonym": pseudonym,
                 "key": handle,
                 "scope": scope,
+                "by_key": None if (actor := current_key()) is None else str(actor),
             }
         )
     )
