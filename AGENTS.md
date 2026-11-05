@@ -45,6 +45,7 @@ AGENTS.md  CLAUDE.md  DESIGN.md  PROGRESS.md  Makefile  pyproject.toml  uv.lock
 db/                  docker compose, Postgres config
 docs/decisions/      decision records (NNNN-title.md)
 infra/               Terraform for Neon + Cloud Run (decision 0020)
+observability/       the LGTM stack for a machine: compose, Alloy, Loki, Tempo, Mimir, Grafana (decision 0037)
 server/src/commons/  the package (layers above)
 server/tests/        tests
 tools/               repo tooling: check.py, check_structure.py, check_commit_msg.py
@@ -59,6 +60,7 @@ PROGRESS.md and record a decision.
 ```
 make setup    # uv sync + install pre-commit and commit-msg hooks (once per clone)
 make db       # start local Postgres via docker compose; tests need it running
+make observe  # start the local LGTM stack; export with OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 make check    # THE check: format, lint, complexity, types, dead code, imports, layout, tests
 make fix      # auto-format and apply safe lint fixes, then run the check
 uv run pytest server/tests/test_smoke.py   # run one test file

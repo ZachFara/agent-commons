@@ -89,6 +89,12 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 |---|---|---|---|
 | T37 | done | Log every search, misses included, by privacy mode; one structured log line per MCP tool call; dashboard Searches page (decision 0024) | Tests: misses logged, query redacted, full_trace extras only in full_trace (DB check too), task mode wins, preview and invalid calls log nothing, call lines carry no query text; page renders |
 
+### Observability stack (owner request, 2026-11-05)
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T58 | done | The LGTM stack (decision 0037): OTLP export of traces, metrics and logs from every entry point when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; `observability/` with Alloy, Loki, Tempo, Mimir and Grafana (provisioned data sources with cross-links, the "Agent Commons" dashboard); Terraform variables for a hosted endpoint; the MCP app as an explicit `/mcp` route | Tests: a tool call leaves a labelled span, a duration sample and a log line sharing one trace id; SQL spans hold templates only; request spans are named by route with query strings redacted; nothing in any signal holds the query text. 2026-11-05: `make observe` boots; a server exporting to it shows the trace, metrics and log lines in Grafana. Left: pick a hosted destination for production (Grafana Cloud free tier expected) and set `otlp_endpoint` in Terraform; move the error alert of decision 0033 there or keep both |
+
 ### Follow-ups (owner, 2026-10-31)
 
 | ID | Status | Task | Done when |
@@ -133,6 +139,8 @@ Raise new ones here. Do not resolve a question by guessing in code.
 
 - Retention: nothing prunes `searches`, and Cloud Logging keeps call lines for its default 30
   days. Fine at current volume; decide a policy before the store has many users (decision 0024).
+- Telemetry destination for production (decision 0037): Grafana Cloud's free tier, or a
+  self-hosted `observability/` stack somewhere? Nothing is exported until `otlp_endpoint` is set.
 
 Resolved 2026-10-24 by owner: review model (decision 0005), hook location (decision 0006),
 seed entries come from real use rather than a manual batch (T18), admin dashboard added (T19-T20),
