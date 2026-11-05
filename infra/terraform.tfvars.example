@@ -5,3 +5,7 @@ neon_project_id = "weathered-cloud-96612464"
 
 # Alert emails for uptime, errors and budget (decision 0033).
 # alert_emails = ["you@example.com"]
+
+# Telemetry over OTLP (decision 0037; observability/README.md). Empty endpoint: nothing is sent.
+# otlp_endpoint = "https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
+# otlp_headers  = "Authorization=Basic <base64 of instance-id:token>"

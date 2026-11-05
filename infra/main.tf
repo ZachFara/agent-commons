@@ -89,6 +89,26 @@ resource "google_cloud_run_v2_service" "server" {
           }
         }
       }
+      # Telemetry (decision 0037; telemetry.tf).
+      dynamic "env" {
+        for_each = local.telemetry_env[each.key]
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = google_secret_manager_secret.otlp_headers
+        content {
+          name = "OTEL_EXPORTER_OTLP_HEADERS"
+          value_source {
+            secret_key_ref {
+              secret  = env.value.secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
     }
   }
 
@@ -102,6 +122,8 @@ resource "google_cloud_run_v2_service" "server" {
     google_project_service.apis,
     google_secret_manager_secret_version.database_url,
     google_secret_manager_secret_iam_member.server_reads_database_url,
+    google_secret_manager_secret_version.otlp_headers,
+    google_secret_manager_secret_iam_member.server_reads_otlp_headers,
   ]
 }
 
