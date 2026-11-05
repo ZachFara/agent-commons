@@ -18,6 +18,12 @@ services:
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - /etc/alloy/config.alloy
+    environment:
+      # The database whose statistics Alloy scrapes (Postgres dashboard); set it in the shell to
+      # watch another one, e.g. the hosted compose's.
+      COMMONS_METRICS_DATABASE_URL: ${COMMONS_METRICS_DATABASE_URL:-postgresql://commons:commons@host.docker.internal:5432/commons?sslmode=disable}
+    extra_hosts:
+      - host.docker.internal:host-gateway
     ports:
       - "127.0.0.1:4317:4317" # OTLP over gRPC
       - "127.0.0.1:4318:4318" # OTLP over HTTP: what OTEL_EXPORTER_OTLP_ENDPOINT points at

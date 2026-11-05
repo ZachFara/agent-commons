@@ -2,6 +2,7 @@
 //
 // 1. OTLP in from the app, fanned out by signal: metrics to Mimir, traces to Tempo, logs to Loki.
 // 2. Container logs from the Docker host (Postgres, Caddy, this stack) to Loki.
+// 3. Postgres statistics (connections, transactions, locks, cache hits) scraped into Mimir.
 
 otelcol.receiver.otlp "app" {
   grpc {
@@ -104,5 +105,23 @@ loki.process "containers" {
 loki.write "loki" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// Postgres statistics. COMMONS_METRICS_DATABASE_URL (compose.yml) points at the database the
+// app uses; the default is the local `make db` Postgres through the Docker host.
+prometheus.exporter.postgres "commons" {
+  data_source_names = [sys.env("COMMONS_METRICS_DATABASE_URL")]
+}
+
+prometheus.scrape "postgres" {
+  targets         = prometheus.exporter.postgres.commons.targets
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.remote_write "mimir" {
+  endpoint {
+    url = "http://mimir:9009/api/v1/push"
   }
 }
