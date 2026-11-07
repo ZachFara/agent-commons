@@ -99,7 +99,13 @@ Targets: lose at most a day of data (RPO 24 h), and be back within an hour (RTO 
   re-running `setup-backup-keys.sh`. Re-key the role with `uv run python tools/backup_role.py`.
 - **Alerts**, by email to `alert_emails` in `terraform.tfvars`: production `/health` failing
   from more than one region for 10 minutes, 5 or more server errors in 10 minutes, and spend at
-  50% and 90% of `budget_alert_usd` (the console's $4 Cloud Run cap).
+  50% and 90% of `budget_alert_usd` (the console's $4 Cloud Run cap), and at 50%, 90% and 100% of
+  `cutoff_usd`.
+- **Billing cutoff** (decision 0038, `cutoff.tf`): when the project's spend this month reaches
+  `cutoff_usd` ($100), the `agent-commons-billing-cutoff` function unlinks billing from the
+  project. That stops every Google Cloud service in it: both Cloud Run services, monitoring,
+  Secret Manager, and the backup and state buckets, whose contents Google may delete. Neon is
+  outside Google Cloud and keeps running.
 - **Retention**: after each backup, `commons retain` folds searches older than 180 days into
   `search_months` (query, searches, misses) and deletes them. Cloud Logging keeps call logs for
   its default 30 days; hook spools on each machine keep 30 days.
@@ -111,6 +117,12 @@ Targets: lose at most a day of data (RPO 24 h), and be back within an hour (RTO 
   turn, then redeploy (`gh workflow run deploy`). Otherwise read the newest revision's logs, and
   roll back with `gcloud run services update-traffic agent-commons --to-revisions <previous>=100
   --region us-central1`.
+- **Billing was cut off** (the 100% cutoff email, and every service is down): find what spent
+  the money in the console's Billing reports before anything else, and stop it. Then re-link
+  with `gcloud billing projects link agent-commons-512623 --billing-account <id from
+  terraform.tfvars>`, check the backup bucket still holds its dumps, and redeploy
+  (`gh workflow run deploy`). The function fires again on the next notification while spend is
+  over the cutoff, so raise `cutoff_usd` and `terraform apply` first if the spend was real.
 - **Server errors**: `gcloud logging read 'resource.labels.service_name="agent-commons" AND
   severity>=ERROR' --limit 20 --freshness 1h`. Call-log lines name the tool that failed.
 - **A backup or drill failed**: GitHub emails the failed run. Re-run it from the Actions tab
@@ -158,7 +170,9 @@ providers' pricing pages before relying on them.
 
 The $4 Cloud Run spend cap that pauses Cloud Run was set up in the console and stays there.
 Terraform owns the budget alerts (50% and 90% of that amount, `billing_account` in
-`terraform.tfvars`); the console also has an older $5 alert. Production scales to at most 2
+`terraform.tfvars`); the console also has an older $5 alert. Above all of these, the $100 billing
+cutoff (`cutoff_usd`) unlinks billing from the whole project; it runs on a Cloud Function, Pub/Sub
+and a small source bucket, all inside their free tiers. Production scales to at most 2
 instances and staging to 1. Backups, monitoring and alerting fit their free tiers.
 
 Cold starts: after a quiet period the first request wakes Cloud Run (~1-3 s) and Neon (~0.5 s).
