@@ -23,8 +23,18 @@ AGENT_PROJECT_REFS = frozenset(
     }
 )
 SEED_ISSUES = ("MIT-580",)
+# Variables that point git at another repository. git sets them for its own hooks, so a
+# guard run inside a pre-commit check would otherwise read the wrong repository.
+GIT_REPO_VARIABLES = frozenset(
+    {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"}
+)
 IDENTIFIER = re.compile(r"^[A-Za-z]+-\d+$")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def git_environment() -> dict[str, str]:
+    """Return this process's environment without the variables that redirect git."""
+    return {key: value for key, value in os.environ.items() if key not in GIT_REPO_VARIABLES}
 
 
 def state_dir() -> Path:
@@ -36,6 +46,7 @@ def state_dir() -> Path:
         capture_output=True,
         text=True,
         check=True,
+        env=git_environment(),
     ).stdout.strip()
     return Path(common).parent / ".agents"
 
