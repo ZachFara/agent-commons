@@ -31,7 +31,9 @@ jobs:
           service_account: ${{ vars.GCP_DEPLOYER }}
       - uses: google-github-actions/setup-gcloud@v2
       - run: gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
-      - run: docker build -f server/Dockerfile -t "$IMAGE" .
+      # One manifest per build: provenance and SBOM attestations would each count as a version
+      # against the registry's keep-the-3-newest cleanup policy (infra/main.tf).
+      - run: docker build --provenance=false --sbom=false -f server/Dockerfile -t "$IMAGE" .
       - run: docker push "$IMAGE"
 
   staging:
@@ -52,6 +54,7 @@ jobs:
       - id: deploy
         run: |
           gcloud run deploy agent-commons-staging --image "$IMAGE" --region "$REGION" --quiet
+          gcloud artifacts docker tags add "$IMAGE" "${IMAGE%:*}:staging" --quiet # kept by cleanup
           echo "url=$(gcloud run services describe agent-commons-staging --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_OUTPUT"
       - name: Smoke test
         run: test "$(curl -fsS --retry 5 --retry-delay 3 "${{ steps.deploy.outputs.url }}/health")" = ok
@@ -74,6 +77,7 @@ jobs:
       - id: deploy
         run: |
           gcloud run deploy agent-commons --image "$IMAGE" --region "$REGION" --quiet
+          gcloud artifacts docker tags add "$IMAGE" "${IMAGE%:*}:production" --quiet # kept by cleanup
           echo "url=$(gcloud run services describe agent-commons --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_OUTPUT"
       - name: Smoke test
         run: test "$(curl -fsS --retry 5 --retry-delay 3 "${{ steps.deploy.outputs.url }}/health")" = ok
