@@ -449,6 +449,7 @@ def _entry_data(conn: Connection, entry_id: UUID) -> dict[str, Any]:
         "reviews": insights.entry_reviews(conn, entry_id),
         "history": charts.line([(row["computed_at"], row["score"]) for row in history]),
         "retrievals": insights.entry_retrievals(conn, entry_id),
+        "distinct": insights.distinct_entries(conn, entry_id),
     }
 
 

@@ -9,8 +9,10 @@ from fastmcp import FastMCP
 from starlette.testclient import TestClient
 
 import factories
+from commons.domain.duplicates import Candidate
 from commons.service.ranking import rank
 from commons.store.connection import Connection
+from commons.store.duplicates import save_candidates
 from commons.web import app as web
 from mcp_client import call
 
@@ -94,6 +96,19 @@ def test_agent_written_text_is_escaped(
         html = client.get(path).text
         assert "<script>alert" not in html, path
         assert "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;" in html, path
+
+
+def test_a_duplicate_candidates_text_is_escaped_in_the_queue(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    candidate = factories.entry(
+        db, reporter, fix="<script>alert('fix')</script>", human_reviewed=True
+    )
+    proposal = factories.entry(db, reporter, status="pending")
+    save_candidates(db, proposal, [Candidate(candidate, 0.8, same_task=False)], None)
+    html = client.get("/queue").text
+    assert "<script>alert" not in html
+    assert "&lt;script&gt;alert(&#39;fix&#39;)&lt;/script&gt;" in html
 
 
 def test_dashboard_only_binds_to_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
