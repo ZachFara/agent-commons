@@ -99,7 +99,7 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 
 | ID | Status | Task | Done when |
 |---|---|---|---|
-| T59 | doing | Billing cutoff (decision 0038): a $100 project budget publishes to Pub/Sub; a Cloud Function unlinks billing from the project when spend reaches it; budget emails at 50%, 90% and 100% | Tests of the decision; `terraform apply` by the owner; a test message under the cutoff logs "under the cutoff" |
+| T59 | done | Billing cutoff (decision 0038): a $100 project budget publishes to Pub/Sub; a Cloud Function unlinks billing from the project when spend reaches it; budget emails at 50%, 90% and 100% | Tests of the decision; `terraform apply` by the owner; a test message under the cutoff logs "under the cutoff" 2026-11-07: applied; a test message under the cutoff returned 200 (the "under the cutoff" line was missing: INFO was dropped, fixed in the same PR) |
 
 ### Follow-ups (owner, 2026-10-31)
 

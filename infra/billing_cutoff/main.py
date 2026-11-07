@@ -12,8 +12,10 @@ import google.auth
 from cutoff import over_budget, spend
 from google.auth.transport.requests import AuthorizedSession
 
-logging.basicConfig(level=logging.INFO)
+# The functions framework configures the root logger first, so basicConfig would be a no-op
+# and INFO lines would be dropped at the root's WARNING level.
 log = logging.getLogger("billing_cutoff")
+log.setLevel(logging.INFO)
 
 
 def disable_billing(project_id: str) -> None:
