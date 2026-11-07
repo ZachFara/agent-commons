@@ -44,6 +44,7 @@ docker_url="$(printf '%s' "$url" | sed -E 's#@(localhost|127\.0\.0\.1)([:/])#@ho
 PGURL="$docker_url" docker run --rm -e PGURL -e PGOPTIONS="-c default_transaction_read_only=on" \
   -v "$dir:/out" "$image" \
   sh -c "pg_dump --format=custom --no-owner --no-privileges -d \"\$PGURL\" -f /out/$stamp.dump"
+chmod 600 "$dir/$stamp.dump" # Docker writes it without our umask
 uv run --quiet python tools/backup_counts.py count "$url" > "$dir/$stamp.counts.json"
 printf '{"tag": "%s", "commit": "%s", "source": "%s"}\n' "$tag" "$commit" "$source" \
   > "$dir/$stamp.json"

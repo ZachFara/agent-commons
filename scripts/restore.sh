@@ -31,8 +31,13 @@ main() {
   git checkout --quiet --detach "$tag"
   echo "restore.sh: checked out $tag ($(git rev-parse --short HEAD)); restoring $dump" >&2
   docker_url="$(printf '%s' "$target" | sed -E 's#@(localhost|127\.0\.0\.1)([:/])#@host.docker.internal\2#')"
-  PGURL="$docker_url" docker run --rm -e PGURL -v "$dir:/out:ro" "$image" \
-    sh -c "pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error -d \"\$PGURL\" /out/$stamp.dump"
+  # pg_restore renders the archive as SQL and psql applies it in one transaction, stopping at the
+  # first error. Dumps from a Postgres 17+ client set transaction_timeout, which a 16 server
+  # (db/compose.yml) rejects; that one line is dropped, it only disables a timeout.
+  PGURL="$docker_url" docker run --rm -e PGURL -v "$dir:/out:ro" "$image" bash -o pipefail -c \
+    "pg_restore --clean --if-exists --no-owner --no-privileges -f - /out/$stamp.dump \
+     | sed '/^SET transaction_timeout = /d' \
+     | psql -X -q -v ON_ERROR_STOP=1 --single-transaction -d \"\$PGURL\" >/dev/null"
   uv run --quiet python tools/backup_counts.py compare "$target" "$dir/$stamp.counts.json"
   echo "restore.sh: restored $tag; row counts match" >&2
 }
