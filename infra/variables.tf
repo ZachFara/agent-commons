@@ -44,6 +44,12 @@ variable "budget_alert_usd" {
   default     = 4
 }
 
+variable "cutoff_usd" {
+  description = "Monthly spend at which billing is unlinked from the project, stopping every service in it (decision 0038)."
+  type        = number
+  default     = 100
+}
+
 variable "alert_emails" {
   description = "Addresses for uptime, error and budget alerts (set in terraform.tfvars)."
   type        = list(string)

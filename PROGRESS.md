@@ -95,6 +95,12 @@ Decisions 0016 (hooks), 0017 (ranking), 0018 (hosted), all owner-approved 2026-1
 |---|---|---|---|
 | T58 | done | The LGTM stack (decision 0037): OTLP export of traces, metrics and logs from every entry point when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; event lines for hook calls, refused keys, admin actions and unhandled exceptions; `observability/` with Alloy (plus Postgres statistics), Loki, Tempo, Mimir and Grafana (provisioned data sources with cross-links; four dashboards from `tools/grafana_dashboards.py`: overview, tools and agents, incidents and debugging, database); Terraform variables for a hosted endpoint; the MCP app as an explicit `/mcp` route | Tests: a tool call leaves a labelled span, a duration sample and a log line sharing one trace id; SQL spans hold templates only; request spans are named by route with query strings redacted; nothing in any signal holds the query text. 2026-11-05: `make observe` boots; a server exporting to it shows the trace, metrics and log lines in Grafana. Left: pick a hosted destination for production (Grafana Cloud free tier expected) and set `otlp_endpoint` in Terraform; move the error alert of decision 0033 there or keep both |
 
+### Billing cutoff (owner request, 2026-11-07)
+
+| ID | Status | Task | Done when |
+|---|---|---|---|
+| T59 | done | Billing cutoff (decision 0038): a $100 project budget publishes to Pub/Sub; a Cloud Function unlinks billing from the project when spend reaches it; budget emails at 50%, 90% and 100% | Tests of the decision; `terraform apply` by the owner; a test message under the cutoff logs "under the cutoff" 2026-11-07: applied; a test message under the cutoff returned 200 (the "under the cutoff" line was missing: INFO was dropped, fixed in the same PR) |
+
 ### Follow-ups (owner, 2026-10-31)
 
 | ID | Status | Task | Done when |
