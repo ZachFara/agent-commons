@@ -121,6 +121,7 @@ def current_branch(cwd: str) -> str:
         capture_output=True,
         text=True,
         check=False,
+        env=state.git_environment(),
     )
     return result.stdout.strip() if result.returncode == 0 else ""
 
@@ -214,7 +215,9 @@ def check_merge(args: list[str], cwd: str) -> str | None:
     if "--admin" in args:
         return "gh pr merge --admin bypasses branch protection"
     view = ["gh", "pr", "view", *merge_target(args), "--json", "baseRefName", "-q", ".baseRefName"]
-    result = subprocess.run(view, capture_output=True, text=True, check=False, cwd=cwd)
+    result = subprocess.run(
+        view, capture_output=True, text=True, check=False, cwd=cwd, env=state.git_environment()
+    )
     base = result.stdout.strip()
     if result.returncode != 0 or not base.startswith("feature/"):
         shown = base or result.stderr.strip() or "unknown"
