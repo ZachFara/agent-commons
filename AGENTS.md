@@ -101,7 +101,8 @@ by `uv run commons migrate`. Never edit a migration that has been merged.
 Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
 
 - **Tickets.** Zach's Linear project "Commons" (P-MIT-27) is read only for every agent. He
-  delegates a ticket by moving it to Delegated. Agents write only in "Commons Agent Project"
+  delegates a ticket by moving it to Delegated, and agents also act on its Backlog tickets
+  (Zach, 2026-11-07). Agents write only in "Commons Agent Project"
   (P-MIT-29): agent tickets (Next, In Progress, In Review, Done, Canceled), one "Final:
   MIT-<n>" ticket per delegated ticket, and "Question: ..." tickets in Inbox for Zach.
 - **Branches.** Each delegated ticket gets `feature/MIT-<n>-<slug>` from main. A coder
