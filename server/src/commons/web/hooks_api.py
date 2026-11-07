@@ -5,10 +5,12 @@ content here even if it tried (decision 0016).
 """
 
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
 from datetime import datetime
+from http import HTTPStatus
 from typing import Any
 from uuid import UUID
 
@@ -24,7 +26,7 @@ from commons.domain.observations import command_tail
 from commons.domain.outcomes import Usage
 from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
-from commons.service import contributors, hooks, imports
+from commons.service import contributors, events, hooks, imports
 from commons.service.identity import acting_as
 from commons.service.keys import check_key
 from commons.store.connection import Connection
@@ -34,6 +36,7 @@ Body = dict[str, Any]
 Handler = Callable[[Connection, Body], Body]
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_REFUSALS = {400: "invalid_input", 401: "unauthorized", 403: "forbidden", 429: "rate_limited"}
 _USAGES: frozenset[Usage | None] = frozenset({"yes", "partial", "no", None})
 
 
@@ -54,7 +57,7 @@ def hook_routes(connection: ConnectionFactory) -> list[Route]:
     return [
         Route(
             f"/api/hooks/{name}",
-            _endpoint(connection, handler, with_scope=name == "ping"),
+            _endpoint(connection, handler, name),
             methods=["POST"],
         )
         for name, handler in handlers.items()
@@ -62,17 +65,34 @@ def hook_routes(connection: ConnectionFactory) -> list[Route]:
 
 
 def _endpoint(
-    connection: ConnectionFactory, handler: Handler, *, with_scope: bool
+    connection: ConnectionFactory, handler: Handler, name: str
 ) -> Callable[[Request], Awaitable[Response]]:
     async def endpoint(request: Request) -> Response:
+        started = time.perf_counter()
         key = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         body = await request.json() if await request.body() else {}
-        if not isinstance(body, dict):
-            return _error(400, "invalid_input", "Body must be a JSON object.")
-        result = await run_in_threadpool(_run, connection, handler, key, body)
-        if with_scope and isinstance(result, tuple):
-            return JSONResponse({**result[0], "scope": result[1]})
-        return result if isinstance(result, Response) else JSONResponse(result[0])
+        if isinstance(body, dict):
+            result = await run_in_threadpool(_run, connection, handler, key, body)
+        else:
+            result = _error(400, "invalid_input", "Body must be a JSON object.")
+        payload = None if isinstance(result, Response) else result[0]
+        status = result.status_code if isinstance(result, Response) else HTTPStatus.OK
+        # One line per hook call (decision 0037): who, which, how it went, which task.
+        events.event(
+            "hook_call",
+            hook=name,
+            ok=status == HTTPStatus.OK,
+            status=int(status),
+            error=_REFUSALS.get(status, None if status == HTTPStatus.OK else "error"),
+            key=events.short_key(key),
+            task_id=None if payload is None else payload.get("task_id"),
+            ms=round((time.perf_counter() - started) * 1000),
+        )
+        if payload is None:
+            return result if isinstance(result, Response) else JSONResponse({})
+        if name == "ping" and isinstance(result, tuple):  # answered with the key's scope
+            return JSONResponse({**payload, "scope": result[1]})
+        return JSONResponse(payload)
 
     return endpoint
 

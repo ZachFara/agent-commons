@@ -10,35 +10,48 @@ from collections.abc import Sequence
 
 import uvicorn
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
-from starlette.routing import Mount, Route
+from starlette.routing import Route
 
 from commons.mcp.call_log import log_calls_to_stdout
 from commons.mcp.server import build_server
+from commons.service import telemetry
 from commons.service.identity import serving_hosted
 from commons.store.connection import connect
 from commons.store.migrate import apply_migrations
-from commons.web.app import ConnectionFactory, web_routes
-from commons.web.key_errors import explain_refused_keys
+from commons.web.app import UNHANDLED, ConnectionFactory, web_routes
+from commons.web.key_errors import ExplainRefusedKeys
+from commons.web.telemetry import instrument
 
 DEFAULT_PORT = 8080
+SERVICE = "commons-server"
 
 
 def build_hosted_app(connection: ConnectionFactory = connect) -> Starlette:
     """Compose the hosted app: health checks, hook API and dashboard, then MCP at /mcp."""
     mcp_app = build_server(connection, hosted=True).http_app(path="/mcp", stateless_http=True)
-    return Starlette(
+    app = Starlette(
         routes=[
             # Cloud Run's front end reserves /healthz (returns its own 404), so /health is the
             # probe path there; /healthz stays for other hosts.
             Route("/health", _health),
             Route("/healthz", _health),
             *web_routes(connection, hosted=True),
-            Mount("/", app=explain_refused_keys(mcp_app, connection)),
+            # The MCP app's one route (streamable HTTP: POST carries messages, DELETE ends a
+            # session), declared here so request spans and metrics know it as `/mcp`.
+            Route(
+                "/mcp",
+                mcp_app,
+                methods=["POST", "DELETE"],
+                middleware=[Middleware(ExplainRefusedKeys, connection=connection)],
+            ),
         ],
         lifespan=mcp_app.lifespan,
+        exception_handlers=UNHANDLED,
     )
+    return instrument(app)
 
 
 def _health(_request: Request) -> PlainTextResponse:
@@ -54,6 +67,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--migrate", action="store_true", help="Apply pending migrations before serving."
     )
     args = parser.parse_args(argv)
+    telemetry.configure(SERVICE)
     if args.migrate:
         with connect() as conn:
             apply_migrations(conn)

@@ -1,0 +1,54 @@
+# Mimir, monolithic on the local filesystem (decision 0037). Not for production.
+multitenancy_enabled: false
+
+server:
+  http_listen_port: 9009
+  log_level: warn
+
+blocks_storage:
+  backend: filesystem
+  bucket_store:
+    sync_dir: /data/tsdb-sync
+  filesystem:
+    dir: /data/blocks
+  tsdb:
+    dir: /data/tsdb
+
+compactor:
+  data_dir: /data/compactor
+  sharding_ring:
+    kvstore:
+      store: memberlist
+
+distributor:
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: memberlist
+
+ingester:
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: memberlist
+    replication_factor: 1
+
+ruler_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/rules
+
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+
+activity_tracker:
+  filepath: /data/metrics-activity.log
+
+limits:
+  # Exemplars link latency buckets to the traces behind them.
+  max_global_exemplars_per_user: 100000
+  compactor_blocks_retention_period: 168h
+
+usage_stats:
+  enabled: false

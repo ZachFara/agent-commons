@@ -17,6 +17,7 @@ ALLOWED_DIRS = frozenset(
         "db",
         "docs",
         "infra",
+        "observability",
         "server",
         "tools",
     }

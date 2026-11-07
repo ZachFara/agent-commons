@@ -49,3 +49,16 @@ variable "alert_emails" {
   type        = list(string)
   default     = []
 }
+
+variable "otlp_endpoint" {
+  description = "OTLP/HTTP endpoint the servers send traces, metrics and logs to (decision 0037), e.g. Grafana Cloud's https://otlp-gateway-<region>.grafana.net/otlp. Empty: no telemetry."
+  type        = string
+  default     = ""
+}
+
+variable "otlp_headers" {
+  description = "Headers for that endpoint, as OTEL_EXPORTER_OTLP_HEADERS expects them, e.g. \"Authorization=Basic <base64 of instance:token>\". Kept in terraform.tfvars and Secret Manager."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

@@ -73,4 +73,6 @@ Observed outcomes need Claude Code's hooks.
 ## Development
 
 See [AGENTS.md](AGENTS.md) for layout, commands, and rules, and [DESIGN.md](DESIGN.md) for the
-design.
+design. `make observe` starts a local Loki, Grafana, Tempo and Mimir stack that the server,
+the local MCP server and the dashboard export traces, metrics and logs to
+([observability/README.md](observability/README.md)).
