@@ -43,6 +43,23 @@ resource "google_artifact_registry_repository_iam_member" "deployer_pushes" {
   member     = "serviceAccount:${google_service_account.deployer.email}"
 }
 
+# The deploy workflow moves the `production` and `staging` tags (main.tf cleanup policy).
+# `gcloud artifacts docker tags add` on an existing tag deletes it first, and the writer role
+# has no artifactregistry.tags.delete.
+resource "google_project_iam_custom_role" "tag_mover" {
+  role_id     = "agentCommonsTagMover"
+  title       = "Agent Commons tag mover"
+  description = "Move image tags in the agent-commons repository."
+  permissions = ["artifactregistry.tags.delete"]
+}
+
+resource "google_artifact_registry_repository_iam_member" "deployer_moves_tags" {
+  repository = google_artifact_registry_repository.images.name
+  location   = var.region
+  role       = google_project_iam_custom_role.tag_mover.id
+  member     = "serviceAccount:${google_service_account.deployer.email}"
+}
+
 resource "google_cloud_run_v2_service_iam_member" "deployer_deploys" {
   for_each = local.environments
   name     = google_cloud_run_v2_service.server[each.key].name
