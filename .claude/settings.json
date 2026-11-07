@@ -11,13 +11,13 @@
       {
         "matcher": "mcp__(claude_ai_Linear|linear)__.*",
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/linear_guard.sh" }
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/linear_guard.sh", "onFailure": "block" }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/bash_guard.sh" }
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/bash_guard.sh", "onFailure": "block" }
         ]
       }
     ],
@@ -25,7 +25,7 @@
       {
         "matcher": "mcp__(claude_ai_Linear|linear)__save_issue",
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/record_issue.sh" }
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/record_issue.sh", "onFailure": "block" }
         ]
       }
     ]

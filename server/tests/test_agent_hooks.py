@@ -316,6 +316,8 @@ def test_settings_wire_each_hook_to_an_entry_script() -> None:
         ),
     }
     assert re.search(f"^{linear_tools}.*", "mcp__claude_ai_Linear__save_comment")
+    hooks = [hook for groups in settings["hooks"].values() for g in groups for hook in g["hooks"]]
+    assert all(hook["onFailure"] == "block" for hook in hooks)  # a missing script blocks too
     for name in ("linear_guard", "bash_guard", "record_issue"):
         script = REPO / ".claude/hooks" / f"{name}.sh"
         assert script.stat().st_mode & 0o111, f"{script} is not executable"
