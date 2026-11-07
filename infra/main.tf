@@ -20,7 +20,17 @@ resource "google_artifact_registry_repository" "images" {
   format        = "DOCKER"
   description   = "Agent Commons server images (shared by staging and production)"
 
-  # Stay inside the 0.5 GB free storage: images are ~150 MB, so keep the 3 newest.
+  # Stay inside the 0.5 GB free storage: images are ~125 MB, so keep what each environment
+  # runs (the deploy workflow moves the `production` and `staging` tags) and the 3 newest builds
+  # as rollbacks. Production waits for approval, so "newest" alone could delete its image.
+  cleanup_policies {
+    id     = "keep-deployed"
+    action = "KEEP"
+    condition {
+      tag_state    = "TAGGED"
+      tag_prefixes = ["production", "staging"]
+    }
+  }
   cleanup_policies {
     id     = "keep-recent"
     action = "KEEP"
