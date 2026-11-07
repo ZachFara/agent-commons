@@ -272,6 +272,18 @@ def test_bash_guard_denies_a_bare_push_from_main(
     assert bash(command, repo, monkeypatch) == 0
 
 
+def test_bash_guard_ignores_git_variables_from_a_git_hook(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inside a pre-commit check git sets GIT_DIR; the guard must still read `cwd`'s repo."""
+    other = tmp_path / "other"
+    for directory in ("objects", "refs/heads"):
+        (other / ".git" / directory).mkdir(parents=True)
+    (other / ".git" / "HEAD").write_text("ref: refs/heads/feat/x\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    assert bash("git push", repo, monkeypatch) == 2  # repo is on main
+
+
 @pytest.mark.parametrize(
     ("command", "selector"),
     [
