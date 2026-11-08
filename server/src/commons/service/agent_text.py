@@ -522,22 +522,21 @@ SEARCH_RULE_SURPRISE = (
 OWN_MISTAKE_LINE = "It counts even if you first fixed your own mistake."
 # Agents wrote what they learned into AGENTS.md or memory and stopped there.
 LESSON_ALSO_PROPOSE_LINE = "Lesson for AGENTS.md, memory or a README? Consider `propose` too."
-# The shipped worked example, plus one for an app with no error text: `tool` names the app with
-# its version, the shape the rejected calls got wrong.
-PROPOSE_EXAMPLES_APP = (
-    VARIANTS["baseline"].propose
-    + """
-A surprise with no error text, from an app or a config default, has the same shape. Put the \
-app in `tool` with its version (from its version flag or about page) and describe what you saw \
-as `symptom`:
-  symptom: "Settings edited in prefs.js are gone after Firefox restarts; no error shown."
-  environment: {"tool": "firefox 132.0"}
-  cause: "Firefox writes prefs.js from memory on exit, so edits made while it runs are lost."
-  fix: "Put the setting in user.js in the profile directory; Firefox applies it at startup."
-  domains: ["firefox", "config"]
+# The shipped worked example, plus one for a tool with no error text: `tool` names it with its
+# version, the shape the rejected calls got wrong. The example's mechanism (cron's `%`) and its
+# words are checked against every eval scenario's cause, so it gives none of them away.
+APP_EXAMPLE = """
+A surprise with no error text, from an app or a tool, has the same shape. Put the app or tool \
+in `tool` with its version (from its version flag or about page) and describe what you saw as \
+`symptom`:
+  symptom: "A cron job that logs to job-$(date +%F).log never creates the log; no error shown."
+  environment: {"tool": "cronie 1.7.2"}
+  cause: "cron reads each unescaped % in a crontab line as a newline, cutting the command short."
+  fix: "Escape each % in the crontab line with a backslash, or move the command into a script."
+  domains: ["cron", "shell"]
 A `tool` without a version is rejected.
 """
-)
+PROPOSE_EXAMPLES_APP = VARIANTS["baseline"].propose + APP_EXAMPLE
 _DRAFT_EDITS = {
     "search-surprise": (_SHIPPED_SEARCH_RULE, SEARCH_RULE_SURPRISE),
     "own-mistake": ("even for a one-line fix.", f"even for a one-line fix. {OWN_MISTAKE_LINE}"),

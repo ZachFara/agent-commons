@@ -114,9 +114,12 @@ def test_the_skill_stays_inside_its_budgets_and_its_examples_are_valid_proposals
     assert len(body) <= BODY_LIMIT
     blocks = [json.loads(b) for b in re.findall(r"```json\n(.*?)```", body, re.DOTALL)]
     examples = [b for b in blocks if "symptom" in b]
-    # a library version change, a config default, and an app that overwrites its settings
+    # a library version change, a config value, and a tool, the last two with no error text
     assert len(examples) == 3
-    assert any("tool" in example["environment"] for example in examples[1:])
+    assert [example["environment"].get("tool") for example in examples[1:]] == [
+        None,
+        "cronie 1.7.2",
+    ]
     for example in examples:
         validate_proposal(
             Proposal(

@@ -17,6 +17,7 @@ from typing import Any
 import psycopg
 import pytest
 from fastmcp import FastMCP
+from tools.eval.scenarios import SCENARIOS
 
 import factories
 from commons.domain.entries import Proposal, validate_proposal
@@ -30,6 +31,7 @@ from mcp_client import call
 from test_hook_stop import Session
 
 AT = datetime(2026, 10, 25, tzinfo=UTC)
+SKILL = Path(__file__).parents[2] / "client" / "plugin" / "skills" / "agent-commons" / "SKILL.md"
 
 
 def run(exit_code: int, minutes: int) -> ObservedRun:
@@ -281,12 +283,54 @@ def test_the_search_draft_covers_surprises_with_no_error_text() -> None:
 def test_the_example_draft_extends_the_shipped_example_with_a_versioned_app() -> None:
     shipped = agent_text.VARIANTS["baseline"].propose
     draft = agent_text.VARIANTS["propose-example"].propose
-    assert draft.startswith(shipped)
+    assert draft == shipped + agent_text.APP_EXAMPLE
     environments = re.findall(r"^  environment: (\{.*\})$", draft, re.MULTILINE)
     assert len(environments) == 2
     for environment in map(json.loads, environments):
         validate_proposal(Proposal("s", environment, "c", "f", ("d",), None, uuid.uuid4()))
-    assert json.loads(environments[1]) == {"tool": "firefox 132.0"}
+    assert json.loads(environments[1]) == {"tool": "cronie 1.7.2"}
+
+
+def every_cause_word() -> set[str]:
+    """Every word the eval grader takes as naming a scenario's cause, on each turn of each."""
+    words: set[str] = set()
+    for scenario in SCENARIOS.values():
+        for turn in (scenario, scenario.then):  # a multi-turn scenario has one more turn
+            if turn is not None and turn.discovery is not None:
+                words.update(word.lower() for word in turn.discovery.cause_words)
+    return words
+
+
+def examples() -> dict[str, str]:
+    """The draft's added worked example and the skill's `search`, `propose` and `report` examples.
+
+    The `search` and three `propose` blocks are checked whole. Of the `report` block only its
+    free text, `agent_assessment`, is checked: its field name `outcome` contains the cause word
+    "utc", and neither that name nor the enum value `tests_passed` can hint at a cause.
+
+    Exempt: the shipped worked example (the whenever `ignore_dst` case in `PROPOSE_EXAMPLES_TOOL`
+    and the texts built on it), which names a hold-out scenario's cause; `baseline` keeps it
+    byte-identical until the question on it is settled.
+    """
+    blocks = re.findall(r"```json\n(.*?)```", SKILL.read_text(encoding="utf-8"), re.DOTALL)
+    calls = [block for block in blocks if '"symptom"' in block or '"query"' in block]
+    assert len(calls) == 4
+    reports = [json.loads(block) for block in blocks if '"agent_assessment"' in block]
+    assert len(reports) == 1
+    skill = {f"skill example {n}": block for n, block in enumerate(calls, start=1)}
+    return {
+        "propose-example": agent_text.APP_EXAMPLE,
+        **skill,
+        "skill report example": reports[0]["agent_assessment"],
+    }
+
+
+@pytest.mark.parametrize(("where", "example"), examples().items())
+def test_no_example_names_a_scenarios_cause(where: str, example: str) -> None:
+    # An example that named a scenario's cause would fit the eval to it (decision 0023).
+    assert every_cause_word() >= {"memory", "on exit", "default", "exporter"}
+    named = {word for word in every_cause_word() if word in example.lower()}
+    assert not named, where
 
 
 def test_no_draft_ships() -> None:
