@@ -1,4 +1,5 @@
-.PHONY: setup db observe check fix infra-check search-eval eval-confirm eval-effects eval-reliability
+.PHONY: setup db observe check fix infra-check search-eval eval-confirm eval-effects eval-reliability \
+  eval-arms eval-compare
 
 setup:  ## Install dependencies and git hooks
 	uv sync
@@ -54,3 +55,21 @@ eval-reliability:  ## Decision 0034's conditions on both models (asks nothing; c
 
 eval-effects:  ## Per-model results of an eval condition (EVAL_CONDITION=...)
 	uv run python tools/agent_eval.py effects --condition $(EVAL_CONDITION)
+
+# The GitHub-task arms run (the Proposed arms record in docs/decisions/): every GitHub task
+# under all four arms, EVAL_ARMS_RUNS times each, each session in a clone of the experiment
+# store EVAL_STORE, which its seed wave must have built first (docs/eval/README.md). 4 arms x
+# tasks x EVAL_ARMS_RUNS sessions; ask the owner before running (it uses the subscription).
+EVAL_ARMS_CONDITION ?= github-arms
+EVAL_ARMS_RUNS ?= 3
+EVAL_STORE ?= commons_eval_store
+EVAL_ARMS_TASKS ?= $(shell uv run --quiet python -c \
+  "from tools.eval.github_tasks import GITHUB; print(' '.join(sorted(GITHUB)))")
+eval-arms:  ## The GitHub-task arms on the experiment store (asks nothing; costs usage)
+	@test -n "$(EVAL_ARMS_TASKS)" || { echo "no GitHub tasks (tools/eval/github_tasks.py)"; exit 1; }
+	uv run python tools/agent_eval.py arms --condition $(EVAL_ARMS_CONDITION) \
+	  --runs $(EVAL_ARMS_RUNS) --store $(EVAL_STORE) \
+	  $(foreach s,$(EVAL_ARMS_TASKS),--scenario $(s)) $(if $(RESUME),--resume)
+
+eval-compare:  ## The arms report and verdict of EVAL_ARMS_CONDITION (reads the ledger only)
+	uv run python tools/agent_eval.py compare --condition $(EVAL_ARMS_CONDITION)

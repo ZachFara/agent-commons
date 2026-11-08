@@ -5,6 +5,9 @@ the user's own setup: no user settings or hooks (`--setting-sources project`), o
 MCP server (`--strict-mcp-config`). Sessions run in parallel up to a concurrency cap.
 
 An arm names which MCP servers a session gets: the commons, Context7, both, or none (blind).
+
+An experiment store (`Store`) is one local database the sessions build on: a seed wave writes
+into it directly, and the measured sessions each run in a clone of it.
 """
 
 import difflib
@@ -15,17 +18,19 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import psycopg
 from psycopg import sql
-from psycopg.conninfo import make_conninfo
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.types.json import Jsonb
 
 from commons.service import agent_text
@@ -96,6 +101,9 @@ GENERATED = (
 # Files a tool writes as it runs (`uv run` creates uv.lock), never the agent's fix.
 GENERATED_FILES = ("uv.lock", ".coverage", ".coverage.*", "*.pyc", "*.egg-info")
 TEST_DIRS = frozenset({"tests", "test", "__tests__"})
+# The only hosts an experiment store may live on: scripts/test-db.sh's rule.
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
+_CLONING = threading.Lock()  # one clone of the store at a time
 
 
 def has_commons(arm: str) -> bool:
@@ -157,6 +165,7 @@ class Result:
     retrievals: list[Retrieval] = field(default_factory=list)
     patch: str = ""  # the agent's diff of non-test files
     patch_hash: str = ""  # of the diff with whitespace removed
+    repeat: int = 0  # which repeat of its task, arm and model (`arms`); 0 elsewhere
 
     def summary(self) -> str:
         """One line describing what the agent did."""
@@ -213,17 +222,90 @@ def drop_database(name: str) -> None:
         )
 
 
+@dataclass(frozen=True)
+class Store:
+    """An experiment store: one local database, migrated before each batch and never dropped.
+
+    In a seed wave every session writes into the store itself. Otherwise each session runs in
+    its own clone of it (`CREATE DATABASE ... TEMPLATE`), dropped after grading, so measured
+    sessions see what the seed wave left and never each other's work.
+    """
+
+    name: str
+    seed_wave: bool = False
+
+
+def local_url(name: str) -> str:
+    """Return the URL of database `name` on the eval's server; refuse one not on localhost."""
+    params = conninfo_to_dict(ADMIN_URL)
+    host, address = params.get("host"), params.get("hostaddr")
+    if host not in LOCAL_HOSTS or address not in {None, "127.0.0.1"}:
+        msg = f"an experiment store must be on localhost, not {address or host or 'a socket'}"
+        raise ValueError(msg)
+    return make_conninfo(ADMIN_URL, dbname=name)
+
+
+def open_store(store: Store) -> str:
+    """Return the store's URL after migrating it; only a seed wave may create it."""
+    url = local_url(store.name)
+    with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
+        found = admin.execute(
+            "SELECT 1 FROM pg_database WHERE datname = %s", (store.name,)
+        ).fetchone()
+        if found is None and not store.seed_wave:
+            msg = f"no experiment store {store.name}: run its seed wave first (--seed-wave)"
+            raise ValueError(msg)
+        if found is None:
+            admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(store.name)))
+    with psycopg.connect(url) as conn:
+        apply_migrations(conn)
+    return url
+
+
+def clone_store(store: Store, name: str) -> str:
+    """Create database `name` as a copy of the store and return its URL."""
+    if name == store.name:
+        msg = f"a session's database can't be the store {store.name} itself"
+        raise ValueError(msg)
+    url = local_url(name)
+    clone, template = sql.Identifier(name), sql.Identifier(store.name)
+    with _CLONING, psycopg.connect(ADMIN_URL, autocommit=True) as admin:
+        admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(clone))
+        admin.execute(sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(clone, template))
+    return url
+
+
+@contextmanager
+def session_database(condition: str, job: "Job") -> Iterator[str]:
+    """Yield the session's database: a fresh one, the store itself, or a clone of the store.
+
+    Only a seed wave's database outlives the session.
+    """
+    store = job.store
+    if store is not None and store.seed_wave:
+        yield local_url(store.name)
+        return
+    name = database_name(condition, job)
+    url = fresh_database(name) if store is None else clone_store(store, name)
+    try:
+        yield url
+    finally:
+        drop_database(name)
+
+
 def seed(url: str, scenario: Scenario) -> None:
-    """Create the agent's reporter and the scenario's pre-existing entries."""
+    """Create the agent's reporter and the scenario's pre-existing entries, once each."""
     with psycopg.connect(url) as conn:
         upsert_reporter(conn, "eval-agent", "entry")
         author = upsert_reporter(conn, "eval-author", "entry")
         model = model_id(conn, "seed")
         for entry in scenario.seeds:
+            # A seed wave's sessions share one database: seed each entry there only once.
             conn.execute(
                 "INSERT INTO entries (symptom, environment, cause, fix, domains, status, "
                 "human_reviewed, created_by, created_by_model) "
-                "VALUES (%s, %s, %s, %s, %s, 'approved', true, %s, %s)",
+                "SELECT %s, %s, %s, %s, %s, 'approved', true, %s, %s WHERE NOT EXISTS "
+                "(SELECT 1 FROM entries WHERE created_by = %s AND symptom = %s)",
                 (
                     entry.symptom,
                     Jsonb({"language": "python 3.12", "libraries": entry.libraries}),
@@ -232,6 +314,8 @@ def seed(url: str, scenario: Scenario) -> None:
                     ["python"],
                     author,
                     model,
+                    author,
+                    entry.symptom,
                 ),
             )
 
@@ -627,6 +711,8 @@ class Job:
     variant: str = "baseline"
     model: str = ""  # empty: the batch's model
     arm: str = "commons"
+    repeat: int = 0  # which repeat of its task, arm and model (`arms`)
+    store: Store | None = None  # None: a fresh database of its own
 
 
 def database_name(condition: str, job: Job) -> str:
@@ -665,23 +751,9 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         and any(m in str(call.get("input", {})) for m in ("README", "__init__", "cat ", "Read"))
         for call in calls
     )
+    session_ids = {str(e["session_id"]) for e in events if e.get("session_id")}
     with psycopg.connect(url) as conn:
-        proposals = conn.execute(
-            "SELECT e.symptom, e.cause, e.fix, e.environment FROM entries e "
-            "JOIN reporters r ON r.id = e.created_by WHERE r.pseudonym = 'eval-agent'"
-        ).fetchall()
-        reported = conn.execute(
-            "SELECT count(*) FROM outcomes WHERE agent_assessment IS NOT NULL"
-        ).fetchone()
-        seeded = conn.execute(
-            "SELECT o.used::text, CASE WHEN o.evidence->>'outcome_source' = 'hook' "
-            "THEN o.outcome::text END FROM outcomes o "
-            "JOIN retrievals r ON r.id = o.retrieval_id JOIN entries e ON e.id = r.entry_id "
-            "JOIN reporters a ON a.id = e.created_by WHERE a.pseudonym = 'eval-author' "
-            "ORDER BY o.created_at LIMIT 1"
-        ).fetchone()
-        task_ids = {str(row[0]) for row in conn.execute("SELECT id FROM tasks").fetchall()}
-        retrievals = session_retrievals(conn, task_ids | used_ids)
+        activity = session_activity(conn, session_ids, used_ids)
     tests = (
         repos.run_tests(scenario.repo, project)
         if scenario.repo is not None
@@ -706,13 +778,13 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         index=session.index,
         searched=bool(searches),
         search_found=search_found,
-        proposed=bool(proposals),
-        proposals=[best_grade(row, discoveries) for row in proposals],
-        reported=bool(reported and reported[0]),
-        used=seeded[0] if seeded else None,
-        observed_outcome=seeded[1] if seeded else None,
+        proposed=bool(activity.proposals),
+        proposals=[best_grade(row, discoveries) for row in activity.proposals],
+        reported=activity.reported,
+        used=activity.seeded_used,
+        observed_outcome=activity.seeded_outcome,
         used_session_task_id=all(
-            str(call.get("input", {}).get("task_id")) in task_ids
+            str(call.get("input", {}).get("task_id")) in activity.task_ids
             for call in searches
             if call.get("input", {}).get("task_id")
         ),
@@ -732,18 +804,75 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         tokens_in=tokens_in,
         tokens_out=tokens_out,
         wall_clock_seconds=seconds,
-        retrievals=retrievals,
+        retrievals=activity.retrievals,
         patch=patch,
         patch_hash=patch_hash,
     )
 
 
+@dataclass(frozen=True)
+class Activity:
+    """What one session left in the store, found by its own task ids."""
+
+    task_ids: set[str]  # the tasks its hooks started (by Claude session id)
+    proposals: list[tuple[Any, ...]]  # (symptom, cause, fix, environment)
+    reported: bool
+    seeded_used: str | None  # `used` of the first outcome on a scenario's seeded entry
+    seeded_outcome: str | None  # its hook-observed outcome
+    retrievals: list[Retrieval]
+
+
+def session_activity(
+    conn: psycopg.Connection, session_ids: set[str], used_ids: set[str]
+) -> Activity:
+    """Read one session's proposals, reports and retrievals, never another session's.
+
+    Its task ids are the tasks its hooks started under its Claude session ids, plus every
+    task id it passed to a commons tool. A store holds other sessions' work under the same
+    `eval-agent` pseudonym, so nothing here goes by pseudonym alone.
+    """
+    task_ids = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT id FROM tasks WHERE session_id = ANY(%s)", (sorted(session_ids),)
+        ).fetchall()
+    }
+    ids = sorted(task_id for task_id in task_ids | used_ids if _is_uuid(task_id))
+    proposals = conn.execute(
+        "SELECT symptom, cause, fix, environment FROM entries WHERE task_id = ANY(%s::uuid[]) "
+        "ORDER BY created_at",
+        (ids,),
+    ).fetchall()
+    reported = conn.execute(
+        "SELECT count(*) FROM outcomes o JOIN retrievals r ON r.id = o.retrieval_id "
+        "WHERE o.agent_assessment IS NOT NULL AND r.task_id = ANY(%s::uuid[])",
+        (ids,),
+    ).fetchone()
+    seeded = conn.execute(
+        "SELECT o.used::text, CASE WHEN o.evidence->>'outcome_source' = 'hook' "
+        "THEN o.outcome::text END FROM outcomes o "
+        "JOIN retrievals r ON r.id = o.retrieval_id JOIN entries e ON e.id = r.entry_id "
+        "JOIN reporters a ON a.id = e.created_by WHERE a.pseudonym = 'eval-author' "
+        "AND r.task_id = ANY(%s::uuid[]) ORDER BY o.created_at LIMIT 1",
+        (ids,),
+    ).fetchone()
+    return Activity(
+        task_ids=task_ids,
+        proposals=proposals,
+        reported=bool(reported and reported[0]),
+        seeded_used=seeded[0] if seeded else None,
+        seeded_outcome=seeded[1] if seeded else None,
+        retrievals=session_retrievals(conn, set(ids)),
+    )
+
+
 def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: bool) -> Result:
-    """Fresh database and project, one session, graded. Saves the transcript and result."""
+    """Run one graded session on a fresh project; save its transcript and result.
+
+    Its database is a fresh one, the store itself (a seed wave), or a clone of the store.
+    """
     scenario, index = job.scenario, job.index
-    db_name = database_name(condition, job)
-    url = fresh_database(db_name)
-    try:
+    with session_database(condition, job) as url:
         seed(url, scenario)
         with tempfile.TemporaryDirectory(prefix=f"commons-eval-{scenario.name}-") as tmp:
             project, workdir = Path(tmp) / "project", Path(tmp) / "work"
@@ -783,11 +912,9 @@ def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: b
             (transcripts / f"{stem}.jsonl").write_text(
                 "\n".join(json.dumps(e) for e in events), encoding="utf-8"
             )
-            result = replace(grade(session, events), model=chosen)
+            result = replace(grade(session, events), model=chosen, repeat=job.repeat)
             (transcripts / f"{stem}.json").write_text(json.dumps(asdict(result), indent=1))
             return result
-    finally:
-        drop_database(db_name)
 
 
 def next_turn(
