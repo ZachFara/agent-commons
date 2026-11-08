@@ -206,6 +206,53 @@ MLODA = GitHubTask(
 )
 
 
+# Click 8.5.0 (2026-08-26) no longer sets a boolean flag's `default` to False when the option is
+# built: `Option.default` stays the UNSET sentinel unless read through `get_default()`,
+# pallets/click#3641, merged 2026-07-16. Release notes:
+# https://github.com/pallets/click/releases/tag/8.5.0
+CLICK_FLAG_DEFAULT = Upstream(
+    library="click",
+    version="8.5.0",
+    released="2026-08-26",
+    changelog="https://github.com/pallets/click/releases/tag/8.5.0",
+    upstream_change="click-8.5-flag-default-unset",
+)
+
+# Issue: https://github.com/pypa/pip-tools/issues/2472 (2026-09-02): the command pip-compile
+# records in its output gains `--no-index` though it was never passed.
+# Fix: https://github.com/pypa/pip-tools/pull/2475 (merged 2026-09-18), `get_compile_command`
+# compares a value with the option's resolved default. A merge commit: the base is its first
+# parent. The new test passes at the base on Click 8.4.2 (checked) and fails on 8.5.0. Its
+# docstring states only the symptom, with "See GH-2472". The version comes from setuptools-scm,
+# which needs a git checkout, hence the pretend version.
+PIP_TOOLS = GitHubTask(
+    name="gh-pip-tools-flag-default",
+    repo="https://github.com/pypa/pip-tools",
+    base_commit="c58d5d945c0f20e9713e10f5fea2491a5c984f39",
+    fix_commit="e4187bda8ba559e4bc1991db0635b76a86ab079c",
+    issue_url="https://github.com/pypa/pip-tools/issues/2472",
+    fix_url="https://github.com/pypa/pip-tools/pull/2475",
+    test_paths=("tests/test_utils.py",),
+    python="3.12",
+    pins=("click==8.5.0",),
+    setup=(
+        "env SETUPTOOLS_SCM_PRETEND_VERSION=7.6.1"
+        f" uv pip install --quiet {EXCLUDE_NEWER} -e .[testing]"
+    ),
+    test_command=tests(
+        "-n0", "tests/test_utils.py::test_get_compile_command_no_index_not_added_by_default"
+    ),
+    upstream=CLICK_FLAG_DEFAULT,
+    discovery=Discovery(
+        symptom_words=("--no-index", "recorded command"),
+        cause_words=("unset", "sentinel", "8.5"),
+        library="click",
+    ),
+    trigger="version_specific",
+    license="BSD-3-Clause",
+)
+
+
 def scenario(task: GitHubTask) -> Scenario:
     """Return the scenario that replays a task: its project comes from the repository."""
     return Scenario(
@@ -219,6 +266,6 @@ def scenario(task: GitHubTask) -> Scenario:
     )
 
 
-TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA]
+TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA, PIP_TOOLS]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
