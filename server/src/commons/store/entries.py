@@ -5,6 +5,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from commons.domain.entries import Proposal
+from commons.domain.errors import NotFoundError
 from commons.store.connection import Connection
 from commons.store.rows import returned_id
 from commons.store.search import _SEARCHABLE
@@ -63,10 +64,27 @@ def scannable_entries(conn: Connection, *, lock: bool) -> list[dict[str, Any]]:
         return cursor.fetchall()
 
 
-_SCANNABLE = (
+def scan_row(conn: Connection, entry_id: UUID) -> dict[str, Any]:
+    """Return one entry's row as `scannable_entries` does, locked until the transaction ends.
+
+    The entry need not be one search shows: restoring rescans before a purged reporter is
+    unsuspended.
+    """
+    with conn.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(_SCAN_COLUMNS + "WHERE e.id = %s FOR UPDATE", (entry_id,))
+        row = cursor.fetchone()
+    if row is None:
+        msg = f"No entry {entry_id}."
+        raise NotFoundError(msg)
+    return row
+
+
+_SCAN_COLUMNS = (
     "SELECT id, status::text AS status, symptom, environment, cause, fix, repro, domains, "
-    "task_id, risk_report, provisional AND NOT human_reviewed AS unreviewed "
-    "FROM entries e WHERE e.status = 'pending' OR {searchable} ORDER BY created_at, id"
+    "task_id, risk_report, provisional AND NOT human_reviewed AS unreviewed FROM entries e "
+)
+_SCANNABLE = (
+    _SCAN_COLUMNS + "WHERE e.status = 'pending' OR {searchable} ORDER BY created_at, id"
 ).replace("{searchable}", _SEARCHABLE)
 _SCANNABLE_LOCKED = _SCANNABLE + " FOR UPDATE"
 

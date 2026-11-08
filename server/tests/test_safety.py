@@ -21,7 +21,7 @@ from commons.domain.lifecycle import FixedIn
 from commons.domain.risks import RISK_LABELS
 from commons.domain.search import SearchRequest
 from commons.privacy import risks
-from commons.service import corrections, keys, lifecycle, purges, search
+from commons.service import corrections, keys, lifecycle, purges, rescan, search
 from commons.service.identity import acting_as
 from commons.service.rates import limit
 from commons.service.reviews import pending
@@ -72,6 +72,10 @@ FIXED_IN = {"library": "jinja2", "version": "3.1.0"}
 @pytest.fixture
 def new_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
     """A pattern added after the entries were written (decision 0029 grows its list)."""
+    plant_pattern(monkeypatch)
+
+
+def plant_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
     planted = risks.RiskPattern("planted_word", re.compile(rf"\b{PLANTED}\b"))
     monkeypatch.setattr(risks, "RISKS", (*risks.RISKS, planted))
     monkeypatch.setitem(RISK_LABELS, "planted_word", "plants a test word")
@@ -211,6 +215,43 @@ def test_rescan_apply_labels_old_entries_and_reopens_unreviewed_ones_once(
     assert main(["admin", "rescan", "--apply"]) == 0
     assert capsys.readouterr().out == "0 entr(ies) rescanned, 0 reopened\n"
     assert {entry_id: risk_state(db, entry_id) for entry_id in ours} == after
+
+
+def labelled(db: psycopg.Connection, word: str, entry_id: uuid.UUID) -> bool:
+    """Whether search shows the entry with the planted pattern's label."""
+    request = SearchRequest(word, uuid.UUID(int=0), None, 5)
+    (shown,) = [hit for hit in search.preview(db, request) if hit.entry_id == entry_id]
+    return "contains: plants a test word; review before running" in shown.provenance()
+
+
+def test_restoring_an_entry_rescans_it_and_reopens_it_only_by_the_rescans_rule(
+    db: psycopg.Connection, reporter: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entry out of search when the patterns changed comes back labelled (0029)."""
+    word = f"restored{uuid.uuid4().hex[:6]}"
+    fix = f"Run `{PLANTED}` before the build."
+    clean = Jsonb(CLEAN)
+    reviewed = factories.entry(
+        db, reporter, symptom=f"{word} hangs", fix=fix, human_reviewed=True, risk_report=clean
+    )
+    provisional = factories.entry(db, reporter, fix=fix, provisional=True, risk_report=clean)
+    for entry_id in (reviewed, provisional):
+        lifecycle.retire(db, entry_id, "no longer happens")
+    plant_pattern(monkeypatch)
+    assert {reviewed, provisional}.isdisjoint(c.entry_id for c in rescan.rescan(db, apply=True))
+
+    for entry_id in (reviewed, provisional):
+        lifecycle.restore(db, entry_id, "still happens")
+
+    assert risk_state(db, reviewed)[:3] == ("approved", False, FOUND)
+    assert labelled(db, word, reviewed)
+    assert risk_state(db, provisional)[:3] == ("pending", False, FOUND)
+    assert provisional in {row.entry_id for row in pending(db)}
+    reopens = db.execute(
+        "SELECT entry_id, reason FROM reviews WHERE entry_id = ANY(%s) AND decision = 'reopen'",
+        ([reviewed, provisional],),
+    ).fetchall()
+    assert reopens == [(provisional, rescan.REOPEN_REASON)]
 
 
 # Rate limits
@@ -380,3 +421,26 @@ def test_a_purged_reporters_fixed_entries_leave_search_too(
 
     purges.restore(db, "victor")
     assert [r["entry_id"] for r in call(server, "search", older)["data"]] == [str(fixed)]
+
+
+def test_restoring_a_purge_rescans_the_entries_it_brings_back(
+    db: psycopg.Connection, reporter: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A purged entry was out of search for the rescan; restoring labels it at once (0029)."""
+    del reporter
+    keys.issue_key(db, "walter", "agent")
+    walter = find_reporter(db, "walter")
+    assert walter
+    word = f"purgerescan{uuid.uuid4().hex[:6]}"
+    fix = f"Run `{PLANTED}` before the build."
+    entry_id = factories.entry(
+        db, walter, symptom=f"{word} hangs", fix=fix, risk_report=Jsonb(CLEAN)
+    )
+    purges.purge(db, "walter", "spam")
+    plant_pattern(monkeypatch)
+    assert entry_id not in {changed.entry_id for changed in rescan.rescan(db, apply=True)}
+
+    purges.restore(db, "walter")
+
+    assert risk_state(db, entry_id)[:3] == ("approved", False, FOUND)
+    assert labelled(db, word, entry_id)
