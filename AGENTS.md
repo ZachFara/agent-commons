@@ -105,24 +105,29 @@ Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
   (Zach, 2026-11-07). Agents write only in "Commons Agent Project"
   (P-MIT-29): agent tickets (Next, In Progress, In Review, Done, Canceled), one "Final:
   MIT-<n>" ticket per delegated ticket, and "Question: ..." tickets in Inbox for Zach.
-- **Branches.** Each delegated ticket gets `feature/MIT-<n>-<slug>` from main. A coder
+- **Branches.** Each delegated ticket gets `feature/<slug>` from main, with no Commons ID in
+  the name (older ones are `feature/MIT-<n>-<slug>`). A coder
   branches `feat/|fix/|chore/|docs/<ticket ID>` from it and opens a PR back into it. The
   orchestrator squash-merges after CI passes and the reviewer returns PASS. Zach gets one PR
-  from the feature branch into main, and only Zach merges into main.
+  into main from `final/<slug>`, cut from the feature branch, and only Zach merges into main.
 - **Roles** (`.claude/agents/`): `commons-orchestrator` (run it with
   `claude --agent commons-orchestrator`), `planner`, `researcher`, `coder` (own worktree, no
   Linear), `reviewer`.
 - **Guards** (`.claude/settings.json`; logic and tests in `tools/agent_hooks/`): `linear_guard`
   keeps Linear writes in the agent project and on agent-created issues (`.agents/owned-issues.txt`,
   kept by `record_issue`). `bash_guard` blocks merges into anything but `feature/`, pushes to
-  main, force pushes, hook bypasses, settings-changing `gh` calls, and reads of live Commons
-  credentials. A denial is final: never look for another route to the same action.
+  main, force pushes, hook bypasses, settings-changing `gh` calls, reads of live Commons
+  credentials, git aliases it can't expand, and issue IDs agents don't own in commit messages,
+  PR text and new or pushed branch names (plus message text it can't read: shell substitution,
+  stdin without a heredoc, `gh pr create --fill`). A denial is final: never look for another route to the same action.
   GitHub rulesets on `main` and `feature/**` require a PR, the `check` status and an
   up-to-date branch, and refuse force pushes, for everyone.
 
 ## Data isolation
 
-- Agent shells load `.env.agent` (`set -a; . ./.env.agent; set +a`). It points at the local
+- Agent commands take their settings from `.env.agent`. Worktree shells can't source
+  `.env.agent`; pass the variables inline (`COMMONS_DATABASE_URL=... uv run commons status`)
+  or use `scripts/test-db.sh`, which loads it itself. It points at the local
   throwaway Postgres from `db/compose.yml` and keeps the CLI off this machine's real identity
   and keys. `.worktreeinclude` copies it into every agent worktree. Only `.env.agent.example`
   is committed.
@@ -182,3 +187,10 @@ Things past sessions found that the next one needs. The orchestrator's docs code
 from the Learned sections of merged PRs.
 
 - `make check` needs local Postgres running (`make db`).
+- In a linked worktree, git sets `GIT_DIR` (and related variables) for its hooks, and they override `git -C`. Any code or test that runs git against another repo from inside a hook must drop them (`tools/agent_hooks/state.py` `git_environment()`).
+- Agent worktrees refuse compound git commands (`&&`, `;`, `$(...)` around git), bare `git stash` (the stash is shared across sessions) and sourcing `. ./.env.agent`. Run one git command per call, use `git restore --staged` or a named stash, and pass env variables inline.
+- The repository allows squash merges only. Feature branches are protected, so they are updated through a PR, never by deleting and re-creating them.
+- Linear's GitHub integration is connected: it links a PR to every issue ID in its title, body or head branch name (not its base), and moves that issue to In Progress when the PR opens and to Done when it merges. `bash_guard` denies IDs agents don't own in commits, PR text and branch names, so write that text without Commons IDs.
+- Linear turns any issue ID in agent-written text into a mention. Write Commons IDs in code spans so nothing appears on Zach's tickets.
+- Custom agent types in `.claude/agents/` load at session start only. In a session where they were added later, use the built-in `Plan` (read only) and `general-purpose` (with `isolation: worktree`) agents pointed at the role files.
+- Parallel feature branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.
