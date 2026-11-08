@@ -1121,8 +1121,9 @@ KNOWN_APP_OVERWRITES = replace(
                 "every autosave and on exit, so edits made to the file while it runs are lost."
             ),
             fix=(
-                "Change the setting through the running app: `python3 -m vaultapp config set "
-                "<plugin> <key> <value>` (or quit the app before editing data.json)."
+                "Change plugin settings through the running app with `vaultapp config set`, "
+                "which updates the copy the app holds and saves it. Don't edit data.json while "
+                "the app is open."
             ),
             libraries={"vaultapp": "1.4.2"},
         )
@@ -1144,7 +1145,10 @@ KNOWN_DEFAULT_WINS = replace(
                 'switchyard 2.3 defaults `[metrics] exporter` to "cloud"; `textfile_dir` is '
                 "read only when `exporter = textfile`."
             ),
-            fix="In `[metrics]`, set `exporter = textfile` next to `textfile_dir`.",
+            fix=(
+                "Add `exporter = textfile` to the metrics section of switchyard.conf; the "
+                "textfile directory setting is read only by that exporter."
+            ),
             libraries={"switchyard": "2.3.1"},
         )
     ],

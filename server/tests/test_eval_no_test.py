@@ -23,6 +23,7 @@ from tools.eval import runner
 from tools.eval.model import Scenario
 from tools.eval.scenarios import BACKUP_SETTINGS, SCENARIOS, TEXTFILE_DIR
 
+from commons.domain.usage import Evidence, count_artifacts, observe_use
 from commons.store.models import model_id
 from commons.store.reporters import upsert_reporter
 
@@ -125,6 +126,31 @@ def test_known_variants_seed_the_answer_for_the_same_project(known: str, discove
         True,
         "yes",
     )
+
+
+@pytest.mark.parametrize(
+    ("known", "documented", "wrong"),
+    [
+        (
+            "known-config-app-overwrites",
+            Evidence("python3 -m vaultapp config set autobackup interval_minutes 15"),
+            Evidence('"interval_minutes": 15', path=BACKUP_SETTINGS),
+        ),
+        (
+            "known-config-default-wins",
+            Evidence("exporter = textfile\n", path="switchyard.conf"),
+            Evidence("textfile_dir = monitoring/textfile\n", path="switchyard.conf"),
+        ),
+    ],
+)
+def test_the_documented_route_counts_as_using_the_seeded_fix(
+    known: str, documented: Evidence, wrong: Evidence
+) -> None:
+    """Found in review: placeholder tokens left the right command at `partial`."""
+    (seed,) = SCENARIOS[known].seeds
+    frequencies = count_artifacts([seed.fix])
+    assert observe_use(seed.fix, [documented], frequencies).used == "yes"
+    assert observe_use(seed.fix, [wrong], frequencies).used == "no"
 
 
 # --------------------------------------------------------------- the surprise, with no model
