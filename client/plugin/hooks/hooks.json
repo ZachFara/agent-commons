@@ -13,7 +13,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|Edit|Write|MultiEdit",
+        "matcher": "^(Bash|Edit|Write|MultiEdit|mcp__.*__query-docs)$",
         "hooks": [
           {
             "type": "command",

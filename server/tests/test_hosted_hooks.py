@@ -17,13 +17,14 @@ from starlette.testclient import TestClient
 
 import factories
 from commons.cli.main import main
-from commons.domain.observations import ToolUse
+from commons.domain.keys import KeyOptions
+from commons.domain.observations import DocLookup, ToolUse
 from commons.domain.search import SearchRequest
 from commons.service import hook_client
 from commons.service import search as search_service
 from commons.service.hook_client import RemoteBackend
 from commons.service.identity import acting_as
-from commons.service.keys import create_key
+from commons.service.keys import create_key, issue_key
 from commons.service.local_state import cached_frequencies, read_spool
 from commons.store.connection import Connection
 from commons.store.reporters import find_reporter
@@ -169,6 +170,21 @@ def test_local_privacy_reporters_are_refused(app: Starlette, db: psycopg.Connect
         {"session_id": "s", "test_run": {"command": "pytest", "exit_code": 0, "stdout": "code"}},
         {"session_id": "s", "file_change": {"path_sha256": "x", "content_sha256": "y"}},
         {"session_id": "s", "file_change": {"content": "def secret(): ..."}},
+        {
+            "session_id": "s",
+            "doc_lookup": {
+                "library_id": "/a/b",
+                "version": "",
+                "query": None,
+                "response": "docs text",
+            },
+        },
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b", "version": ""}},
+        {"session_id": "s", "doc_lookup": {"library_id": "a/b", "version": "", "query": None}},
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b/1", "version": "", "query": None}},
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b", "version": "1/2", "query": None}},
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b", "version": "", "query": 5}},
+        {"session_id": "s", "doc_lookup": "/a/b"},
         {"session_id": 5},
         {},
     ],
@@ -181,6 +197,66 @@ def test_only_derived_shapes_are_accepted(
     response = post(app, key, "tool-use", body)
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_input"
+
+
+def doc_lookups(db: psycopg.Connection, task_id: uuid.UUID) -> list[tuple[Any, ...]]:
+    return db.execute(
+        "SELECT library_id, version, query, privacy_mode::text, excluded FROM doc_lookups "
+        "WHERE task_id = %s",
+        (task_id,),
+    ).fetchall()
+
+
+def query_docs(session_id: str) -> ToolUse:
+    lookup = DocLookup("/vercel/next.js", "v16.2.9", "app router")
+    return ToolUse(
+        session_id, "mcp__context7__query-docs", None, None, None, None, doc_lookup=lookup
+    )
+
+
+@pytest.mark.usefixtures("state")
+@pytest.mark.parametrize(("mode", "query"), [("entry", None), ("full_trace", "app router")])
+def test_a_doc_lookup_is_stored_over_http(
+    app: Starlette, db: psycopg.Connection, mode: str, query: str | None
+) -> None:
+    key = create_key(db, f"docs-{mode}", admin=False)
+    db.execute(
+        "UPDATE reporters SET privacy_default = %s WHERE pseudonym = %s", (mode, f"docs-{mode}")
+    )
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None)
+
+    hook_client.on_tool_use(backend, query_docs(session))
+
+    assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", query, mode, False)]
+    assert read_spool(session) == []
+
+
+@pytest.mark.usefixtures("state")
+def test_a_test_keys_doc_lookups_are_excluded(app: Starlette, db: psycopg.Connection) -> None:
+    key = issue_key(db, "docs-tester", "agent", KeyOptions(test=True)).key
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None)
+
+    hook_client.on_tool_use(backend, query_docs(session))
+
+    assert [row[-1] for row in doc_lookups(db, task_id)] == [True]
+
+
+def test_a_local_reporters_doc_lookup_is_refused(app: Starlette, db: psycopg.Connection) -> None:
+    key = create_key(db, "docs-local", admin=False)
+    session = str(uuid.uuid4())
+    started = post(app, key, "session-start", {"session_id": session}).json()
+    db.execute("UPDATE reporters SET privacy_default = 'local' WHERE pseudonym = 'docs-local'")
+    body = {
+        "session_id": session,
+        "doc_lookup": {"library_id": "/vercel/next.js", "version": "v16.2.9", "query": "q"},
+    }
+
+    assert post(app, key, "tool-use", body).status_code == 403
+    assert doc_lookups(db, uuid.UUID(started["task_id"])) == []
 
 
 def test_another_reporters_session_is_invisible(app: Starlette, db: psycopg.Connection) -> None:
@@ -253,6 +329,31 @@ def test_hook_cli_reports_to_the_server_when_connected(
         (task_id,),
     ).fetchone()
     assert owner == ("cli-remote",)
+
+
+def test_the_hook_cli_sends_a_query_docs_lookup_to_the_server(
+    app: Starlette, db: psycopg.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = create_key(db, "cli-docs", admin=False)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"server": "https://commons.example", "key": key}), "utf-8")
+    monkeypatch.setenv("COMMONS_CONFIG", str(config))
+    monkeypatch.setenv("COMMONS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("COMMONS_DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+    monkeypatch.setattr("commons.cli.hooks.remote_client", lambda _url, k: client(app, k))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(RemoteBackend(client(app, key)), session, None)
+    payload = {
+        "session_id": session,
+        "tool_name": "mcp__claude_ai_Context7__query-docs",
+        "tool_input": {"libraryId": "/vercel/next.js/v16.2.9", "query": "app router"},
+        "tool_response": [{"type": "text", "text": "SENTINEL-docs"}],
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+
+    assert main(["hook", "post-tool-use"]) == 0
+
+    assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", None, "entry", False)]
 
 
 @pytest.mark.usefixtures("state")

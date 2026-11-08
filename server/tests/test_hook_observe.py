@@ -170,3 +170,113 @@ def test_tool_use_outside_a_known_session_reaches_no_task(env: HookEnv, database
         ).fetchone()
     assert rows == (0,)
     assert "failed" not in env.log()
+
+
+# Context7 doc lookups (MIT-622). Payloads follow the query-docs tool schema; no live
+# Context7 session confirmed what Claude Code sends.
+
+SENTINEL = "SENTINEL-tool-response-5c1f"
+
+
+def query_docs(
+    session_id: str, tool_input: dict[str, Any], server: str = "claude_ai_Context7"
+) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "hook_event_name": "PostToolUse",
+        "tool_name": f"mcp__{server}__query-docs",
+        "tool_input": tool_input,
+        "tool_response": [{"type": "text", "text": f"# Next.js docs {SENTINEL}"}],
+        "tool_use_id": "toolu_01",
+    }
+
+
+def lookups(database_url: str, task_id: str) -> list[tuple[Any, ...]]:
+    with psycopg.connect(database_url) as conn:
+        return conn.execute(
+            "SELECT library_id, version, query, privacy_mode::text, excluded FROM doc_lookups "
+            "WHERE task_id = %s ORDER BY created_at",
+            (task_id,),
+        ).fetchall()
+
+
+@pytest.mark.parametrize(
+    ("key", "server"),
+    [
+        ("libraryId", "claude_ai_Context7"),
+        ("context7CompatibleLibraryID", "context7"),
+        ("libraryId", "plugin_context7_context7"),
+    ],
+)
+def test_a_query_docs_call_stores_one_lookup(
+    env: HookEnv, session: tuple[str, str], database_url: str, key: str, server: str
+) -> None:
+    session_id, task_id = session
+    tool_input = {key: "/vercel/next.js/v16.2.9", "query": "app router"}
+
+    assert env.run("post-tool-use", query_docs(session_id, tool_input, server)) is None
+
+    assert lookups(database_url, task_id) == [("/vercel/next.js", "v16.2.9", None, "entry", False)]
+    assert not spool_path(session_id).exists()
+    assert "failed" not in env.log()
+
+
+@pytest.mark.parametrize(
+    ("tool", "tool_input"),
+    [
+        ("mcp__claude_ai_Context7__resolve-library-id", {"libraryName": "Next.js", "query": "q"}),
+        ("mcp__memory__search", {"libraryId": "/vercel/next.js", "query": "q"}),
+        ("mcp__context7__query-docs", {"libraryId": "vercel/next.js", "query": "q"}),
+        ("mcp__context7__query-docs", {"libraryId": "/vercel/next.js/v1/extra", "query": "q"}),
+        ("mcp__context7__query-docs", {"libraryId": "/vercel/next js", "query": "q"}),
+        ("mcp__context7__query-docs", {"libraryId": "/a/" + "b" * 300, "query": "q"}),
+        ("mcp__context7__query-docs", {"libraryId": 7, "query": "q"}),
+        ("mcp__context7__query-docs", {"query": "q"}),
+    ],
+)
+def test_other_calls_and_bad_ids_store_nothing(
+    env: HookEnv, session: tuple[str, str], database_url: str, tool: str, tool_input: object
+) -> None:
+    session_id, task_id = session
+    payload = {"session_id": session_id, "tool_name": tool, "tool_input": tool_input}
+
+    assert env.run("post-tool-use", payload) is None
+
+    assert lookups(database_url, task_id) == []
+    assert events(database_url, task_id) == []
+    assert "failed" not in env.log()
+
+
+def test_the_tool_response_is_never_kept(
+    env: HookEnv, session: tuple[str, str], database_url: str
+) -> None:
+    session_id, task_id = session
+    env.run("post-tool-use", query_docs(session_id, {"libraryId": "/a/b", "query": "q"}))
+
+    path = spool_path(session_id)
+    assert not path.exists() or SENTINEL not in path.read_text(encoding="utf-8")
+    with psycopg.connect(database_url) as conn:
+        rows = conn.execute(
+            "SELECT to_jsonb(d)::text FROM doc_lookups d WHERE task_id = %s", (task_id,)
+        ).fetchall()
+    assert len(rows) == 1
+    assert SENTINEL not in rows[0][0]
+    assert events(database_url, task_id) == []
+
+
+def test_full_trace_keeps_the_redacted_query(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = HookEnv(database_url, tmp_path, monkeypatch)
+    env.init(privacy="full_trace")
+    session_id = str(uuid.uuid4())
+    output = env.run("session-start", {"session_id": session_id, "source": "startup"})
+    assert output is not None
+    task_id = output["hookSpecificOutput"]["additionalContext"].split("session: ")[1][:36]
+    tool_input = {"libraryId": "/mongodb/docs", "query": f"auth with {TOKEN}"}
+
+    env.run("post-tool-use", query_docs(session_id, tool_input))
+
+    assert lookups(database_url, task_id) == [
+        ("/mongodb/docs", "", "auth with [REDACTED:github_token]", "full_trace", False)
+    ]

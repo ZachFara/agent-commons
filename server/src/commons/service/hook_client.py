@@ -8,6 +8,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -17,6 +18,7 @@ import httpx2
 
 from commons.domain.errors import NotInitializedError, NotPermittedError, RateLimitedError
 from commons.domain.observations import (
+    DocLookup,
     ToolUse,
     command_tail,
     is_test_command,
@@ -52,6 +54,7 @@ class HookBackend(Protocol):
         session_id: str,
         test_run: dict[str, object] | None,
         file_change: dict[str, object] | None,
+        doc_lookup: DocLookup | None = None,
     ) -> None:
         """Store one tool call's derived observations."""
         ...
@@ -92,10 +95,11 @@ class LocalBackend:
         session_id: str,
         test_run: dict[str, object] | None,
         file_change: dict[str, object] | None,
+        doc_lookup: DocLookup | None = None,
     ) -> None:
         """Store one tool call's derived observations."""
         with self._connection() as conn:
-            hooks.record_tool_use(conn, session_id, test_run, file_change)
+            hooks.record_tool_use(conn, session_id, test_run, file_change, doc_lookup)
 
     def retrievals(self, session_id: str) -> list[TaskRetrieval]:
         """Entries retrieved in the session's task."""
@@ -158,9 +162,16 @@ class RemoteBackend:
         session_id: str,
         test_run: dict[str, object] | None,
         file_change: dict[str, object] | None,
+        doc_lookup: DocLookup | None = None,
     ) -> None:
         """Store one tool call's derived observations."""
-        body = {"session_id": session_id, "test_run": test_run, "file_change": file_change}
+        body: dict[str, Any] = {
+            "session_id": session_id,
+            "test_run": test_run,
+            "file_change": file_change,
+        }
+        if doc_lookup is not None:  # servers from before MIT-622 never see the key
+            body["doc_lookup"] = asdict(doc_lookup)
         self._post("tool-use", body)
 
     def retrievals(self, session_id: str) -> list[TaskRetrieval]:
@@ -254,7 +265,11 @@ def on_session_start(backend: HookBackend, session_id: str, model: str | None) -
 
 
 def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
-    """Spool scrubbed text locally; send only the test run and file hashes."""
+    """Spool scrubbed text locally; send only the test run, file hashes and doc lookup.
+
+    A doc lookup is not spooled: its library and redacted query go to the backend, which
+    keeps the query only in full_trace mode. The tool's response is never read.
+    """
     if use.command is not None:
         append_spool(use.session_id, {"tool": use.tool_name, "command": scrub(use.command)})
     where = {"path": use.file_path} if use.file_path else {}
@@ -277,8 +292,16 @@ def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
             "path_sha256": _sha256(use.file_path),
             "content_sha256": _sha256(use.new_text),
         }
-    if test_run is not None or file_change is not None:
-        backend.tool_use(use.session_id, test_run, file_change)
+    lookup = _scrubbed(use.doc_lookup)
+    if test_run is not None or file_change is not None or lookup is not None:
+        backend.tool_use(use.session_id, test_run, file_change, lookup)
+
+
+def _scrubbed(lookup: DocLookup | None) -> DocLookup | None:
+    """Redact secrets from the lookup's query before it leaves the machine."""
+    if lookup is None or lookup.query is None:
+        return lookup
+    return replace(lookup, query=scrub(lookup.query))
 
 
 def on_stop(backend: HookBackend, session_id: str, transcript: str | None) -> StopResult | None:
