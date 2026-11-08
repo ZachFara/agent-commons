@@ -1,10 +1,11 @@
 """Rescan stored entries when the risk patterns change (decision 0029).
 
 Entries are scanned when written, and the patterns grow as new cases appear, so older entries
-can carry a report the current patterns disagree with. A rescan reruns the scanner over each
-approved and pending entry's current text. Applied, it stores the new report, and a
-provisional entry no human has reviewed that gains a finding goes back to the queue (0028:
-any finding blocks provisional approval).
+can carry a report the current patterns disagree with. A rescan reruns the scanner over the
+current text of each pending entry and each entry search can show, retired ones with a fix
+version included. Applied, it stores the new report, and an approved provisional entry no
+human has reviewed that gains a finding goes back to the queue (0028: any finding blocks
+provisional approval). A retired entry is never reopened.
 
 The text is never changed: invisible characters still in it are reported, not stripped
 (changing text is a revision, which the admin editor makes).

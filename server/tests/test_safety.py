@@ -19,8 +19,9 @@ from commons.cli.main import main
 from commons.domain.errors import NotFoundError, RateLimitedError
 from commons.domain.lifecycle import FixedIn
 from commons.domain.risks import RISK_LABELS
+from commons.domain.search import SearchRequest
 from commons.privacy import risks
-from commons.service import corrections, keys, lifecycle, purges
+from commons.service import corrections, keys, lifecycle, purges, search
 from commons.service.identity import acting_as
 from commons.service.rates import limit
 from commons.service.reviews import pending
@@ -65,6 +66,7 @@ def test_proposals_carry_a_risk_report_and_search_labels_risky_entries(
 PLANTED = "frobnicate-everything"
 CLEAN = {"scanned": True, "findings": []}
 FOUND = {"scanned": True, "findings": [{"field": "fix", "kind": "planted_word", "count": 1}]}
+FIXED_IN = {"library": "jinja2", "version": "3.1.0"}
 
 
 @pytest.fixture
@@ -97,9 +99,11 @@ def risk_state(db: psycopg.Connection, entry_id: uuid.UUID) -> tuple[Any, ...]:
 
 def rescan_entries(db: psycopg.Connection, reporter: uuid.UUID, word: str) -> list[uuid.UUID]:
     """A human-approved, a provisional and a pending entry whose fix the new pattern matches,
-    one whose hidden characters were stripped on write, and an old one that still has them.
+    one whose hidden characters were stripped on write, an old one that still has them, and a
+    retired one with a fix version (search still shows it, decision 0026) the pattern matches.
 
-    The human-approved one is provisional too: a human review leaves `provisional` set.
+    The human-approved one is provisional too: a human review leaves `provisional` set. The
+    retired one is provisional and unreviewed, yet a rescan never reopens it.
     """
     fix = f"Run `{PLANTED}` before the build."
     clean = Jsonb(CLEAN)
@@ -119,6 +123,16 @@ def rescan_entries(db: psycopg.Connection, reporter: uuid.UUID, word: str) -> li
         factories.entry(db, reporter, fix=fix, status="pending", risk_report=clean),
         factories.entry(db, reporter, risk_report=Jsonb(stripped)),
         factories.entry(db, reporter, fix="Upgrade\u200b Jinja2.", risk_report=clean),
+        factories.entry(
+            db,
+            reporter,
+            symptom=f"{word} renders blank",
+            fix=fix,
+            status="retired",
+            fixed_in=Jsonb(FIXED_IN),
+            provisional=True,
+            risk_report=clean,
+        ),
     ]
 
 
@@ -127,7 +141,7 @@ def test_rescan_without_apply_only_prints_what_would_change(
     db: psycopg.Connection, reporter: uuid.UUID, capsys: pytest.CaptureFixture[str]
 ) -> None:
     ours = rescan_entries(db, reporter, f"dryrescan{uuid.uuid4().hex[:6]}")
-    reviewed, provisional, waiting, unchanged, hidden = ours
+    reviewed, provisional, waiting, unchanged, hidden, retired = ours
     before = {entry_id: risk_state(db, entry_id) for entry_id in ours}
 
     assert main(["admin", "rescan"]) == 0
@@ -138,6 +152,7 @@ def test_rescan_without_apply_only_prints_what_would_change(
     assert f"{provisional}  approved  none -> planted_word in fix  would reopen\n" in out
     assert f"{waiting}  pending   none -> planted_word in fix\n" in out
     assert f"{hidden}  approved  none -> invisible_unicode in fix\n" in out
+    assert f"{retired}  retired   none -> planted_word in fix\n" in out
     assert str(unchanged) not in out
     assert "nothing written (use --apply)" in out
 
@@ -151,7 +166,7 @@ def test_rescan_apply_labels_old_entries_and_reopens_unreviewed_ones_once(
 ) -> None:
     word = f"rescanned{uuid.uuid4().hex[:6]}"
     ours = rescan_entries(db, reporter, word)
-    reviewed, provisional, waiting, unchanged, hidden = ours
+    reviewed, provisional, waiting, unchanged, hidden, retired = ours
     stripped = risk_state(db, unchanged)
     caplog.set_level(logging.INFO, logger="commons")
 
@@ -173,6 +188,9 @@ def test_rescan_apply_labels_old_entries_and_reopens_unreviewed_ones_once(
     assert reopens(provisional) == [("new risk finding on rescan (0029)", "auto")]
     assert reopens(reviewed) == []
     assert risk_state(db, waiting)[:3] == ("pending", False, FOUND)
+    assert f"{retired}  retired   none -> planted_word in fix\n" in out
+    assert risk_state(db, retired)[:3] == ("retired", True, FOUND)
+    assert reopens(retired) == []
     assert risk_state(db, unchanged) == stripped
     hidden_findings = [{"field": "fix", "kind": "invisible_unicode", "count": 1}]
     assert risk_state(db, hidden)[2:] == (
@@ -185,6 +203,9 @@ def test_rescan_apply_labels_old_entries_and_reopens_unreviewed_ones_once(
 
     assert main(["search", word]) == 0
     assert "contains: plants a test word; review before running" in capsys.readouterr().out
+    older = SearchRequest(word, uuid.UUID(int=0), {"libraries": {"jinja2": "3.0.3"}}, 5)
+    (shown,) = [hit for hit in search.preview(db, older) if hit.entry_id == retired]
+    assert "contains: plants a test word; review before running" in shown.provenance()
 
     after = {entry_id: risk_state(db, entry_id) for entry_id in ours}
     assert main(["admin", "rescan", "--apply"]) == 0
