@@ -77,7 +77,7 @@ with a `repo`, so `run`, grading, and the ledger work as for every other scenari
 | `repo` | https URL of the repository |
 | `base_commit` | full sha of the fix's parent: the tree the agent starts from |
 | `fix_commit` | full sha of the fix; used only by `check`, never shown to the agent |
-| `issue_url`, `fix_url` | the issue, and the pull request or commit that fixed it |
+| `issue_url`, `fix_url` | the issue, and the pull request or commit that fixed it; when the repository has no issue for it, `issue_url` is the fix's pull request, which reports the bug, and the task's comment says so |
 | `test_paths` | the test files the fix added or changed, laid over the base so the tests fail |
 | `python` | the interpreter version, e.g. `"3.12"` |
 | `pins` | exact dependency versions (`name==version`), installed after `setup` |

@@ -120,41 +120,12 @@ POLARS_JOIN_ORDER = Upstream(
     upstream_change="polars-2.0-streaming-join-order",
 )
 
-# Issue: https://github.com/Veridelta/veridelta/issues/410 (2026-10-15), "Support Polars 2.0":
-# changed, added and removed rows come back in a different order on each run.
-# Fix: https://github.com/Veridelta/veridelta/pull/416 (merged 2026-10-15), maintain_order on
-# the engine's four joins, with a new ordering test. The base's pyproject caps polars below 2
-# (naming issue 410's cast and is_in changes, not join order); the pins override the cap.
-VERIDELTA = GitHubTask(
-    name="gh-veridelta-join-order",
-    repo="https://github.com/Veridelta/veridelta",
-    base_commit="56644fc605e288936c5ca95dac3f17520f4f254e",
-    fix_commit="906691c149275f783783256e8f57fed14dca10da",
-    issue_url="https://github.com/Veridelta/veridelta/issues/410",
-    fix_url="https://github.com/Veridelta/veridelta/pull/416",
-    test_paths=("tests/unit/test_engine.py",),
-    python="3.12",
-    pins=("polars==2.0.0", "pytest==9.1.1"),
-    setup=f"uv pip install --quiet {EXCLUDE_NEWER} -e . pytest-cov pytest-mock",
-    test_command=tests(
-        "--no-cov",  # the project's coverage floor fails any run of a few tests
-        "tests/unit/test_engine.py::TestDataIntegrityAndSetDifferences"
-        "::test_it_returns_rows_in_the_order_their_side_holds_them",
-    ),
-    upstream=POLARS_JOIN_ORDER,
-    discovery=Discovery(
-        symptom_words=("order", "added", "removed", "changed"),
-        cause_words=("maintain_order", "row order", "join order"),
-        library="polars",
-    ),
-    trigger="version_specific",
-    license="Apache-2.0",
-)
-
 # Issue: https://github.com/mloda-ai/mloda/issues/2252 (2026-10-24): the polars lazy merge_left
 # test fails on polars 2.0, frames equal but for row order.
 # Fix: https://github.com/mloda-ai/mloda/pull/2262 (merged 2026-10-24), maintain_order per join
 # type in the polars merge engine, with a new row-order test on large shuffled frames.
+# Only the new test is laid over: the fix's edit of test_polars_lazy_dataframe.py adds
+# `maintain_order` to a fixture, which would show the agent the fix.
 MLODA_TESTS = "tests/test_plugins/compute_framework/base_implementations/polars"
 MLODA = GitHubTask(
     name="gh-mloda-join-order",
@@ -163,10 +134,7 @@ MLODA = GitHubTask(
     fix_commit="28998b818c0e2e111bbea9bccca1897646a7fdbf",
     issue_url="https://github.com/mloda-ai/mloda/issues/2252",
     fix_url="https://github.com/mloda-ai/mloda/pull/2262",
-    test_paths=(
-        f"{MLODA_TESTS}/test_polars_lazy_dataframe.py",
-        f"{MLODA_TESTS}/test_polars_merge_row_order.py",
-    ),
+    test_paths=(f"{MLODA_TESTS}/test_polars_merge_row_order.py",),
     python="3.12",
     pins=("polars==2.0.0", "pytest==9.1.1"),
     setup=f"uv pip install --quiet {EXCLUDE_NEWER} -e .[polars]",
@@ -232,6 +200,6 @@ def scenario(task: GitHubTask) -> Scenario:
     )
 
 
-TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, VERIDELTA, MLODA, ISMEMBER]
+TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, MLODA, ISMEMBER]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
