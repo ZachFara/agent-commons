@@ -88,6 +88,7 @@ def test_the_record_prompt_is_offered_unless_turned_off(monkeypatch: pytest.Monk
     monkeypatch.delenv("COMMONS_RECORD_PROMPT", raising=False)
     assert prompts(monkeypatch, None) == ["record"]
     assert prompts(monkeypatch, "off") == []
+    assert prompts(monkeypatch, "OFF") == []
     assert prompts(monkeypatch, "on") == ["record"]
 
 
