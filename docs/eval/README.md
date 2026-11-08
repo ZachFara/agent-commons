@@ -124,6 +124,56 @@ repository's code on this machine.
 The fix commit stays in the cache during `run`, because the project's test files come from it.
 An agent that reads `~/.cache/agent-commons-eval/` could find the fix there.
 
+## Arms: Commons, Context7, both, or neither
+
+`uv run python tools/agent_eval.py arms --scenario ... --arm ... --runs N --model ...
+--condition NAME` runs each task under each arm, interleaved task × arm × run × model, every
+session with its own index (and so its own database and transcript). With no `--arm` it runs all
+four:
+
+| Arm | MCP servers | Commons hooks | Agent-facing text |
+|---|---|---|---|
+| `both` | `commons` and `context7` | yes | the shipped variant |
+| `context7` | `context7` | no | none (variant `none`) |
+| `commons` | `commons` | yes | the shipped variant |
+| `none` | none (blind) | no | none (variant `none`) |
+
+`context7` is Context7's remote HTTP server (`https://mcp.context7.com/mcp`). If
+`CONTEXT7_API_KEY` is set, the session sends it as `Authorization: Bearer ${CONTEXT7_API_KEY}`,
+which Claude Code expands from the session's environment, so the key is never written to a
+file. Without it Context7 serves anonymous, rate-limited requests. Sessions in arms without
+Context7 (`commons`, `none`) run with `CONTEXT7_API_KEY` removed from their environment.
+`--allowedTools` lists only
+the arm's servers' tools: `mcp__context7__resolve-library-id` and `mcp__context7__query-docs`
+for Context7 (re-confirm against the first real session's init event), and the commons tools
+for the commons.
+
+**A session runs in its arm or not at all.** Every init event's `mcp_servers` must name exactly
+the arm's servers, all `connected`, and its `tools` must include every `mcp__*` tool the arm
+allows (so a wrong Context7 tool name can't leave the arm silently blind). Otherwise the session
+is errored, so it never reaches the
+ledger and `--resume` runs it again. `--resume` skips only a clean result for the same arm,
+variant, and model. In an arm without the commons, the commons expectations (search, propose,
+proposals, report, used) are not checked.
+
+Each result and ledger line also records, in every arm and in `run` and `search` too:
+
+| Field | What it holds |
+|---|---|
+| `arm` | the arm; lines from before arms count as `commons` |
+| `tokens_in` | input + cache creation + cache read tokens, from the `usage` of each result event (one per turn) |
+| `tokens_out` | output tokens, from the same |
+| `wall_clock_seconds` | the result events' `duration_ms`, in seconds |
+| `retrievals` | per retrieval under the session's task ids: `entry_id`, `rank`, `used`, `observed_outcome` (hook-observed), `reported`; empty without the commons |
+| `patch` | the agent's unified diff of non-test files against a pristine copy of the project made before the session |
+| `patch_hash` | 16 hex digits of sha256 over the same diff taken with whitespace removed and blank lines dropped, so whitespace-only differences share a hash |
+
+Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
+`conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:
+`.venv`, `node_modules`, `__pycache__`, the pytest, mypy, ruff and hypothesis caches, `build/`,
+`dist/`, `*.egg-info`, `*.pyc`, `.coverage*`, and `uv.lock` (which `uv run` creates). `trials` groups by arm too, and `effects` counts only
+`commons`-arm lines.
+
 ## Trial ledger
 
 `trials.jsonl` is append-only: one line per session, stamped with the **variant** name and a

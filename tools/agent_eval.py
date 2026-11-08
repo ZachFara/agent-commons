@@ -10,6 +10,8 @@ Usage:
                                          [--condition NAME] [--no-hooks] [--concurrency N]
   uv run python tools/agent_eval.py report [--condition NAME ...]
   uv run python tools/agent_eval.py search [--configs N] [--runs N] [--scenario NAME ...]
+  uv run python tools/agent_eval.py arms [--scenario NAME ...] [--arm ARM ...] [--runs N]
+                                         [--model MODEL ...] [--condition NAME]
   uv run python tools/agent_eval.py effects [--condition NAME]
 
 Sessions use the signed-in Claude Code account (subscription usage, not API billing).
@@ -25,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -114,6 +117,42 @@ def wording_search(args: argparse.Namespace) -> int:
     return run_jobs(jobs, args)
 
 
+def arms(args: argparse.Namespace) -> int:
+    """Run each task under each arm: Commons and Context7, Context7, Commons, and blind."""
+    names = args.scenario or sorted(SCENARIOS)
+    chosen = args.arm or list(runner.ARMS)
+    models = args.model or ["sonnet"]
+    jobs = plan_arms(names, chosen, args.runs, models)
+    print(
+        f"{len(names)} scenarios x {len(chosen)} arms x {args.runs} runs x "
+        f"{len(models)} models = {len(jobs)}"
+    )
+    return run_jobs(jobs, args)
+
+
+def plan_arms(names: list[str], arms: list[str], runs: int, models: list[str]) -> list[runner.Job]:
+    """Return task x arm x run x model jobs, interleaved, each with its own index.
+
+    An arm with the commons shows the shipped text; the others show none.
+    """
+    plan = [
+        (name, arm, model)
+        for name in names
+        for arm in arms
+        for _ in range(runs)
+        for model in models
+    ]
+    return [
+        runner.Job(SCENARIOS[name], index, arm_variant(arm), model, arm)
+        for index, (name, arm, model) in enumerate(plan, 1)
+    ]
+
+
+def arm_variant(arm: str) -> str:
+    """Return the text an arm's agent sees: the shipped wording, or none without the commons."""
+    return ALIASES["shipped"] if runner.has_commons(arm) else runner.NO_COMMONS_VARIANT
+
+
 # Stable names for `--config`, so a re-run keeps meaning the same thing after the text changes.
 # Both map to wording names, which the ledger and `effects` count.
 ALIASES = {
@@ -133,7 +172,7 @@ def plan_configs(named: list[str] | None, count: int, seed: int) -> list[str]:
 
 
 def finished(transcripts: Path, condition: str, job: runner.Job) -> bool:
-    """Whether a job already has a result without an error (for `--resume`)."""
+    """Whether a job already has a result without an error in its arm (for `--resume`)."""
     path = transcripts / f"{condition}-{job.scenario.name}-{job.index}.json"
     if not path.exists():
         return False
@@ -142,6 +181,7 @@ def finished(transcripts: Path, condition: str, job: runner.Job) -> bool:
         saved.get("error") is None
         and saved.get("variant") == job.variant
         and saved.get("model", "") in {job.model, ""}
+        and saved.get("arm", "commons") == job.arm  # results from before arms ran the commons
     )
 
 
@@ -226,6 +266,13 @@ def append_ledger(results: list[runner.Result]) -> None:
                 "attempts": result.attempts,
                 "turns": result.turns,
                 "error": result.error,
+                "arm": result.arm,
+                "tokens_in": result.tokens_in,
+                "tokens_out": result.tokens_out,
+                "wall_clock_seconds": result.wall_clock_seconds,
+                "retrievals": [asdict(retrieval) for retrieval in result.retrievals],
+                "patch": result.patch,
+                "patch_hash": result.patch_hash,
             }
             ledger.write(json.dumps(line) + "\n")
 
@@ -238,19 +285,20 @@ def by_variant() -> int:
     lines = _ledger_lines()
     # A line marked `invalid` stays in the ledger as a record but is never counted.
     rows = [row for row in lines if not row.get("invalid")]
-    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        groups[(row["variant"], row["text"], row["trigger"])].append(row)
+        # A line from before arms ran with the commons alone.
+        groups[(row.get("arm", "commons"), row["variant"], row["text"], row["trigger"])].append(row)
     if skipped := len(lines) - len(rows):
         print(f"({skipped} trials marked invalid are not counted)")
     print(
-        f"{'variant':<10} {'text':<13} {'trigger':<18} {'n':>3} "
+        f"{'arm':<8} {'variant':<10} {'text':<13} {'trigger':<18} {'n':>3} "
         f"{'search':>7} {'propose':>8} {'good':>5} {'fixed':>6}"
     )
-    for (variant, text, trigger), group in sorted(groups.items()):
+    for (arm, variant, text, trigger), group in sorted(groups.items()):
         good = sum(int(r["good_proposals"]) for r in group)
         print(
-            f"{variant:<10} {text:<13} {trigger:<18} {len(group):>3} "
+            f"{arm:<8} {variant:<10} {text:<13} {trigger:<18} {len(group):>3} "
             f"{_rate(group, 'searched'):>7} {_rate(group, 'proposed'):>8} {good:>5} "
             f"{_rate(group, 'tests_pass'):>6}"
         )
@@ -271,6 +319,7 @@ def effects(args: argparse.Namespace) -> int:
         for row in _ledger_lines()
         if row["condition"] == args.condition
         and row["variant"].startswith("w-")
+        and row.get("arm", "commons") == "commons"  # Context7 alongside is another treatment
         and not row.get("invalid")  # kept in the ledger as a record, never counted
     ]
     if not rows:
@@ -439,6 +488,23 @@ def main() -> int:
         "--resume", action="store_true", help="Skip sessions that already have a clean result."
     )
     search_parser.add_argument("--concurrency", type=int, default=4)
+    arms_parser = commands.add_parser(
+        "arms", help="Each task with Commons and Context7, Context7, Commons, and neither."
+    )
+    arms_parser.add_argument("--scenario", action="append", choices=sorted(SCENARIOS))
+    arms_parser.add_argument(
+        "--arm", action="append", choices=runner.ARMS, help="Run these arms (default: all four)."
+    )
+    arms_parser.add_argument("--runs", type=int, default=2, help="Repeats per task and arm.")
+    arms_parser.add_argument(
+        "--model", action="append", help="Run every arm on each (default: sonnet)."
+    )
+    arms_parser.add_argument("--condition", default="arms")
+    arms_parser.add_argument("--no-hooks", action="store_true")
+    arms_parser.add_argument(
+        "--resume", action="store_true", help="Skip sessions that already have a clean result."
+    )
+    arms_parser.add_argument("--concurrency", type=int, default=4)
     effects_parser = commands.add_parser("effects", help="Pool a wording search by option.")
     effects_parser.add_argument("--condition", default="wording")
     report_parser = commands.add_parser("report")
@@ -452,6 +518,7 @@ def main() -> int:
         "run": run,
         "trials": lambda _args: by_variant(),
         "search": wording_search,
+        "arms": arms,
         "effects": effects,
         "report": report,
     }
