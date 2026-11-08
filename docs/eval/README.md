@@ -409,16 +409,21 @@ of the shipped text, selected with `--variant <name>` (`COMMONS_INSTRUCTIONS_VAR
 | `search-surprise` | instructions | The search rule widened the way the propose rule was (decision 0034 step 6): a dependency, tool or runtime that fails *or surprises you* (a default, a bare error page, no error text), searched "with the error or what you saw" |
 | `own-mistake` | instructions | "It counts even if you first fixed your own mistake." after the propose rule |
 | `lesson-also-propose` | instructions | "Lesson for AGENTS.md, memory or a README? Consider `propose` too." |
-| `propose-example` | `propose` description | The shipped worked example plus a second one for an app with no error text, with the app as a versioned `tool`; the shipped example only shows `pytest 9.0`, which did not stop the rejections |
+| `propose-example` | `propose` description | The shipped worked example plus a second one for a tool with no error text (cron reading `%` as a newline), with the tool as a versioned `tool`; the shipped example only shows `pytest 9.0`, which did not stop the rejections |
 | `combined` | both | All four (instructions at 1,496 of the 1,500-character limit, so no room for more) |
 
 The skill (`client/plugin/skills/agent-commons/SKILL.md`) was refreshed in the same change: its
 description now triggers on library, tool and config surprises with or without an error, and its
-body adds worked `propose` calls for a config default (SQLite foreign keys) and an app that
-overwrites its settings (Firefox `prefs.js`). Both examples are documented behavior picked to show
-the shapes; the controls check that they don't teach proposing documented behavior. Ledger lines
-record `"skill": true` but not which skill text, so `--skill` results from before this change
-are not comparable with later ones.
+body adds worked `propose` calls for a config value (PyYAML reading `NO` as false) and a tool
+(cron reading `%` as a newline). Both examples are documented behavior picked to show the shapes;
+the controls check that they don't teach proposing documented behavior. Ledger lines record
+`"skill": true` but not which skill text, so `--skill` results from before this change are not
+comparable with later ones.
+
+These two examples and the one in `propose-example` were checked against every measured
+scenario's cause and `cause_words`; a test fails if one of them names any scenario's cause word.
+They replace the first draft's examples, which shared a mechanism and cause words with the two
+no-test discovery scenarios (an in-memory overwrite, and a default that beats a setting).
 
 **Suggested conditions**, on the four no-test scenarios (MIT-597) and the five genuine controls,
 3 runs each, on both models. Verify the no-test scenarios with one real session each first (they
