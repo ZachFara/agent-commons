@@ -50,17 +50,36 @@ def outcome(
     reporter: uuid.UUID,
     result: str = "tests_passed",
     created_at: str | None = None,
-) -> None:
-    """Insert a retrieval of the entry in a new task and a used outcome for it."""
+    *,
+    tokens: tuple[int, int] | None = None,
+) -> uuid.UUID:
+    """Insert a retrieval of the entry in a new task and a used outcome for it; return its id.
+
+    `tokens` is (tokens_in, tokens_out), as the Stop hook records them.
+    """
     when = created_at or "now"
-    db.execute(
+    tokens_in, tokens_out = tokens or (None, None)
+    row = db.execute(
         "WITH r AS (INSERT INTO retrievals (entry_id, reporter_id, model_id, task_id, query, "
         "rank_position, score_at_retrieval, created_at) VALUES (%s, %s, %s, %s, 'q', 1, 0.5, %s) "
         "RETURNING id) "
-        "INSERT INTO outcomes (retrieval_id, used, outcome, created_at) "
-        "SELECT id, 'yes', %s, %s FROM r",
-        (entry_id, reporter, model_id(db, "claude-opus-5-5"), uuid.uuid4(), when, result, when),
-    )
+        "INSERT INTO outcomes (retrieval_id, used, outcome, created_at, tokens_in, tokens_out) "
+        "SELECT id, 'yes', %s, %s, %s, %s FROM r RETURNING id",
+        (
+            entry_id,
+            reporter,
+            model_id(db, "claude-opus-5-5"),
+            uuid.uuid4(),
+            when,
+            result,
+            when,
+            tokens_in,
+            tokens_out,
+        ),
+    ).fetchone()
+    assert row
+    outcome_id: uuid.UUID = row[0]
+    return outcome_id
 
 
 def prompt_version(db: psycopg.Connection, label: str, text: str = "") -> uuid.UUID:

@@ -4,6 +4,7 @@ Only derived observations are accepted, in strictly checked shapes: a client can
 content here even if it tried (decision 0016).
 """
 
+import math
 import re
 import time
 import uuid
@@ -22,7 +23,13 @@ from starlette.routing import Route
 from commons.domain.entries import Proposal
 from commons.domain.errors import InvalidInputError, NotPermittedError, RateLimitedError
 from commons.domain.keys import KeyHolder
-from commons.domain.observations import DocLookup, command_tail, split_library_id
+from commons.domain.observations import (
+    MAX_TOKENS,
+    DocLookup,
+    TaskCost,
+    command_tail,
+    split_library_id,
+)
 from commons.domain.outcomes import Usage
 from commons.domain.prompts import PromptVersion
 from commons.domain.usage import UseObservation
@@ -41,6 +48,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _SHORT_HASH = re.compile(r"[0-9a-f]{12}")
 _REFUSALS = {400: "invalid_input", 401: "unauthorized", 403: "forbidden", 429: "rate_limited"}
 _USAGES: frozenset[Usage | None] = frozenset({"yes", "partial", "no", None})
+_COST_FIELDS = {"tokens_in", "tokens_out", "wall_clock_seconds"}
 
 
 def hook_routes(connection: ConnectionFactory) -> list[Route]:
@@ -328,7 +336,12 @@ def _stop(conn: Connection, body: Body) -> Body:
         for k, v in used_in.items()
     }
     result = hooks.finish_turn(
-        conn, _session_id(body), _model(body), used, paired=matched_in is not None
+        conn,
+        _session_id(body),
+        _model(body),
+        used,
+        paired=matched_in is not None,
+        cost=_cost(body.get("cost")),  # absent from hooks older than MIT-600
     )
     if result is None:
         return {"task_id": None, "unreported": []}
@@ -339,3 +352,34 @@ def _stop(conn: Connection, body: Body) -> Body:
         "searched": result.searched,
         "nudge": result.nudge,
     }
+
+
+def _cost(value: object) -> dict[UUID, TaskCost]:
+    """Check the task's cost after each retrieval: two token counts and seconds, per id."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or not all(_is_cost(v) for v in value.values()):
+        msg = (
+            "cost must map retrieval ids to {tokens_in, tokens_out, wall_clock_seconds}: "
+            "non-negative integer token counts and non-negative seconds."
+        )
+        raise InvalidInputError(msg)
+    return {
+        UUID(k): TaskCost(v["tokens_in"], v["tokens_out"], float(v["wall_clock_seconds"]))
+        for k, v in value.items()
+    }
+
+
+def _is_cost(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != _COST_FIELDS:
+        return False
+    tokens = (value["tokens_in"], value["tokens_out"])
+    seconds = value["wall_clock_seconds"]
+    return all(
+        isinstance(t, int) and not isinstance(t, bool) and 0 <= t <= MAX_TOKENS for t in tokens
+    ) and (
+        isinstance(seconds, int | float)
+        and not isinstance(seconds, bool)
+        and math.isfinite(seconds)
+        and seconds >= 0
+    )

@@ -22,10 +22,12 @@ import json
 import math
 import os
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
 from collections import defaultdict
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -205,7 +207,26 @@ def run_jobs(jobs: list[runner.Job], args: argparse.Namespace) -> int:
         f"\n{len(results)} sessions, {failed} missed expectations, {errors} errored; "
         f"API-equivalent cost ${cost:.2f}; results in {transcripts}"
     )
+    for line in passing_tokens([asdict(r) for r in results if r.error is None]):
+        print(line)
     return 1 if errors else 0
+
+
+def passing_tokens(rows: list[dict[str, Any]]) -> list[str]:
+    """Per condition, the median tokens of sessions whose tests passed: one line each.
+
+    Rows are ledger lines or saved results; lines logged before tokens were recorded are skipped.
+    """
+    by_condition: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row.get("tests_pass") and "tokens_in" in row and "tokens_out" in row:
+            by_condition[str(row["condition"])].append(row)
+    return [
+        f"{condition}: median tokens per passing session "
+        f"in {statistics.median(int(r['tokens_in']) for r in group):.0f} "
+        f"out {statistics.median(int(r['tokens_out']) for r in group):.0f} (n={len(group)})"
+        for condition, group in sorted(by_condition.items())
+    ]
 
 
 LEDGER = REPO / "docs" / "eval" / "trials.jsonl"
@@ -236,6 +257,8 @@ def append_ledger(results: list[runner.Result]) -> None:
                 "tests_pass": result.tests_pass,
                 "attempts": result.attempts,
                 "turns": result.turns,
+                "tokens_in": result.tokens_in,
+                "tokens_out": result.tokens_out,
                 "error": result.error,
                 "skill": result.skill,
             }
@@ -268,6 +291,8 @@ def by_variant() -> int:
             f"{_rate(group, 'searched'):>7} {_rate(group, 'proposed'):>8} {good:>5} "
             f"{_rate(group, 'tests_pass'):>6}"
         )
+    for line in passing_tokens(rows):
+        print(line)
     return 0
 
 

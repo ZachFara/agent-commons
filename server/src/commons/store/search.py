@@ -1,4 +1,5 @@
 from dataclasses import fields
+from typing import Any
 from uuid import UUID
 
 from psycopg.rows import dict_row
@@ -31,29 +32,38 @@ _SEARCHABLE = """(
     )
 )"""
 
-# Decision 0025, replacing 0012's ordering. Candidates share at least one stemmed word with
-# the query (OR of plainto_tsquery lexemes); `relevance` then scores each by rarity-weighted
-# coverage, drops those under MIN_RELEVANCE, and the score is relevance x the latest snapshot
-# score (0.5 prior).
-_CANDIDATES = """
-WITH q AS (SELECT replace(plainto_tsquery('english', %(query)s)::text, '&', '|') AS text)
-SELECT
+# What a hit is built from, for one entry `e` (see `_hit`).
+_HIT_COLUMNS = """
     e.id AS entry_id, e.symptom, e.environment, e.cause, e.fix, e.repro,
-    coalesce(s.score, 0.5) AS score,
+    coalesce(s.score, 0.5) AS outcome_score,
     m.name AS proposed_by_model, e.human_reviewed,
     coalesce(o.used_outcomes, 0) AS used_outcomes, coalesce(o.successes, 0) AS successes,
     o.last_confirmed, e.revision, e.fixed_in, e.status::text AS status, e.risk_report,
-    e.confirmed_at IS NOT NULL AS confirmed, e.imported_from,
-    tsvector_to_array(to_tsvector('english', e.symptom || ' ' || array_to_string(e.aliases, ' ')
-        || ' ' || array_to_string(e.domains, ' '))) AS symptom_words,
-    tsvector_to_array(to_tsvector('english', e.cause || ' ' || e.fix)) AS body_words
-FROM q, entries e
+    e.confirmed_at IS NOT NULL AS confirmed, e.imported_from"""
+_HIT_JOINS = """
 JOIN models m ON m.id = e.created_by_model
 LEFT JOIN LATERAL (
     SELECT score FROM ranking_snapshots WHERE entry_id = e.id ORDER BY computed_at DESC LIMIT 1
 ) s ON true
 LEFT JOIN ({stats}) o ON o.entry_id = e.id
-WHERE q.text <> ''
+""".replace("{stats}", OUTCOME_STATS)
+
+# Decision 0025, replacing 0012's ordering. Candidates share at least one stemmed word with
+# the query (OR of plainto_tsquery lexemes); `relevance` then scores each by rarity-weighted
+# coverage, drops those under MIN_RELEVANCE, and the score is relevance x version factor x the
+# latest snapshot score (the outcome score, 0.5 prior).
+_CANDIDATES = (
+    """
+WITH q AS (SELECT replace(plainto_tsquery('english', %(query)s)::text, '&', '|') AS text)
+SELECT"""
+    + _HIT_COLUMNS
+    + """,
+    tsvector_to_array(to_tsvector('english', e.symptom || ' ' || array_to_string(e.aliases, ' ')
+        || ' ' || array_to_string(e.domains, ' '))) AS symptom_words,
+    tsvector_to_array(to_tsvector('english', e.cause || ' ' || e.fix)) AS body_words
+FROM q, entries e"""
+    + _HIT_JOINS
+    + """WHERE q.text <> ''
   AND {searchable}
   AND e.search_vector @@ q.text::tsquery
   AND (
@@ -63,7 +73,12 @@ WHERE q.text <> ''
   )
 ORDER BY ts_rank_cd(e.search_vector, q.text::tsquery) DESC, e.created_at DESC
 LIMIT %(candidates)s
-""".replace("{stats}", OUTCOME_STATS).replace("{searchable}", _SEARCHABLE)
+"""
+).replace("{searchable}", _SEARCHABLE)
+
+_ENTRY_HITS = (
+    "SELECT" + _HIT_COLUMNS + "\nFROM entries e" + _HIT_JOINS + "WHERE e.id = ANY(%(ids)s)"
+)
 
 _QUERY_WORDS = """
 SELECT tsvector_to_array(to_tsvector('english', %(query)s)),
@@ -105,8 +120,6 @@ def find_entries(conn: Connection, request: SearchRequest) -> list[SearchHit]:
         retired = candidate["status"] == "retired"
         if retired and not shown_despite_fix(candidate["fixed_in"], asked_libraries):
             continue  # retired, and the caller is on a fixed version (decision 0026)
-        if not retired:
-            candidate["fixed_in"] = None
         lexemes = Lexemes(
             query=query,
             symptom=frozenset(candidate["symptom_words"]),
@@ -118,11 +131,26 @@ def find_entries(conn: Connection, request: SearchRequest) -> list[SearchHit]:
         fit = relevance(lexemes)
         if fit >= MIN_RELEVANCE:
             versions = version_factor(asked_libraries, candidate["environment"].get("libraries"))
-            values = {k: v for k, v in candidate.items() if k in _HIT_FIELDS}
-            values["risks"] = tuple(risk_labels(candidate["risk_report"]))
-            hits.append(SearchHit(**{**values, "score": fit * versions * candidate["score"]}))
+            hits.append(_hit(candidate, relevance=fit, version_factor=versions))
     hits.sort(key=lambda hit: hit.score, reverse=True)
     return hits[: request.limit]
+
+
+def entry_hits(conn: Connection, entry_ids: list[UUID]) -> dict[UUID, SearchHit]:
+    """Return the hit `search` would show for each entry, as a full match on any version."""
+    with conn.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(_ENTRY_HITS, {"ids": entry_ids, **OUTCOME_STATS_PARAMS})
+        rows = cursor.fetchall()
+    return {row["entry_id"]: _hit(row, relevance=1.0, version_factor=1.0) for row in rows}
+
+
+def _hit(row: dict[str, Any], *, relevance: float, version_factor: float) -> SearchHit:
+    """Build a hit from `_HIT_COLUMNS`. Only a retired entry shows its fix version (0026)."""
+    values = {k: v for k, v in row.items() if k in _HIT_FIELDS}
+    values["risks"] = tuple(risk_labels(row["risk_report"]))
+    if row["status"] != "retired":
+        values["fixed_in"] = None
+    return SearchHit(**values, relevance=relevance, version_factor=version_factor)
 
 
 # Approved and pending entries sharing a word with a proposal's symptom (decision 0027).

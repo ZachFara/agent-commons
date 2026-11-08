@@ -96,6 +96,189 @@ _ORDERS = {
     "used": "s.retrieval_count_30d DESC",
 }
 
+# Token cost per entry over the outcomes that say whether it worked: used, with a known
+# outcome (the filter of `_SAMPLES` in store/ranking.py), with tokens recorded by the Stop
+# hook (MIT-600), and neither row excluded. A row without tokens counts in none of these.
+_COSTS = """
+SELECT r.entry_id,
+       count(*) AS costed,
+       sum(o.tokens_in::bigint + o.tokens_out)::bigint AS tokens,
+       count(*) FILTER (WHERE o.outcome = ANY(%(success)s::outcome_kind[])) AS successes,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY o.tokens_in::bigint + o.tokens_out)
+           FILTER (WHERE o.outcome = ANY(%(success)s::outcome_kind[])) AS median_success,
+       count(*) FILTER (WHERE o.outcome <> ALL(%(success)s::outcome_kind[])) AS failures,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY o.tokens_in::bigint + o.tokens_out)
+           FILTER (WHERE o.outcome <> ALL(%(success)s::outcome_kind[])) AS median_failure
+FROM counted_outcomes o JOIN counted_retrievals r ON r.id = o.retrieval_id
+WHERE r.entry_id = ANY(%(ids)s) AND o.used IN ('yes', 'partial')
+  AND o.outcome NOT IN ('unknown', 'abandoned')
+  AND o.tokens_in IS NOT NULL AND o.tokens_out IS NOT NULL
+GROUP BY r.entry_id
+"""
+
+# Every counted retrieval of an entry, by what came of it. The buckets add up: retrieved =
+# not_used + used_unknown + used, and used = worked + failed + no_result. A retrieval with no
+# counted outcome (none yet, or the outcome excluded) is used_unknown, like `used IS NULL`.
+# Worked and failed match `_DAILY` and `_COSTS`; no_result is `unknown` or `abandoned`.
+_FUNNEL = """
+SELECT count(*) AS retrieved,
+       count(*) FILTER (WHERE o.used = 'no') AS not_used,
+       count(*) FILTER (WHERE o.used IS NULL) AS used_unknown,
+       count(*) FILTER (WHERE o.used IN ('yes', 'partial')) AS used,
+       count(*) FILTER (WHERE o.used IN ('yes', 'partial')
+           AND o.outcome = ANY(%(success)s::outcome_kind[])) AS worked,
+       count(*) FILTER (WHERE o.used IN ('yes', 'partial')
+           AND o.outcome NOT IN ('unknown', 'abandoned')
+           AND o.outcome <> ALL(%(success)s::outcome_kind[])) AS failed,
+       count(*) FILTER (WHERE o.used IN ('yes', 'partial')
+           AND o.outcome IN ('unknown', 'abandoned')) AS no_result
+FROM counted_retrievals r LEFT JOIN counted_outcomes o ON o.retrieval_id = r.id
+WHERE r.entry_id = %(id)s
+"""
+
+# The retrievals `r` that a search `s` returned. A retrieval has no search id: it is written
+# in the search's transaction, so it shares the search's task, reporter, query and created_at
+# (now() is the transaction's start).
+_RETRIEVALS_OF_SEARCH = sql.SQL(
+    "r.task_id = s.task_id AND r.reporter_id = s.reporter_id AND r.query = s.query "
+    "AND r.created_at = s.created_at"
+)
+
+# Recent searches whose every counted retrieval has a counted outcome with used = 'no'.
+_UNUSED_SEARCHES = sql.SQL("""
+SELECT s.id, s.created_at, s.query, rp.pseudonym AS reporter, m.name AS model, hits.entries
+FROM counted_searches s JOIN reporters rp ON rp.id = s.reporter_id
+JOIN models m ON m.id = s.model_id
+JOIN LATERAL (
+    SELECT count(*) AS retrieved, count(*) FILTER (WHERE o.used = 'no') AS not_used,
+           json_agg(json_build_object('entry_id', r.entry_id, 'rank', r.rank_position,
+               'relevance', r.relevance, 'symptom', e.symptom) ORDER BY r.rank_position)
+               AS entries
+    FROM counted_retrievals r JOIN entries e ON e.id = r.entry_id
+    LEFT JOIN counted_outcomes o ON o.retrieval_id = r.id
+    WHERE {linked}
+) hits ON hits.retrieved > 0 AND hits.not_used = hits.retrieved
+WHERE s.created_at > now() - interval '30 days'
+ORDER BY s.created_at DESC LIMIT %(limit)s
+""").format(linked=_RETRIEVALS_OF_SEARCH)
+
+# Every counted search of the last `days` days, oldest first, with what came of each counted
+# retrieval it returned (decision 0025 step 1). A search that found nothing has no results.
+# The views leave out excluded rows, and so test-key rows (decision 0030).
+_SEARCH_RESULTS = sql.SQL("""
+SELECT s.id, s.created_at, s.query, m.name AS model, coalesce(hits.results, '[]') AS results
+FROM counted_searches s JOIN models m ON m.id = s.model_id
+LEFT JOIN LATERAL (
+    SELECT json_agg(json_build_object('entry_id', r.entry_id, 'rank', r.rank_position,
+               'relevance', r.relevance, 'used', o.used, 'outcome', o.outcome,
+               'assessment', o.agent_assessment) ORDER BY r.rank_position) AS results
+    FROM counted_retrievals r LEFT JOIN counted_outcomes o ON o.retrieval_id = r.id
+    WHERE {linked}
+) hits ON true
+WHERE s.created_at > now() - make_interval(days => %(days)s)
+ORDER BY s.created_at, s.id
+""").format(linked=_RETRIEVALS_OF_SEARCH)
+
+# What became of the entries proposed in the last 30 days, by proposing model (DESIGN §11,
+# open question 1). Each entry lands in exactly one bucket, the first that matches, so the
+# buckets add up to `proposals`:
+#   suspended       its proposer is suspended (decision 0029: reporters.suspended_at)
+#   merged          merged into another entry as a duplicate (decision 0027). A merge
+#                   (service/duplicates.merge) sets superseded_by, then rejects a pending
+#                   duplicate or retires an approved one with the human review reason
+#                   "duplicate of <canonical id>". That reason naming the current successor
+#                   is what tells a merge from an admin's supersede (decision 0026 §3),
+#                   which also sets superseded_by but with the admin's own reason.
+#   retired         retired, with or without a successor (decision 0026): superseded
+#                   entries that weren't merged count here
+#   rejected        rejected by a human; by the reason of the latest human reject review
+#   human_approved  approved by a human (human_reviewed, decision 0005)
+#   auto_approved   approved on the proposer's trust, no human review yet (decision 0028:
+#                   provisional, sampled or not)
+#   agent_approved  approved by an agent review only (decision 0005)
+#   flagged         waiting for a human, with likely duplicates (decision 0027:
+#                   duplicate_candidates)
+#   pending         waiting for a human: pending, or rejected by an agent review only
+# A human review leaves `provisional` set, so human_approved is tested first. Seed entries
+# aren't proposals.
+FUNNEL_BUCKETS = (
+    "human_approved",
+    "auto_approved",
+    "agent_approved",
+    "rejected",
+    "merged",
+    "flagged",
+    "pending",
+    "retired",
+    "suspended",
+)
+_PROPOSAL_FUNNEL = """
+WITH proposals AS (
+    SELECT m.name AS model,
+           CASE WHEN rp.suspended_at IS NOT NULL THEN 'suspended'
+                WHEN e.status IN ('rejected', 'retired') AND EXISTS (
+                    SELECT 1 FROM reviews v WHERE v.entry_id = e.id AND v.source = 'human'
+                      AND v.decision IN ('reject', 'retire')
+                      AND v.reason = 'duplicate of ' || e.superseded_by::text)
+                    THEN 'merged'
+                WHEN e.status = 'retired' THEN 'retired'
+                WHEN e.human_reviewed AND e.status = 'rejected' THEN 'rejected'
+                WHEN e.human_reviewed AND e.status = 'approved' THEN 'human_approved'
+                WHEN e.status = 'approved' AND e.provisional THEN 'auto_approved'
+                WHEN e.status = 'approved' THEN 'agent_approved'
+                WHEN jsonb_array_length(e.duplicate_candidates) > 0 THEN 'flagged'
+                ELSE 'pending' END AS bucket,
+           (SELECT v.reason FROM reviews v WHERE v.entry_id = e.id AND v.decision = 'reject'
+              AND v.source = 'human' ORDER BY v.created_at DESC LIMIT 1) AS reason
+    FROM entries e JOIN models m ON m.id = e.created_by_model
+    JOIN reporters rp ON rp.id = e.created_by
+    WHERE e.created_at > now() - interval '30 days' AND rp.pseudonym <> 'agent-commons-seed'
+), reasons AS (
+    SELECT model, json_agg(json_build_object('reason', reason, 'count', n)
+               ORDER BY n DESC, reason) AS reasons
+    FROM (SELECT model, reason, count(*) AS n FROM proposals WHERE bucket = 'rejected'
+          GROUP BY model, reason) rejected
+    GROUP BY model
+)
+SELECT c.*, coalesce(r.reasons, '[]') AS reasons
+FROM (SELECT model, count(*) AS proposals,
+             count(*) FILTER (WHERE bucket = 'human_approved') AS human_approved,
+             count(*) FILTER (WHERE bucket = 'auto_approved') AS auto_approved,
+             count(*) FILTER (WHERE bucket = 'agent_approved') AS agent_approved,
+             count(*) FILTER (WHERE bucket = 'rejected') AS rejected,
+             count(*) FILTER (WHERE bucket = 'merged') AS merged,
+             count(*) FILTER (WHERE bucket = 'flagged') AS flagged,
+             count(*) FILTER (WHERE bucket = 'pending') AS pending,
+             count(*) FILTER (WHERE bucket = 'retired') AS retired,
+             count(*) FILTER (WHERE bucket = 'suspended') AS suspended
+      FROM proposals GROUP BY model) c
+LEFT JOIN reasons r USING (model)
+ORDER BY c.proposals DESC, c.model
+"""
+
+# How approved entries fare in search, by proposing model. `unretrieved`: proposed 60 or
+# more days ago and no counted retrieval in the last 60 days. `never_used`: 3 or more counted
+# retrievals ever, and no counted outcome saw it used. Both leave out suspended reporters'
+# entries, which `suspended` counts instead.
+_APPROVED_USE = """
+SELECT m.name AS model,
+       count(*) FILTER (WHERE rp.suspended_at IS NULL) AS approved,
+       count(*) FILTER (WHERE rp.suspended_at IS NULL
+           AND e.created_at <= now() - interval '60 days'
+           AND NOT EXISTS (SELECT 1 FROM counted_retrievals r WHERE r.entry_id = e.id
+               AND r.created_at > now() - interval '60 days')) AS unretrieved,
+       count(*) FILTER (WHERE rp.suspended_at IS NULL
+           AND (SELECT count(*) FROM counted_retrievals r WHERE r.entry_id = e.id) >= 3
+           AND NOT EXISTS (SELECT 1 FROM counted_retrievals r
+               JOIN counted_outcomes o ON o.retrieval_id = r.id
+               WHERE r.entry_id = e.id AND o.used IN ('yes', 'partial'))) AS never_used,
+       count(*) FILTER (WHERE rp.suspended_at IS NOT NULL) AS suspended
+FROM entries e JOIN models m ON m.id = e.created_by_model
+JOIN reporters rp ON rp.id = e.created_by
+WHERE e.status = 'approved' AND rp.pseudonym <> 'agent-commons-seed'
+GROUP BY m.name ORDER BY approved DESC, m.name
+"""
+
 
 def daily_activity(conn: Connection, days: int) -> list[Row]:
     """Per day for the last `days` days: retrievals, successes, failures, proposals."""
@@ -144,6 +327,23 @@ def entry(conn: Connection, entry_id: UUID) -> Row | None:
     return rows[0] if rows else None
 
 
+def entry_costs(conn: Connection, entry_ids: list[UUID]) -> dict[UUID, Row]:
+    """Return each entry's token cost: tokens per success and median tokens by result.
+
+    An entry with no costed outcome is left out. Every figure comes with its n: `costed`
+    outcomes behind `tokens`, `successes` and `failures` behind the two medians.
+    """
+    rows = _rows(conn, _COSTS, {"ids": entry_ids, **_SUCCESS})
+    for row in rows:
+        row["tokens_per_success"] = row["tokens"] / row["successes"] if row["successes"] else None
+    return {row["entry_id"]: row for row in rows}
+
+
+def entry_funnel(conn: Connection, entry_id: UUID) -> Row:
+    """Return how the entry's counted retrievals ended, bucketed as `_FUNNEL` describes."""
+    return _rows(conn, _FUNNEL, {"id": entry_id, **_SUCCESS})[0]
+
+
 def entry_reviews(conn: Connection, entry_id: UUID) -> list[Row]:
     """Return the entry's reviews, oldest first."""
     return _rows(
@@ -171,7 +371,8 @@ def entry_retrievals(conn: Connection, entry_id: UUID, limit: int = 50) -> list[
         conn,
         "SELECT r.id AS retrieval_id, o.id AS outcome_id, "
         "r.excluded OR coalesce(o.excluded, false) AS excluded, "
-        "r.created_at, r.task_id, r.query, r.rank_position, rp.pseudonym AS reporter, "
+        "r.created_at, r.task_id, r.query, r.rank_position, r.relevance, "
+        "rp.pseudonym AS reporter, "
         "m.name AS model, o.used::text AS used, o.outcome::text AS outcome, "
         "o.evidence->>'outcome_source' AS source, o.agent_assessment, "
         "left(pv.hash, 12) AS prompt_hash, pv.label AS prompt_label "
@@ -314,6 +515,37 @@ def misses_with_lookups(conn: Connection, limit: int = 100) -> list[Row]:
 def libraries_looked_up(conn: Connection, limit: int = 100) -> list[Row]:
     """Return each library and version looked up, with the share of its tasks Commons hit."""
     return _rows(conn, _LIBRARIES_LOOKED_UP, {"limit": limit})
+
+
+def unused_searches(conn: Connection, limit: int = 50) -> list[Row]:
+    """Return searches of the last 30 days where hooks saw no returned entry used.
+
+    Newest first. Each row's `entries` lists what came back in rank order with its relevance,
+    None for a retrieval logged before relevance was (MIT-602).
+    """
+    return _rows(conn, _UNUSED_SEARCHES, {"limit": limit})
+
+
+def search_results(conn: Connection, days: int) -> list[Row]:
+    """Return the counted searches of the last `days` days with their results, oldest first.
+
+    Each row's `results` lists its counted retrievals in rank order: relevance (None before
+    MIT-602), and the outcome's `used`, `outcome` and `assessment` (None without an outcome).
+    """
+    return _rows(conn, _SEARCH_RESULTS, {"days": days})
+
+
+def proposal_funnel(conn: Connection) -> list[Row]:
+    """Return per model the last 30 days' proposals in `FUNNEL_BUCKETS`, which add up.
+
+    `reasons` lists the rejected ones' reasons with how many had each, most frequent first.
+    """
+    return _rows(conn, _PROPOSAL_FUNNEL, {})
+
+
+def approved_use(conn: Connection) -> list[Row]:
+    """Return per model the approved entries search never shows, or shows but nobody uses."""
+    return _rows(conn, _APPROVED_USE, {})
 
 
 def reporters(conn: Connection) -> list[Row]:

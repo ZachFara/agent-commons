@@ -45,6 +45,7 @@ from commons.service import (
 from commons.service.identity import current_key, current_pseudonym, serving_hosted
 from commons.store import insights
 from commons.store.connection import Connection, connect
+from commons.store.search import entry_hits
 from commons.web import charts
 from commons.web.admin_auth import Endpoint, admin_only
 from commons.web.hooks_api import hook_routes
@@ -93,7 +94,9 @@ class Dashboard:
         order = request.query_params.get("order") or default_order
         data = await self._load(
             lambda conn: {
-                "entries": insights.entries(conn, status=status, query=query, order=order),
+                "entries": _with_costs(
+                    conn, insights.entries(conn, status=status, query=query, order=order)
+                ),
                 "stale": insights.stale_candidates(conn),
                 "query": query,
                 "status_filter": status,
@@ -121,6 +124,7 @@ class Dashboard:
             lambda conn: {
                 "totals": insights.search_totals(conn),
                 "missed": insights.missed_queries(conn),
+                "unused": insights.unused_searches(conn),
                 "recent": insights.recent_searches(conn),
                 "lookups": insights.lookup_totals(conn),
                 "missed_lookups": insights.misses_with_lookups(conn),
@@ -445,6 +449,9 @@ def _overview_data(conn: Connection) -> dict[str, Any]:
             classes=("s1", "s1-tint"),
         ),
         "top": [e for e in top if e["success_rate"] is not None][:TOP_ENTRIES],
+        "funnel": insights.proposal_funnel(conn),
+        "buckets": insights.FUNNEL_BUCKETS,
+        "approved_use": insights.approved_use(conn),
     }
 
 
@@ -459,13 +466,26 @@ def _people_data(conn: Connection) -> dict[str, Any]:
 
 def _entry_data(conn: Connection, entry_id: UUID) -> dict[str, Any]:
     history = insights.score_history(conn, entry_id)
+    entry = insights.entry(conn, entry_id)
     return {
-        "e": insights.entry(conn, entry_id),
+        "e": _with_costs(conn, [entry])[0] if entry else None,
         "revisions": insights.entry_revisions(conn, entry_id),
         "reviews": insights.entry_reviews(conn, entry_id),
         "history": charts.line([(row["computed_at"], row["score"]) for row in history]),
+        "funnel": insights.entry_funnel(conn, entry_id),
         "retrievals": insights.entry_retrievals(conn, entry_id),
     }
+
+
+def _with_costs(conn: Connection, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add each entry's search size (`hit_tokens`) and token cost (`cost`, None if no data)."""
+    ids = [row["id"] for row in rows]
+    hits = entry_hits(conn, ids)
+    costs = insights.entry_costs(conn, ids)
+    return [
+        {**row, "hit_tokens": hits[row["id"]].approx_tokens(), "cost": costs.get(row["id"])}
+        for row in rows
+    ]
 
 
 def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) -> Starlette:

@@ -8,7 +8,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -18,7 +18,9 @@ import httpx2
 
 from commons.domain.errors import NotInitializedError, NotPermittedError, RateLimitedError
 from commons.domain.observations import (
+    MAX_TOKENS,
     DocLookup,
+    TaskCost,
     ToolUse,
     command_tail,
     is_test_command,
@@ -67,7 +69,11 @@ class HookBackend(Protocol):
         ...
 
     def stop(
-        self, session_id: str, model: str | None, used: dict[UUID, UseObservation]
+        self,
+        session_id: str,
+        model: str | None,
+        used: dict[UUID, UseObservation],
+        cost: dict[UUID, TaskCost],
     ) -> StopResult | None:
         """Record the turn's observations."""
         ...
@@ -110,11 +116,15 @@ class LocalBackend:
             return hooks.retrievals_to_judge(conn, session_id)
 
     def stop(
-        self, session_id: str, model: str | None, used: dict[UUID, UseObservation]
+        self,
+        session_id: str,
+        model: str | None,
+        used: dict[UUID, UseObservation],
+        cost: dict[UUID, TaskCost],
     ) -> StopResult | None:
         """Record the turn's observations."""
         with self._connection() as conn:
-            return hooks.finish_turn(conn, session_id, model, used)
+            return hooks.finish_turn(conn, session_id, model, used, cost=cost)
 
     def artifact_frequencies(self) -> ArtifactFrequencies:
         """Count artifacts across the store's approved fixes."""
@@ -200,7 +210,11 @@ class RemoteBackend:
         ]
 
     def stop(
-        self, session_id: str, model: str | None, used: dict[UUID, UseObservation]
+        self,
+        session_id: str,
+        model: str | None,
+        used: dict[UUID, UseObservation],
+        cost: dict[UUID, TaskCost],
     ) -> StopResult | None:
         """Record the turn's observations, with when matched work happened (0036)."""
         body = {
@@ -210,6 +224,14 @@ class RemoteBackend:
             "matched_at": {
                 str(retrieval): seen.matched_at.isoformat() if seen.matched_at else None
                 for retrieval, seen in used.items()
+            },
+            "cost": {
+                str(retrieval): {
+                    "tokens_in": spent.tokens_in,
+                    "tokens_out": spent.tokens_out,
+                    "wall_clock_seconds": spent.wall_clock_seconds,
+                }
+                for retrieval, spent in cost.items()
             },
         }
         result = self._post("stop", body)
@@ -319,8 +341,11 @@ def _scrubbed(lookup: DocLookup | None) -> DocLookup | None:
 
 
 def on_stop(backend: HookBackend, session_id: str, transcript: str | None) -> StopResult | None:
-    """Compute `used` from the local spool and record the turn."""
-    model = observed_model(Path(transcript)) if transcript else None
+    """Compute `used` from the local spool and cost from the transcript; record the turn.
+
+    Only the derived numbers leave the machine (decision 0016).
+    """
+    lines = _transcript_lines(Path(transcript)) if transcript else []
     records = read_spool(session_id)
     retrieved = backend.retrievals(session_id)
     frequencies = backend.artifact_frequencies() if retrieved else ArtifactFrequencies()
@@ -328,7 +353,13 @@ def on_stop(backend: HookBackend, session_id: str, transcript: str | None) -> St
         item.retrieval_id: observe_use(item.fix, _evidence(records, item.retrieved_at), frequencies)
         for item in retrieved
     }
-    return backend.stop(session_id, model, used)
+    messages = _assistant_usage(lines)
+    cost = {
+        item.retrieval_id: spent
+        for item in retrieved
+        if (spent := _cost_after(messages, item.retrieved_at)) is not None
+    }
+    return backend.stop(session_id, _observed_model(lines), used, cost)
 
 
 def _is_test(command: str) -> bool:
@@ -373,19 +404,106 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def observed_model(transcript: Path) -> str | None:
-    """Return the model of the transcript's last assistant message, if it records one."""
+def _transcript_lines(transcript: Path) -> list[dict[str, Any]]:
+    """Return the transcript's JSON lines that are objects; none if there is no transcript."""
     if not transcript.exists():
-        return None
-    model = None
+        return []
+    lines = []
     for line in transcript.read_text(encoding="utf-8").splitlines():
         try:
-            message = json.loads(line).get("message")
-        except (json.JSONDecodeError, AttributeError):
+            record = json.loads(line)
+        except json.JSONDecodeError:
             continue
+        if isinstance(record, dict):
+            lines.append(record)
+    return lines
+
+
+def _observed_model(lines: list[dict[str, Any]]) -> str | None:
+    """Return the model of the transcript's last assistant message, if it records one."""
+    model = None
+    for line in lines:
+        message = line.get("message")
         if isinstance(message, dict) and isinstance(message.get("model"), str):
             model = message["model"]
     return model
+
+
+@dataclass(frozen=True)
+class _MessageUsage:
+    """One assistant transcript line's token usage."""
+
+    message_id: str | None
+    at: datetime
+    tokens_in: int
+    tokens_out: int
+
+
+_INPUT_TOKENS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+
+
+def _assistant_usage(lines: list[dict[str, Any]]) -> list[_MessageUsage]:
+    """Return the usage of each transcript line that records it, with its time."""
+    return [usage for line in lines if (usage := _message_usage(line)) is not None]
+
+
+def _message_usage(line: dict[str, Any]) -> _MessageUsage | None:
+    message = line.get("message")
+    at = _transcript_time(line.get("timestamp"))
+    if not isinstance(message, dict) or at is None:
+        return None
+    usage = message.get("usage")
+    if not isinstance(usage, dict) or not {"input_tokens", "output_tokens"} <= set(usage):
+        return None
+    tokens_in = [usage.get(key, 0) for key in _INPUT_TOKENS]
+    tokens_out = usage["output_tokens"]
+    if not all(_is_count(count) for count in (*tokens_in, tokens_out)):
+        return None
+    message_id = message.get("id")
+    return _MessageUsage(
+        message_id if isinstance(message_id, str) else None, at, sum(tokens_in), tokens_out
+    )
+
+
+def _is_count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _transcript_time(value: object) -> datetime | None:
+    """Parse a transcript timestamp; None unless it is an ISO time with a zone."""
+    if not isinstance(value, str):
+        return None
+    try:
+        at = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return at if at.tzinfo is not None else None
+
+
+def _cost_after(messages: list[_MessageUsage], retrieved_at: datetime) -> TaskCost | None:
+    """Return what the task cost after the retrieval; None if no usage is recorded since.
+
+    A message streams over several lines that repeat its id and usage, so each id counts
+    once. Allow for skew between this machine's clock and the database's, as for the spool.
+    Sums are clamped to what the columns hold: cost is secondary and must never cost `used`.
+    """
+    after = [message for message in messages if message.at >= retrieved_at - CLOCK_SKEW]
+    if not after:
+        return None
+    seen: set[str] = set()
+    counted = []
+    for message in after:
+        if message.message_id is not None:
+            if message.message_id in seen:
+                continue
+            seen.add(message.message_id)
+        counted.append(message)
+    last = max(message.at for message in after)
+    return TaskCost(
+        tokens_in=min(sum(message.tokens_in for message in counted), MAX_TOKENS),
+        tokens_out=min(sum(message.tokens_out for message in counted), MAX_TOKENS),
+        wall_clock_seconds=max((last - retrieved_at).total_seconds(), 0.0),
+    )
 
 
 def _error_message(response: httpx2.Response) -> str | None:

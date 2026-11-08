@@ -1,6 +1,7 @@
 """Entry point for the `commons` command."""
 
 import argparse
+import json
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -39,6 +40,8 @@ from commons.service import (
     keys,
     purges,
     ranking,
+    relevance,
+    rescan,
     retention,
     reviews,
     seeds,
@@ -169,6 +172,16 @@ def _admin_arguments(parser: argparse.ArgumentParser) -> None:
     revoke.add_argument("--restore", action="store_true", help="Reverse their latest purge.")
     revoke.add_argument("--reason", help="Why (required with --purge).")
     revoke.add_argument("--by", help="Who is acting (your pseudonym; needed for --purge).")
+    rescans = actions.add_parser("rescan", help="Rerun the risk scanner over stored entries.")
+    rescans.add_argument(
+        "--apply", action="store_true", help="Store the new reports and reopen what needs it."
+    )
+    relevant = actions.add_parser(
+        "relevance-candidates", help="Print real searches to label, as JSON lines (0025)."
+    )
+    relevant.add_argument(
+        "--days", type=int, default=relevance.DEFAULT_DAYS, help="How far back to look."
+    )
 
 
 def _correct_arguments(parser: argparse.ArgumentParser) -> None:
@@ -212,7 +225,14 @@ def _key_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _admin(args: argparse.Namespace) -> int:
     action: str = args.admin_action
-    delegated = {"key": _key, "correct": _correct, "revoke": _revoke, "role": _role}
+    delegated = {
+        "key": _key,
+        "correct": _correct,
+        "revoke": _revoke,
+        "role": _role,
+        "rescan": _rescan,
+        "relevance-candidates": _relevance_candidates,
+    }
     if action in delegated:
         return delegated[action](args)
     pseudonym: str = args.pseudonym
@@ -278,6 +298,45 @@ def _role(args: argparse.Namespace) -> int:
         role = trust.set_role(conn, args.pseudonym, args.role)
     sys.stdout.write(f"{args.pseudonym} is now a {role}\n")
     return 0
+
+
+def _rescan(args: argparse.Namespace) -> int:
+    apply: bool = args.apply
+    with connect() as conn:
+        changed = rescan.rescan(conn, apply=apply)
+    reopen = "reopened" if apply else "would reopen"
+    for found in changed:
+        note = f"  {reopen}" if found.reopened else ""
+        sys.stdout.write(
+            f"{found.entry_id}  {found.status:<8}  {_findings(found.before)} -> "
+            f"{_findings(found.after)}{note}\n"
+        )
+    reopened = sum(found.reopened for found in changed)
+    if apply:
+        sys.stdout.write(f"{len(changed)} entr(ies) rescanned, {reopened} reopened\n")
+    else:
+        sys.stdout.write(
+            f"{len(changed)} entr(ies) would change, {reopened} would reopen; "
+            "nothing written (use --apply)\n"
+        )
+    return 0
+
+
+def _relevance_candidates(args: argparse.Namespace) -> int:
+    with connect() as conn:
+        found = relevance.candidates(conn, args.days)
+    for line in found:
+        sys.stdout.write(json.dumps(line) + "\n")
+    return 0
+
+
+def _findings(counts: dict[tuple[str, str], int]) -> str:
+    if not counts:
+        return "none"
+    return ", ".join(
+        f"{kind} in {field}" + (f" x{count}" if count > 1 else "")
+        for (field, kind), count in sorted(counts.items())
+    )
 
 
 def _queue_check_arguments(parser: argparse.ArgumentParser) -> None:

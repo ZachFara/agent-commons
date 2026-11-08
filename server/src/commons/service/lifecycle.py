@@ -12,6 +12,7 @@ from commons.domain.lifecycle import FixedIn, require_reason
 from commons.domain.reviews import ReviewDecision, ReviewRequest, review_state
 from commons.privacy.redaction import redact_proposal, scrub
 from commons.privacy.risks import scan_proposal
+from commons.service import rescan
 from commons.service.identity import current_pseudonym, current_reporter
 from commons.store import lifecycle as store
 from commons.store.connection import Connection
@@ -60,7 +61,11 @@ def retire(
 
 
 def restore(conn: Connection, entry_id: UUID, reason: str) -> None:
-    """Return a retired or superseded entry to search."""
+    """Return a retired or superseded entry to search, rescanned for risks (decision 0029).
+
+    A rescan skips entries out of search, so the patterns may have changed since this one's
+    report was written. The rescan's rules apply, reopening included.
+    """
     why = scrub(require_reason(reason))
     with conn.transaction():
         entry = store.locked_entry(conn, entry_id)
@@ -69,6 +74,7 @@ def restore(conn: Connection, entry_id: UUID, reason: str) -> None:
             raise InvalidInputError(msg)
         _review(conn, entry_id, "restore", why)
         store.set_retirement(conn, entry_id, None, None)
+        rescan.rescan_entry(conn, entry_id)
 
 
 def mark_superseded(conn: Connection, entry_id: UUID, successor: UUID) -> None:

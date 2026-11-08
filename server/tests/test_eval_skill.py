@@ -295,5 +295,8 @@ def test_the_ledger_records_the_skill_and_old_lines_still_load(
     lines = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
     assert [line.get("skill") for line in lines] == [None, True, False]
     assert tools.agent_eval.by_variant() == 0
-    rows = [line.split() for line in capsys.readouterr().out.splitlines()[1:]]
+    out = capsys.readouterr().out.splitlines()
+    # The table, then the per-condition median-token lines (MIT-601), which aren't rows.
+    rows = [line.split() for line in out[1:] if "median tokens per passing session" not in line]
     assert [(row[0], row[3]) for row in rows] == [("baseline", "2"), ("baseline+skill", "1")]
+    assert out[-1].startswith("s: median tokens per passing session in 0 out 0 (n=2)")
