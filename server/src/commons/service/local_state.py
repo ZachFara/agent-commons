@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from commons.domain.reporters import PRIVACY_DEFAULTS, PrivacyDefault
 from commons.domain.usage import ArtifactFrequencies
 
 
@@ -100,24 +101,51 @@ def bind_store(session_id: str, server: tuple[str, str] | None) -> None:
     Later hooks for the session go there even if the machine's config changes, so a
     session's hooks and its MCP server never point at different stores.
     """
-    path = _store_path(session_id)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     data = {"store": "local"} if server is None else {"store": server[0], "key": server[1]}
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-        json.dump(data, file)
+    _write_binding(session_id, data)
+
+
+def bind_privacy_mode(session_id: str, mode: str | None) -> None:
+    """Add the task's privacy mode, from the hosted session-start, to the session's binding.
+
+    None (a server from before the mode was returned) removes any mode stored earlier.
+    """
+    data = _binding(session_id)
+    data.pop("privacy_mode", None)
+    if mode is not None:
+        data["privacy_mode"] = mode
+    _write_binding(session_id, data)
+
+
+def bound_privacy_mode(session_id: str) -> PrivacyDefault:
+    """Return the privacy mode stored with the session's binding; `entry` if none was."""
+    mode = _binding(session_id).get("privacy_mode")
+    return next((known for known in PRIVACY_DEFAULTS if known == mode), "entry")
 
 
 def bound_store(session_id: str) -> dict[str, str] | None:
     """Return the store the session was bound to at start, or None for older sessions."""
+    data = _binding(session_id)
+    return data if isinstance(data.get("store"), str) else None
+
+
+def _binding(session_id: str) -> dict[str, str]:
     path = _store_path(session_id)
     if not path.exists():
-        return None
+        return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) and isinstance(data.get("store"), str) else None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_binding(session_id: str, data: dict[str, str]) -> None:
+    path = _store_path(session_id)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        json.dump(data, file)
 
 
 def active_sessions(since_seconds: float = 3600, now: float | None = None) -> list[str]:
