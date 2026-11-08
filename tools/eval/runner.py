@@ -96,6 +96,8 @@ class Result:
     variant: str = "baseline"
     text_fingerprint: str = ""
     model: str = ""
+    tokens_in: int = 0  # input plus cache creation plus cache read, over the final events
+    tokens_out: int = 0
 
     def summary(self) -> str:
         """One line describing what the agent did."""
@@ -441,6 +443,7 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
     finals = [e for e in events if e.get("type") == "result"]
     result_event = finals[-1] if finals else {}
     discoveries = [s.discovery for s in (scenario, scenario.then) if s is not None]
+    tokens_in, tokens_out = session_tokens(events)
     return Result(
         scenario=scenario.name,
         trigger=scenario.trigger,
@@ -469,7 +472,25 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         error=str(result_event.get("result"))[:200] if result_event.get("is_error") else None,
         variant=session.variant,
         text_fingerprint=agent_text.fingerprint(shown),
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
     )
+
+
+INPUT_TOKENS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+
+
+def session_tokens(events: list[dict[str, Any]]) -> tuple[int, int]:
+    """Return (tokens in, tokens out) summed over the usage of a session's final `result` events.
+
+    One `result` event ends each turn (a multi-turn session has several). Tokens in counts
+    cache creation and cache reads too: all the context the model was given.
+    """
+    usages = [
+        e["usage"] for e in events if e.get("type") == "result" and isinstance(e.get("usage"), dict)
+    ]
+    tokens_in = sum(int(usage.get(key) or 0) for usage in usages for key in INPUT_TOKENS)
+    return tokens_in, sum(int(usage.get("output_tokens") or 0) for usage in usages)
 
 
 def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: bool) -> Result:
