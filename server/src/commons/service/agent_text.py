@@ -144,8 +144,7 @@ TURN_NUDGE = (
 
 
 # `/commons:record` (decision 0034): an MCP prompt, which clients show as a slash command. It
-# costs nothing unless invoked. Off unless COMMONS_RECORD_PROMPT=on, pending an eval of the
-# proposals it produces.
+# costs nothing unless invoked. On unless COMMONS_RECORD_PROMPT=off (the owner, 2026-11-08).
 RECORD_PROMPT = """\
 Review this session for what belongs in Agent Commons, then act:
 1. For each problem you solved, ask: was the cause a library or runtime behavior its docs \

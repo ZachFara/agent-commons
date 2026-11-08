@@ -1,4 +1,7 @@
-"""Decision 0034: the gated helpers for reliable propose and report. All ship switched off."""
+"""Decision 0034: the gated helpers for reliable propose and report.
+
+All ship switched off except `/commons:record`, which is on by default (owner, 2026-11-08).
+"""
 
 import asyncio
 import json
@@ -81,9 +84,22 @@ def prompts(monkeypatch: pytest.MonkeyPatch, setting: str | None) -> list[str]:
     return asyncio.run(listed())
 
 
-def test_the_record_prompt_is_offered_only_when_turned_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert prompts(monkeypatch, None) == []
+def test_the_record_prompt_is_offered_unless_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("COMMONS_RECORD_PROMPT", raising=False)
+    assert prompts(monkeypatch, None) == ["record"]
+    assert prompts(monkeypatch, "off") == []
     assert prompts(monkeypatch, "on") == ["record"]
+
+
+def test_the_record_prompt_serves_the_record_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("COMMONS_RECORD_PROMPT", raising=False)
+
+    async def served() -> list[str]:
+        async with Client(build_server()) as client:
+            result = await client.get_prompt("record")
+            return [getattr(message.content, "text", "") for message in result.messages]
+
+    assert asyncio.run(served()) == [agent_text.RECORD_PROMPT]
 
 
 def test_the_shipped_text_is_the_wider_trigger_and_differs_only_in_the_propose_rule() -> None:
