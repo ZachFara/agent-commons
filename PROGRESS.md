@@ -177,7 +177,8 @@ Record `docs/decisions/2026-11-07-MIT-565-github-task-arms.md`; `docs/eval/READM
 ## Open questions
 
 - `MIT-640`: the shipped `propose` worked example (whenever `ignore_dst`) is the cause of the
-  hold-out scenario `real-whenever-ignore-dst`, so hold-out numbers measured with the shipped
-  text are fitted to it. Changing it changes `baseline`.
+  hold-out scenario `real-whenever-ignore-dst`. Settled 2026-11-08: that hold-out was retired
+  and replaced by `real-polars-explode-empty`, so `baseline` stays byte-identical. See
+  "Hold-out change" in `docs/eval/README.md`.
 - `MIT-644`: reopening entries that become approved with findings no human has reviewed
   (decision 0026's amendment covers failures only).

@@ -162,3 +162,7 @@ sits on the path: each task asks the agent to check its change, and the check sh
 take (the app reports the old value, or the next autosave puts it back; the export prints the
 cloud's 401). Each known variant's seeded fix names the documented route concretely, so applying
 it counts as `used = yes` (checked without a model in `test_eval_no_test.py`).
+
+Amendment (2026-11-08): the whenever hold-out (`real-whenever-ignore-dst`) is retired, because
+the shipped `propose` worked example gave away its answer; `real-polars-explode-empty` replaces
+it (see "Hold-out change" in `docs/eval/README.md`).
