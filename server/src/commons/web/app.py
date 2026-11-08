@@ -79,6 +79,7 @@ class Dashboard:
                 "pending": reviews.pending(conn),
                 "duplicates": insights.duplicate_flags(conn),
                 "health": trust.queue_health(conn),
+                "live_unreviewed": insights.live_unreviewed(conn),
             }
         )
         return self._render(request, "queue.html", "queue", data)
@@ -87,7 +88,9 @@ class Dashboard:
         """Render the entry list with search, status filter, and ordering."""
         query = request.query_params.get("q", "").strip() or None
         status = request.query_params.get("status") or None
-        order = request.query_params.get("order", "score")
+        # Provisional entries are new and mostly unscored, so they sort newest first.
+        default_order = "newest" if status == "provisional" else "score"
+        order = request.query_params.get("order") or default_order
         data = await self._load(
             lambda conn: {
                 "entries": insights.entries(conn, status=status, query=query, order=order),

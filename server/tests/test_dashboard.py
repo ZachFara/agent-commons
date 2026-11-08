@@ -1,3 +1,4 @@
+import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -18,6 +19,7 @@ from commons.web import app as web
 from mcp_client import call
 
 BASE = "http://127.0.0.1:8765"
+PROVISIONAL = "/entries?status=provisional&order=newest"
 
 
 @pytest.fixture
@@ -93,7 +95,8 @@ def test_agent_written_text_is_escaped(
     entry_id = factories.entry(
         db, reporter, status="pending", symptom="<script>alert('x')</script>", cause="<b>bold</b>"
     )
-    for path in ("/queue", f"/entries/{entry_id}", "/entries"):
+    factories.entry(db, reporter, symptom="<script>alert('x')</script>", provisional=True)
+    for path in ("/queue", f"/entries/{entry_id}", "/entries", PROVISIONAL, "/mine"):
         html = client.get(path).text
         assert "<script>alert" not in html, path
         assert "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;" in html, path
@@ -286,3 +289,42 @@ def test_the_nav_badge_and_the_queue_header_agree(
     assert '<span class="count hot">1</span>' in queue
     assert "1 waiting;" in queue
     assert "1 awaiting human review" in client.get("/").text
+
+
+def provisional_count(queue: str) -> int:
+    found = re.search(r"(\d+) went live provisionally without review", queue)
+    assert found, "the queue page says how many went live without review"
+    return int(found.group(1))
+
+
+def test_entries_that_went_live_without_review_are_findable_outside_the_queue(
+    client: TestClient,
+    server: FastMCP,
+    db: psycopg.Connection,
+    reporter: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Zach couldn't find his agents' entries: a trusted one skips the queue (decision 0028)."""
+    db.execute("UPDATE reporters SET trust_level = 1 WHERE id = %s", (reporter,))
+    before = provisional_count(client.get("/queue").text)
+    sample(monkeypatch, sampled=False)
+    live = trusted_proposal(server)
+    sample(monkeypatch, sampled=True)
+    sampled = trusted_proposal(server)
+    reviewed = factories.entry(db, reporter, symptom="reviewed by a human", human_reviewed=True)
+
+    queue = client.get("/queue").text
+    assert provisional_count(queue) - before == 1
+    assert f'href="{PROVISIONAL.replace("&", "&amp;")}"' in queue
+    assert f'id="{live}"' not in queue
+    assert f'id="{sampled}"' in queue
+
+    entries = client.get(PROVISIONAL).text
+    assert f'href="/entries/{live}"' in entries
+    assert f'href="/entries/{sampled}"' not in entries
+    assert f'href="/entries/{reviewed}"' not in entries
+
+    mine = client.get("/mine").text
+    rows = {r.split('href="/entries/', 1)[1][:36]: r for r in mine.split("<tr>")[2:]}
+    assert "unreviewed" in rows[str(live)]
+    assert "unreviewed" not in rows[str(reviewed)]
