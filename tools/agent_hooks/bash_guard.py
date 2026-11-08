@@ -15,7 +15,9 @@ Denied (exit code 2, reason on stderr):
   guard can't read is denied too: setting `include.*` or `includeIf.*` (`-c`, `git config`),
   and running a subcommand git doesn't ship (so possibly an alias) with `--git-dir`,
   `--work-tree`, `--bare`, or a `GIT_CONFIG*`, `GIT_DIR`, `GIT_COMMON_DIR`, `HOME` or
-  `XDG_CONFIG_HOME` assignment on the line.
+  `XDG_CONFIG_HOME` assignment on the line. Those assignments are denied before `git commit`,
+  `push` and `merge` too, whose hooks a config file may skip; `X+=`, `printf -v X`, `read X`
+  and a `source`d file that sets one count as assignments.
 - a Linear issue ID agents don't own (any `MIT-<n>` or `P-MIT-<n>` outside
   `.agents/owned-issues.txt`) in GitHub-visible text: `git commit` messages (`-m`, `-F`
   files), `gh pr create|edit|merge` titles, bodies and body files, new branch names (`git
@@ -24,17 +26,21 @@ Denied (exit code 2, reason on stderr):
   a PR to every issue its title, body or head branch names, and moves that issue as the PR
   opens and merges. `--base` is allowed: Linear doesn't link the base branch.
 - text the guard can't read: shell substitution (`$(...)`, backticks, `$NAME`) in a title,
-  body, message, `--head`, `git push` argument or `gh api graphql` argument; an unquoted
+  body, message, `--head`, `git push` argument or `gh api graphql` argument; brace or glob
+  expansion (`{a,b}`, `{a..b}`, `*`, `?`, `[`) in a pushed refspec or `--head`; an unquoted
   heredoc that substitutes; stdin (`-F -`) unless a heredoc, and no pipe, feeds that same
   command; a message file that isn't a regular file, is over 1 MiB or can't be read; and
   `gh pr create --fill` or without an explicit title and body.
 
-Commands are split into simple commands on `;`, `&&`, `||`, `|`, newlines and `$(`; shell
-wrappers (`bash -c`, `eval`, `xargs`, a heredoc fed to a shell) are checked recursively.
-Other heredoc bodies (commit messages, PR bodies) are data, checked only for issue IDs when
-the command commits or writes PR text. This guards against mistakes, not an adversary: the
-GitHub rulesets on main and feature/ are the backstop. A crash fails closed: the entry script
-turns every exit code but 0 into 2, which blocks the call.
+Commands are split into simple commands on `;`, `&&`, `||`, `|`, newlines and `$(`; each
+one's program comes after any keywords (`{`, `!`, `if`, `then`, `do`...), assignments and
+wrappers (`env`, `sudo`...) with their options. Shell wrappers (`bash -c`, `eval` with its
+arguments joined, `env -S`, `xargs`, a heredoc fed to a shell) are checked recursively, with
+the bodies of heredocs that end inside them. Other heredoc bodies (commit messages, PR
+bodies) are data, checked only for issue IDs when the command commits or writes PR text.
+This guards against mistakes, not an adversary: the GitHub rulesets on main and feature/ are
+the backstop. A crash fails closed: the entry script turns every exit code but 0 into 2,
+which blocks the call.
 
 Entry script: .claude/hooks/bash_guard.sh. Tests: server/tests/test_agent_hooks.py.
 """
@@ -64,7 +70,7 @@ CREDENTIALS = (
 BYPASSES = (
     (re.compile(r"--no-verify\b"), "--no-verify skips the checks"),
     (re.compile(r"core\.hooksPath", re.IGNORECASE), "changing core.hooksPath skips the checks"),
-    (re.compile(r"(^|[\s;&|(])SKIP="), "SKIP= skips pre-commit hooks"),
+    (re.compile(r"(^|[\s;&|(])SKIP\+?="), "SKIP= skips pre-commit hooks"),
 )
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n(.*?)\n[ \t]*\2[ \t]*(?=\n|$)", re.DOTALL)
 # What split_heredocs leaves where a heredoc was. A typed command can't hold the NUL
@@ -76,20 +82,37 @@ CUT = "`"
 SEPARATORS = ";&|()`\n"
 PUNCTUATION = SEPARATORS + "<>"
 WRAPPERS = frozenset({"env", "command", "time", "nohup", "exec", "sudo"})
+# Wrapper options that take a value: short letters (`-u x`, `-ux`) and long names (`--user x`).
+WRAPPER_VALUES = {
+    "env": ("CPSu", frozenset({"--chdir", "--split-string", "--unset"})),
+    "exec": ("a", frozenset()),
+    "sudo": (
+        "CDghpRrTtUu",
+        frozenset({"--chdir", "--chroot", "--close-from", "--command-timeout", "--group"})
+        | frozenset({"--host", "--other-user", "--prompt", "--role", "--type", "--user"}),
+    ),
+    "time": ("fo", frozenset({"--format", "--output"})),
+}
+SPLIT_STRING = frozenset({"-S", "--split-string"})  # `env -S 'git push'` runs the split value
+# Reserved words that may come before a simple command's program.
+KEYWORDS = frozenset({"{", "!", "if", "then", "else", "elif", "do", "while", "until"})
 SHELLS = frozenset({"sh", "bash", "zsh", "dash"})
 SCRIPT_RUNNERS = SHELLS | {"eval", "source", "."}  # a heredoc fed to one of these is run
-ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*\+?=")
 GIT_GLOBAL_WITH_VALUE = frozenset(
     {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace"}
 )
 GIT_CONFIG_OPTIONS = frozenset({"-c", "--config-env"})
 # Global options under which git reads another repository's config, which may hold aliases.
 GIT_OTHER_CONFIG = frozenset({"--git-dir", "--work-tree", "--bare"})
-# Assignments that point git at other config. Matched anywhere on the line (`X=1 git ...`,
-# `export X=1; git ...`), since simple_commands drops assignments.
-GIT_CONFIG_VARIABLES = re.compile(
-    r"\b(?:GIT_CONFIG\w*|GIT_DIR|GIT_COMMON_DIR|XDG_CONFIG_HOME|HOME)="
-)
+# Variables that point git at other config, and assignments to them (`X=`, `X+=`). Matched
+# anywhere on the line (`X=1 git ...`, `export X=1; git ...`), since simple_commands drops
+# assignments. `printf -v`, `read` and `source` set them too (sets_config_variable).
+CONFIG_VARIABLE = re.compile(r"GIT_CONFIG\w*|GIT_DIR|GIT_COMMON_DIR|XDG_CONFIG_HOME|HOME")
+GIT_CONFIG_VARIABLES = re.compile(rf"\b(?:{CONFIG_VARIABLE.pattern})\+?=")
+# Subcommands that run the repository's hooks. Config the guard can't read may skip them
+# (core.hooksPath), even for these builtins.
+GIT_HOOKED = frozenset({"commit", "push", "merge"})
 # Config keys whose values the guard can't follow: aliases, and files included into config.
 ALIAS_KEYS = ("alias.",)
 INCLUDE_KEYS = ("include.", "includeif.")
@@ -104,7 +127,11 @@ API_FIELDS = ("-f", "-F", "--field", "--raw-field", "--input")
 # A Linear issue ID, also inside a longer word (`feature/MIT-575-x`). `P-MIT-29` is a project
 # reference, denied like an ID: Linear may link the issue inside it.
 ISSUE_ID = re.compile(r"(?<![a-z])(?:p-)?mit-\d+", re.IGNORECASE)
-# Shell substitution in an argument: `$(`, `${`, `$NAME`, `$1`, a `$` cut off by an unquoted
+# Brace and glob expansion in a branch name or refspec. shlex drops quotes, so quoted text
+# matches too; branch names never hold these (`HEAD@{1}` has no `,` or `..`), and a `*`
+# refspec pushes every branch, main too.
+EXPANSION = re.compile(r"[*?\[]|\{[^{}]*(?:,|\.\.)[^{}]*\}")
+# Shell substitution in an argument:`$(`, `${`, `$NAME`, `$1`, a `$` cut off by an unquoted
 # `$(` (the tokenizer splits there), or a backtick.
 SUBSTITUTION = re.compile(r"\$(?:[\w({]|$)|`")
 # `"$(cat <<'EOF' ... EOF)"` once split_heredocs has taken out the body (checked on its own).
@@ -226,8 +253,40 @@ def end_command(token: str, words: list[str], *, in_backticks: bool) -> tuple[bo
     return in_backticks, ["pipe"] if "|" in token and "||" not in token else []
 
 
+def wrapper_option(wrapper: str, words: list[str]) -> tuple[int, str, str | None]:
+    """Return how many words a wrapper's option (`words[0]`) takes, its name and its value."""
+    letters, names = WRAPPER_VALUES.get(wrapper, ("", frozenset()))
+    name, value = option_value(words[0], letters)
+    if value is None and (name in names or (len(name) == len("-u") and name[1] in letters)):
+        return 2, name, words[1] if len(words) > 1 else None
+    return 1, name, value
+
+
+def command_words(words: list[str]) -> list[str]:
+    """Return a simple command's words from its program on.
+
+    Drops the keywords, assignments, wrappers and wrapper options before it, and runs
+    `env -S` values as the command they split into.
+    """
+    wrapper = ""
+    while words:
+        if words[0] in WRAPPERS:
+            wrapper, words = words[0], words[1:]
+        elif ASSIGNMENT.match(words[0]) or words[0] in KEYWORDS:
+            words = words[1:]
+        elif wrapper and words[0].startswith("-"):
+            taken, name, value = wrapper_option(wrapper, words)
+            words = words[taken:]
+            if wrapper == "env" and name in SPLIT_STRING and value is not None:
+                words = [*shlex.split(value), *words]
+            wrapper = "" if name == "--" else wrapper
+        else:
+            break
+    return words
+
+
 def simple_commands(text: str) -> list[SimpleCommand]:
-    """Return each simple command, without assignments, wrappers or redirections."""
+    """Return each simple command, without keywords, assignments, wrappers or redirections."""
     commands = [SimpleCommand([], [])]
     redirect = ""
     in_backticks = False
@@ -243,14 +302,15 @@ def simple_commands(text: str) -> list[SimpleCommand]:
             redirect = token
             if words and words[-1].isdigit():
                 words.pop()
-        elif words or not (ASSIGNMENT.match(token) or token in WRAPPERS):
+        else:
             words.append(token)
-    return [command for command in commands if command.words]
+    stripped = [SimpleCommand(command_words(words), stdin) for words, stdin in commands]
+    return [command for command in stripped if command.words]
 
 
 def program(words: list[str]) -> str:
-    """Return the program a simple command runs, without its directory."""
-    return PurePosixPath(words[0]).name
+    """Return the program a simple command runs, without its directory (`.` stays `.`)."""
+    return PurePosixPath(words[0]).name or words[0]
 
 
 def option_values(
@@ -410,13 +470,28 @@ def push_parts(args: list[str]) -> tuple[list[str], list[str]]:
     return options, positionals
 
 
-def check_push_shape(args: list[str], options: list[str], refspecs: list[str]) -> str | None:
-    """Deny pushes the guard can't read (shell substitution), force pushes, --mirror and --all."""
+def check_push_text(args: list[str], positionals: list[str]) -> str | None:
+    """Deny pushes the guard can't read: shell substitution, brace or glob expansion."""
     if any(SUBSTITUTION.search(arg) for arg in args):
         return (
             "git push uses shell substitution, which the guard can't check:"
             " name the remote and branch literally"
         )
+    return expansion(positionals, "git push")
+
+
+def expansion(names: list[str], where: str) -> str | None:
+    """Deny branch names or refspecs with brace or glob expansion (see EXPANSION)."""
+    if any(EXPANSION.search(name) for name in names):
+        return (
+            f"{where} uses brace or glob expansion ({{a,b}}, {{a..b}}, *, ? or [), which the"
+            " guard can't check: name each branch literally"
+        )
+    return None
+
+
+def check_push_shape(options: list[str], refspecs: list[str]) -> str | None:
+    """Deny force pushes, --mirror and --all."""
     if any(is_force(option) for option in options) or any(s.startswith("+") for s in refspecs):
         return "force pushes are never allowed"
     if {"--mirror", "--all"} & set(options):
@@ -428,7 +503,7 @@ def check_push(args: list[str], cwd: str) -> str | None:
     """Deny force pushes, any push that would update main, and branch names with foreign IDs."""
     options, positionals = push_parts(args)
     refspecs = positionals[1:]
-    if reason := check_push_shape(args, options, refspecs):
+    if reason := check_push_text(args, positionals) or check_push_shape(options, refspecs):
         return reason
     targets = {spec.rsplit(":", 1)[-1].removeprefix("refs/heads/") for spec in refspecs}
     pushes_current = not refspecs or bool({"HEAD", "@"} & targets)
@@ -499,12 +574,23 @@ def check_git_config(
         )
     if sets_config(options, subcommand, args, INCLUDE_KEYS):
         return "agents don't include git config files (the guard can't see what they set)"
+    return check_other_config(options, subcommand, shell)
+
+
+def check_other_config(options: list[str], subcommand: str, shell: Shell) -> str | None:
+    """Deny config the guard can't read where it matters: possible aliases, and hooked commands."""
     other_config = {option.partition("=")[0] for option in options} & GIT_OTHER_CONFIG
     if subcommand and subcommand not in GIT_BUILTINS and (other_config or shell.sets_git_config):
         return (
             f"git {subcommand} may be an alias in config the guard can't read"
             " (--git-dir, --work-tree, --bare, GIT_CONFIG*, GIT_DIR or HOME);"
             " run the command it stands for without them"
+        )
+    if subcommand in GIT_HOOKED and shell.sets_git_config:
+        return (
+            f"git {subcommand} runs hooks, and GIT_CONFIG*, GIT_DIR, XDG_CONFIG_HOME or HOME on"
+            " the line may point it at config that skips them (core.hooksPath);"
+            " run it without them"
         )
     return None
 
@@ -615,7 +701,9 @@ def check_pr_create(args: list[str], shell: Shell) -> str | None:
             "the head branch name uses shell substitution, which the guard can't check:"
             " name the branch literally"
         )
-    return check_ids(heads or [current_branch(shell.cwd)], "the head branch name")
+    return expansion(heads, "the head branch name") or check_ids(
+        heads or [current_branch(shell.cwd)], "the head branch name"
+    )
 
 
 def check_pr_text(subcommand: str, args: list[str], shell: Shell) -> str | None:
@@ -655,7 +743,12 @@ def check_shell(args: list[str], shell: Shell) -> str | None:
 
 
 def check_eval(args: list[str], shell: Shell) -> str | None:
-    """Check what eval runs, or the command xargs runs."""
+    """Check what eval runs: its arguments joined by spaces and read as a command line."""
+    return reason_to_deny(" ".join(args), shell.cwd, outer=shell)
+
+
+def check_xargs(args: list[str], shell: Shell) -> str | None:
+    """Check the command xargs runs."""
     start = next((i for i, arg in enumerate(args) if arg in {"git", "gh", *SHELLS}), len(args))
     if start == len(args):
         return None
@@ -666,7 +759,7 @@ PROGRAMS: dict[str, Check] = {
     "git": check_git,
     "gh": check_gh,
     "eval": check_eval,
-    "xargs": check_eval,
+    "xargs": check_xargs,
     **dict.fromkeys(SHELLS, check_shell),
 }
 
@@ -682,18 +775,49 @@ def check_words(words: list[str], shell: Shell) -> str | None:
     return check(words[1:], shell) if check else None
 
 
+def sets_config_variable(words: list[str], cwd: str) -> bool:
+    """Return whether `printf -v`, `read` or `source` may set a CONFIG_VARIABLE.
+
+    A sourced file is read like a message file; one that can't be read may set anything.
+    """
+    name, args = program(words), words[1:]
+    if name in {"source", "."}:
+        try:
+            script = read_message_file(Path(cwd) / Path(args[0]).expanduser()) if args else ""
+        except (OSError, ValueError, RuntimeError):
+            return True
+        return bool(GIT_CONFIG_VARIABLES.search(script))
+    targets = {"printf": option_values(args, frozenset({"-v"}), "v"), "read": args}.get(name, [])
+    return any(CONFIG_VARIABLE.fullmatch(target) for target in targets)
+
+
+def heredocs(command: str, outer: Shell | None) -> tuple[str, list[str], bool]:
+    """Return split_heredocs of a command, with the bodies of heredocs the outer line took out.
+
+    A heredoc whose end line comes before a wrapper's closing quote (`bash -c "..."`, `eval`)
+    is taken out by the outer line, which leaves HEREDOC_MARK in the wrapped command.
+    """
+    text, bodies, expands = split_heredocs(command)
+    if outer is not None and HEREDOC_MARK in command:
+        return text, [*bodies, *outer.heredocs], expands or outer.expands
+    return text, bodies, expands
+
+
 def reason_to_deny(command: str, cwd: str, outer: Shell | None = None) -> str | None:
     """Return why a Bash command is denied, or None if it is allowed.
 
     `outer` is the command line a wrapper (`bash -c`, a heredoc fed to a shell) runs this in.
     """
-    if "\0" in command:
+    # Only split_heredocs puts a NUL in a wrapped command: the typed line can't hold one.
+    if "\0" in (command if outer is None else command.replace(HEREDOC_MARK, "")):
         return "the command holds a NUL byte; remove it"
-    text, bodies, expands = split_heredocs(command)
+    text, bodies, expands = heredocs(command, outer)
     commands = simple_commands(text)
     reasons = [scan(CREDENTIALS, command), scan(BYPASSES, text)]
-    sets_git_config = bool(GIT_CONFIG_VARIABLES.search(text)) or (
-        outer is not None and outer.sets_git_config
+    sets_git_config = (
+        bool(GIT_CONFIG_VARIABLES.search(text))
+        or (outer is not None and outer.sets_git_config)
+        or any(sets_config_variable(simple.words, cwd) for simple in commands)
     )
     shell = Shell(cwd, tuple(bodies), expands, sets_git_config=sets_git_config)
     if bodies and any(program(simple.words) in SCRIPT_RUNNERS for simple in commands):

@@ -776,6 +776,188 @@ def test_bash_guard_caps_the_message_file_it_reads(
     assert "larger than 1 MiB" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("gh", "agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Shell keywords come before the program.
+        "{ git push origin main; }",
+        "if true; then git push --force origin feat/x; fi",
+        "if false; then :; else git push origin main; fi",
+        "if false; then :; elif git push origin main; then :; fi",
+        "for b in x; do git push --force origin feat/x; done",
+        "while true; do git push origin main; done",
+        "until git push origin main; do :; done",
+        "! git push origin main",
+        "! { git push origin main; }",
+        # Wrapper options, and the values some of them take.
+        "env -u X git push origin main",
+        "env -i PATH=/usr/bin git push origin main",
+        "env --unset=X git push origin main",
+        "env --unset X git push origin main",
+        "env -C . git push origin main",
+        "env -- git push origin main",
+        "sudo -u x git push origin main",
+        "sudo -E -u x git push origin main",
+        "sudo -Eux git push origin main",
+        "sudo --user=x git push origin main",
+        "command -p git push origin main",
+        "exec -a x git push origin main",
+        "time -p git push origin main",
+        # env -S splits its value into the command it runs.
+        "env -S 'git push origin main'",
+        "env -S'git push --force origin feat/x'",
+        "env --split-string='git push origin main'",
+        "env -i -S 'git push origin main'",
+        # eval joins its arguments into a command line and runs that.
+        'eval "git push origin main"',
+        "eval 'git push --force origin feat/x'",
+        "eval 'git' 'push origin main'",
+        "eval 'make check && git push origin main'",
+        "time eval 'git push origin main'",
+    ],
+)
+def test_bash_guard_sees_past_keywords_wrapper_options_and_eval_strings(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "push" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "{ git status; }",
+        "if git diff --quiet; then git push -u origin HEAD; fi",
+        "for f in a b; do echo if then git push origin main; done",
+        "env -u X git status",
+        "sudo -u x git log --oneline -5",
+        "env -S 'git status'",
+        "eval 'git status'",
+        "eval \"git commit -m 'feat: x'\"",
+    ],
+)
+def test_bash_guard_allows_keywords_wrappers_and_eval_around_allowed_commands(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GIT_CONFIG_GLOBAL=.scratch/config git commit -m 'feat: x'",
+        "GIT_CONFIG_SYSTEM=.scratch/config git commit -m 'feat: x'",
+        "HOME=.scratch git commit -m 'feat: x'",
+        "export HOME=.scratch; git push -u origin feat/x",
+        "env XDG_CONFIG_HOME=.scratch git merge origin/feat/x",
+        "GIT_DIR=../other/.git git commit -m 'feat: x'",
+        "GIT_CONFIG_GLOBAL=.scratch/config bash -c 'git commit -m x'",
+        # Other ways to assign them.
+        "HOME+=/x git commit -m 'feat: x'",
+        "export GIT_CONFIG_GLOBAL+=x; git commit -m 'feat: x'",
+        "printf -v HOME %s .scratch; git commit -m 'feat: x'",
+        "printf -vGIT_CONFIG_GLOBAL %s .scratch/config; git push -u origin feat/x",
+        "read HOME < .scratch/home; git commit -m 'feat: x'",
+        "read -r GIT_CONFIG_GLOBAL < .scratch/home; git merge feat/x",
+        "source .scratch/env.sh; git commit -m 'feat: x'",
+        ". .scratch/env.sh && git push -u origin feat/x",
+        ". .scratch/missing.sh && git commit -m 'feat: x'",
+    ],
+)
+def test_bash_guard_denies_config_variables_before_commands_that_run_hooks(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A config file the agent wrote could set core.hooksPath for git's own commit or push."""
+    (repo / ".scratch").mkdir()
+    (repo / ".scratch" / "env.sh").write_text("export HOME=.scratch\n", encoding="utf-8")
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "runs hooks" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GIT_CONFIG_GLOBAL=.scratch/config git status",
+        "printf -v x %s HOME; git commit -m 'feat: x'",
+        "read -r line < .scratch/home; git commit -m 'feat: x'",
+        "source .scratch/venv.sh && git commit -m 'feat: x'",
+        "git commit -F - <<'EOF'\nfix: keep HOME= out of the hook\nEOF",
+    ],
+)
+def test_bash_guard_allows_config_variables_elsewhere(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repo / ".scratch").mkdir()
+    (repo / ".scratch" / "venv.sh").write_text("PYTHONHOME=x\nPATH=x\n", encoding="utf-8")
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 0
+
+
+def test_bash_guard_denies_skip_appended_too(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert bash("SKIP+=check git commit -m 'feat: x'", repo, monkeypatch) == 2
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin {feat/x,main}",
+        "git push origin feat/x{,:main}",
+        "git push origin feat/{1..3}",
+        "git push origin 'refs/heads/*:refs/heads/*'",
+        "git push origin ma?n",
+        "git push origin m[a]in",
+        "git push {origin,x} feat/x",
+        "gh pr create --base main --head {feat/x,y} --title x --body y",
+        "gh pr create --base main -H feat/* -t x -b y",
+        "gh pr create --base main --head=feat/? -t x -b y",
+    ],
+)
+def test_bash_guard_denies_expansion_in_pushes_and_heads(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """shlex drops quotes, so quoted text is denied too; branch names never hold these."""
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "brace or glob expansion" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_allows_reflog_braces_in_a_push(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = "git push origin 'HEAD@{1}:refs/heads/feat/x'"
+    assert bash(command, repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize("wrapper", ["bash -c", "eval"])
+def test_bash_guard_reads_a_heredoc_inside_a_wrapped_command(
+    wrapper: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The heredoc's end comes before the closing quote, so the outer line holds its body."""
+
+    def wrapped(script: str) -> str:
+        return f'{wrapper} "{script}\n"'
+
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    commit = "git commit -F - <<'EOF'\nfeat: x {id}\nEOF"
+    assert bash(wrapped(commit.format(id=AGENT_TICKET)), repo, monkeypatch) == 0
+    assert bash(wrapped(commit.format(id=FOREIGN_ID)), repo, monkeypatch) == 2
+    assert FOREIGN_ID in capsys.readouterr().err
+    assert bash(wrapped("bash <<'EOF'\ngit push origin main\nEOF"), repo, monkeypatch) == 2
+    assert "only Zach changes main" in capsys.readouterr().err
+    assert bash(wrapped("git commit -F - <<EOF\nfeat: $(date)\nEOF"), repo, monkeypatch) == 2
+    assert "shell substitution" in capsys.readouterr().err
+
+
 def test_bash_guard_denies_a_nul_byte(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert bash("git commit -m 'feat: x\0'", repo, monkeypatch) == 2
 
