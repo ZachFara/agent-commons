@@ -24,6 +24,24 @@ Decision:
    only the orchestrator merges them (squash, after CI and a reviewer PASS). Zach gets one PR
    into main from `final/<slug>`, cut from the feature branch, with no Commons ID in its title
    or body, and is the only one who merges into main.
+
+   *Amended 2026-11-08.* Zach asked to slim the branches down so they don't confuse him or
+   others. After the integration PR the repo has `main` and one working branch, and it stays
+   that way. This replaces the per-ticket `feature/MIT-<n>-<slug>` and `final/<slug>`
+   branches above:
+   - One working branch at a time, `feature/<slug>` with no issue ID in the name, cut from
+     main. All agent PRs target it.
+   - A new Commons ticket joins the current working branch unless Zach asks otherwise; it
+     gets no long-lived branch of its own.
+   - Each coder branch is deleted when its PR merges (`gh pr merge --squash --delete-branch`),
+     and its worktree is removed when the work is done.
+   - When the working branch's work is finished, it goes to main as one PR from the branch
+     itself. No `final/*` copy is needed, because the name holds no Commons ID. Zach merges
+     it; the branch is then deleted (the repository deletes head branches on merge), and the
+     next working branch is cut fresh from main.
+   - The orchestrator's Finish steps (whole-branch review, docs pass, final PR) run once per
+     working branch, not once per Commons ticket. Each Commons ticket still has its own Final
+     agent ticket; they all track the one final PR.
 3. Role definitions live in `.claude/agents/`; the orchestrator runs as the main session with
    `claude --agent commons-orchestrator`.
 4. Hooks in `.claude/settings.json` enforce the hard limits; their logic and tests are in
@@ -42,6 +60,15 @@ Decision:
      `--base` branch is allowed. Text it can't read is denied too: shell substitution in a
      message, stdin without a heredoc, `gh pr create --fill`, and git aliases it can't
      expand. Best effort against mistakes; GitHub rulesets are the backstop.
+
+   *Amended 2026-11-08*, with item 2 (Zach asked to slim the branches down so they don't
+   confuse him or others): the guards are unchanged, and the one-working-branch flow passes
+   them as they are. Coder PRs merge into a `feature/` base, which `bash_guard` allows. The
+   final PR opens with `gh pr create --base main --head feature/<slug>`, and a head with no
+   unowned issue ID passes the head check, so it needs no `final/<slug>` branch. Cutting a
+   working branch (`git push origin origin/main:refs/heads/feature/<slug>`), removing
+   worktrees and deleting merged branches other than main are allowed; deleting main stays
+   denied.
 5. GitHub ruleset on `main` and `feature/**`, no bypass actors: PR required (0 approvals:
    agents push as Zach and an author can't approve their own PR), required `check`, branches
    up to date, no force pushes.
@@ -55,7 +82,8 @@ Decision:
 7. New allowed top-level paths: `.claude/`, `scripts/`, `.worktreeinclude`,
    `.env.agent.example` (amends decision 0002's list).
 
-Consequences: Zach reviews one PR per delegated ticket instead of one per task. The rulesets
+Consequences: Zach reviews one PR per delegated ticket instead of one per task (amended
+2026-11-08: one PR per working branch, which may carry several delegated tickets). The rulesets
 bind Zach too: an urgent fix to main also needs a PR with a passing `check`. The guards are
 string-level checks of Bash commands; a determined process could get around them, which is
 why the GitHub rules don't rely on them. Snapshots hold plaintext production data on this

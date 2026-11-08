@@ -104,12 +104,17 @@ Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
   delegates a ticket by moving it to Delegated, and agents also act on its Backlog tickets
   (Zach, 2026-11-07). Agents write only in "Commons Agent Project"
   (P-MIT-29): agent tickets (Next, In Progress, In Review, Done, Canceled), one "Final:
-  MIT-<n>" ticket per delegated ticket, and "Question: ..." tickets in Inbox for Zach.
-- **Branches.** Each delegated ticket gets `feature/<slug>` from main, with no Commons ID in
-  the name (older ones are `feature/MIT-<n>-<slug>`). A coder
-  branches `feat/|fix/|chore/|docs/<ticket ID>` from it and opens a PR back into it. The
-  orchestrator squash-merges after CI passes and the reviewer returns PASS. Zach gets one PR
-  into main from `final/<slug>`, cut from the feature branch, and only Zach merges into main.
+  MIT-<n>" ticket per delegated ticket (a working branch's Final tickets all track its one PR
+  into main), and "Question: ..." tickets in Inbox for Zach.
+- **Branches.** The repo has `main` and one working branch at a time (Zach, 2026-11-08):
+  `feature/<slug>`, cut from main, with no issue ID in the name. Every Commons ticket the
+  orchestrator takes on joins it unless Zach asks otherwise; no Commons ticket gets a
+  long-lived branch of its own. A coder branches `feat/|fix/|chore/|docs/<ticket ID>` from it
+  and opens a PR back into it. The orchestrator squash-merges after CI passes and the reviewer
+  returns PASS, with `gh pr merge --delete-branch`, and removes the coder's worktree once its
+  work is done. When the working branch's work is finished, Zach gets one PR into main from the
+  working branch itself, and only Zach merges into main. GitHub deletes the branch when he
+  merges, and the next working branch is cut fresh from main.
 - **Roles** (`.claude/agents/`): `commons-orchestrator` (run it with
   `claude --agent commons-orchestrator`), `planner`, `researcher`, `coder` (own worktree, no
   Linear), `reviewer`.
@@ -203,7 +208,7 @@ from the Learned sections of merged PRs.
 - Linear's GitHub integration is connected: it links a PR to every issue ID in its title, body or head branch name (not its base), and moves that issue to In Progress when the PR opens and to Done when it merges. `bash_guard` denies IDs agents don't own in commits, PR text and branch names, so write that text without Commons IDs.
 - Linear turns any issue ID in agent-written text into a mention. Write Commons IDs in code spans so nothing appears on Zach's tickets.
 - Custom agent types in `.claude/agents/` load at session start only. In a session where they were added later, use the built-in `Plan` (read only) and `general-purpose` (with `isolation: worktree`) agents pointed at the role files.
-- Parallel feature branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.
+- Parallel coder branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.
 - "Awaiting review" means `store.reviews.IN_QUEUE`, everywhere. New counts of waiting entries use it, not `NOT human_reviewed`.
 - A human review leaves `provisional` set. Filters on provisional entries must also test `NOT human_reviewed`. `factories.entry` defaults `provisional=False`, so a "human-reviewed" test entry must set `provisional=True` too, or the clause goes untested (reviewers caught this twice).
 - In hosted mode `/entries/<id>` needs a review key. Only `/mine` is open to any key (decision 0035).
