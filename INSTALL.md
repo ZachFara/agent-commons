@@ -174,5 +174,22 @@ machine with Docker and a DNS name pointing at it (ports 80 and 443 open).
 4. Admins review proposals at `https://<domain>/`. The browser asks for a user name (anything)
    and a password (an admin key, or a review key for the review pages only).
 
+Two admin commands for upkeep, run like the invite above (or `uv run commons admin ...` from
+`<path>` on a local store):
+
+- `commons admin rescan` reruns the risk scanner (decision 0029) over pending entries and
+  every entry search can return, and prints each entry whose findings change as
+  `before -> after`. By default it is a dry run and writes nothing. With `--apply` it stores
+  the new reports: an approved provisional entry no human has reviewed that gains a finding
+  goes back to the review queue, and human-approved entries stay approved with the new label.
+  The text is never changed. Run it after the risk patterns change. Restoring an entry
+  rescans that entry by itself.
+- `commons admin relevance-candidates [--days N]` prints one JSON line per search of the last
+  N days (default 30), oldest first: the redacted query, each returned entry's rank,
+  relevance, observed use, outcome, agent assessment and suggested label, and the entries
+  suggested as relevant. These are candidates for the judged relevance set (decision 0025);
+  check them before adding any. It writes nothing, and leaves out excluded and test-key
+  searches.
+
 Ranking refreshes itself when a session starts and snapshots are over a day old; no scheduler
 is needed. Back up the `pgdata` volume.

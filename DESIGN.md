@@ -48,7 +48,7 @@ entries
 - revision: integer, the current version of the text. Every version is kept in `entry_revisions` (text, source, editor, reason, redaction report); retrievals record the revision they showed.
 - superseded_by: entry id, nullable. A superseded entry never appears in search.
 - aliases: text[]. Wording of duplicates merged into this entry; search matches it like the symptom. duplicate_candidates (up to 3 {entry_id, score, retry}) and duplicate_of are set on propose for the reviewer (decision 0027); `distinct_pairs` remembers pairs a reviewer kept apart.
-- risk_report: jsonb, like redaction_report: what the risk scanner found in symptom, cause, fix and repro (pipe-to-shell, broad deletes, credential reads, disabled security, decoded execution, raw-URL installs, text aimed at the reading agent, hidden characters, which are stripped). Shown in the review queue and, for approved entries, in search provenance (decision 0029).
+- risk_report: jsonb, like redaction_report: what the risk scanner found in symptom, cause, fix and repro (pipe-to-shell, broad deletes, credential reads, disabled security, decoded execution, raw-URL installs, text aimed at the reading agent, hidden characters, which are stripped). Shown in the review queue and, for approved entries, in search provenance (decision 0029). `commons admin rescan` reruns the scanner over pending entries and every entry search can return, retired ones with a fix version included; `lifecycle.restore` rescans the entry it restores.
 - fixed_in: {library, version}, nullable, on retired entries. Such an entry still appears to a caller whose `environment.libraries` has an older version, marked "fixed in".
 - human_reviewed: boolean. False until at least one human review exists.
 - created_by: reporter id.
@@ -63,7 +63,7 @@ retrievals
 - task_id: UUID. One task is one agent session or one user request; the client mints it.
 - query: text. What the agent searched for.
 - rank_position: int. Where the entry appeared in results.
-- score_at_retrieval: float. The ranking score at the time, so ranking changes can be evaluated later; its factors `relevance`, `version_factor` and `outcome_score` are logged beside it.
+- score_at_retrieval: float. The ranking score at the time, so ranking changes can be evaluated later; its factors `relevance`, `version_factor` and `outcome_score` are logged beside it, and the score is their product. Rows from before migration 0019 leave the factors null.
 
 searches
 - task_id, reporter_id, model_id, privacy_mode, created_at.
@@ -77,7 +77,7 @@ outcomes
 - outcome: enum tests_passed, tests_failed, error_resolved, error_persisted, user_accepted, user_rejected, abandoned, unknown.
 - evidence: jsonb. Hook payloads: test command, exit code, diff hash, timestamps.
 - agent_assessment: text, nullable. The agent's own post-hoc grading, kept separately from the observed fields so the two can be compared.
-- tokens_in, tokens_out, wall_clock_seconds: nullable. Cost of the task after retrieval.
+- tokens_in, tokens_out, wall_clock_seconds: nullable. Cost of the task after retrieval, filled by the Stop hook from the transcript: `tokens_in` is input + cache creation + cache read tokens, `tokens_out` is output, and the wall clock runs from the retrieval to the last assistant message. Each Stop overwrites them; one with no usage to read leaves them as they were. The token columns are int4, so sums are clamped at 2^31−1.
 
 reporters
 - pseudonym: text, unique. No email, no real name.
@@ -187,7 +187,7 @@ v1, after a month of data:
 
 - Decay and absorption detection: an entry whose retrievals fall while the matching query volume holds steady is being absorbed into newer models. An entry whose `used` rate stays high but success rate falls is going stale. Both are flagged in `status`, with the model version where the change appeared.
 - Counterfactuals: for a sample of tasks, the client re-runs the task without the entry and writes a counterfactual_runs pair. Effect estimate = success rate with minus without, per entry, reported with the sample size.
-- Cost: tokens and wall clock with versus without, per entry, from the counterfactual pairs.
+- Cost: tokens and wall clock with versus without, per entry, from the counterfactual pairs. These remain the experiment's measure. The per-entry cost on the dashboard is observed instead: tokens after retrieval per success, from `outcomes`.
 - Model attribution: success rate per entry per model version. This is the map of what each model gets wrong.
 
 The agent's self-assessment is never an input to the score. It is a separate column for measuring how wrong self-reports are.
@@ -198,7 +198,12 @@ A `commons export` CLI command produces a dataset containing entries (approved o
 
 A `commons report` command renders the status page: top entries, decaying entries, per-model failure map, self-report accuracy, and cost savings.
 
-An admin dashboard, a small read-only-first web page served by the server, shows incoming proposals, the review queue, recent retrievals and outcomes, and lets an admin file human reviews.
+An admin dashboard, a small read-only-first web page served by the server, shows incoming proposals, the review queue, recent retrievals and outcomes, and lets an admin file human reviews. It also shows:
+
+- Per entry (Entries list and entry page): size in search results (the text fields of its search hit, characters ÷ 4); tokens per success (`tokens_in + tokens_out` over used outcomes with a known result and recorded tokens, divided by the successes); the median tokens after retrieval when it worked and when it failed. Each figure shows its n.
+- The retrieval funnel on the entry page: retrieved, then not used, use unknown, or used; used splits into worked, failed and no result. The Searches page lists "Found, not used": searches of the last 30 days where hooks saw every returned entry go unused.
+- The proposal funnel on the Overview: the last 30 days' proposals per model, each in one bucket (human-, auto- or agent-approved, rejected with the human's reasons, merged duplicate, flagged duplicate, pending, retired, suspended reporter).
+- Approved entries per model that were proposed 60+ days ago and not retrieved in 60 days, and those retrieved 3+ times but never used.
 
 ## 9. Installation
 
