@@ -75,11 +75,57 @@ Proposed. Each item has options and a recommendation.
    to (library, version, topic), and topic needs the query, which `entry` mode doesn't keep.
 7. **Eval feasibility.** The eval runs with `--strict-mcp-config` and invented libraries
    (0023-behavioral-eval.md). Context7 has no docs for an invented library. A fallback
-   condition therefore needs:
+   condition (item 8) therefore needs:
    - Context7 in the eval MCP config;
    - network access in eval sessions;
    - scoring only on the hold-out scenarios built on real post-cutoff changes, where Context7
      can have real docs.
+8. **Fallback on a miss.** What an agent is told, or given, when `search` finds nothing. Today
+   a miss returns an empty `data` with the shipped empty-result note (`INVITE_NOTE` in
+   `agent_text.py`, wording surface `f1`): "No entries match", then an invitation to `propose`
+   once solved. It says nothing about docs. Context7 is only observed.
+   - (a) Nothing changes on a miss.
+     - For agents: nothing. They read the propose invitation and go to the docs on their own,
+       and the hook records the lookup.
+     - Eval: none. This is the baseline the other options are measured against.
+   - (b) The miss note also names Context7. One sentence follows the propose invitation, for
+     example "If you have Context7, call `resolve-library-id` for whenever, then `query-docs`
+     for version 0.11.0." The library and version come from the caller's
+     `environment.libraries`. When the call passed none, the sentence names the tools without a
+     library. `data` stays empty, so "nothing found" stays honest (DESIGN §4), and nothing is
+     stored beyond what `searches` keeps today.
+     - For agents: one more sentence on a miss, pointing at a lookup. The server can't tell
+       whether the client has Context7, so the sentence is conditional. `query-docs` takes a
+       Context7 id (`/org/project`), not a package name, so the note names
+       `resolve-library-id` first. Only agents that pass `environment.libraries` get a named
+       library, and the `search` argument description mentions only `language`. Asking for
+       libraries there is a second surface.
+     - Eval: one named condition, a new option of the empty-result surface, measured on
+       scenarios it was not shaped against (0023-behavioral-eval.md). Adopt it only if it
+       beats the shipped note on both models with no new proposals on the controls (0034), and
+       good proposals don't drop, since the note shares space with the propose invitation. It
+       is the miss-only, every-time form of item 4 (c), so it is not randomized in production
+       (item 4 (a)). It needs item 7's setup: Context7 in the eval MCP config, network access,
+       scoring on the hold-outs.
+   - (c) The server calls Context7 itself on a miss and returns pointers. The response gains
+     the Context7 library id and version for each library in `environment.libraries` that
+     resolves. No doc text is returned or stored (items 2 and 3).
+     - For agents: a pointer they can pass straight to `query-docs`, which saves the
+       `resolve-library-id` call. They still need Context7 to read the docs, and the pointer is
+       only as good as the server's resolve.
+     - Costs: the store makes outbound calls for the first time, with a Context7 key, rate
+       limits, and latency and failures on every miss. The server reads Context7's responses,
+       which the hook never does. Only library names may be sent: the query can quote the
+       user's code, and Commons forwarding it to a third party goes past what
+       0016-hooks-and-observed-outcomes.md lets leave the machine and what item 1 (a) keeps. A
+       `local` store (0014) sends nothing anywhere today, so it would be off there. Server-side
+       resolves are not agent lookups and stay out of `doc_lookups`.
+     - Eval: a named condition too, since the response changes what agents see. It needs item
+       7's setup, plus network access for the eval's own server.
+   - Recommend (a) now, and (b) as the first fallback condition once item 7's setup exists. (b)
+     is one sentence on the text agents already read after a miss, needs no new code path, and
+     can be measured. (c) only if the (b) eval shows agents skip the lookup because they can't
+     resolve the library: it adds a third party, a key and outbound calls to save one tool call.
 
 **Credit.** When a fix came from both a Commons entry and a lookup, both are recorded: the
 entry's outcome in `outcomes`, the lookup in `doc_lookups`. Credit is not split. Entry scores
@@ -94,5 +140,5 @@ licensed text. Harder: lookups can't be rated until there is a metric that works
 text, and `entry` mode loses the topic. Random routing is ruled out in production, so the
 comparison between Commons and Context7 rests on the eval, which needs network access and
 real libraries. The cold-start problem is measured here, not solved. Revisit when two weeks of
-lookup data exist, when the eval has a fallback condition, or if Zach wants doc text ingested
-after a licensing check.
+lookup data exist, when the eval has a fallback condition (item 8 (b)), or if Zach wants doc
+text ingested after a licensing check.
