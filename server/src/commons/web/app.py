@@ -433,6 +433,9 @@ def _overview_data(conn: Connection) -> dict[str, Any]:
             classes=("s1", "s1-tint"),
         ),
         "top": [e for e in top if e["success_rate"] is not None][:TOP_ENTRIES],
+        "funnel": insights.proposal_funnel(conn),
+        "buckets": insights.FUNNEL_BUCKETS,
+        "approved_use": insights.approved_use(conn),
     }
 
 

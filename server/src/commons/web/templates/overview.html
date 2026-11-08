@@ -28,4 +28,17 @@
       <span class="stats">worked {{ pct(e.success_rate) }} when used · {{ e.retrieval_count_30d }} retrievals</span>
     </li>{% endfor %}</ul>{% else %}<div class="empty">No entries with outcomes yet.</div>{% endif %}</section>
 </div>
+<section class="card" style="margin-top: 16px"><h2>Proposal funnel <span class="hint">entries proposed in the last 30 days, by what became of them (DESIGN §11)</span></h2><div class="table-wrap"><table>
+  <thead><tr><th>Model</th><th class="num">Proposed</th><th class="num" title="Approved by a human">Human-approved</th><th class="num" title="Approved on the proposer's trust, no human yet (decision 0028)">Auto-approved</th><th class="num" title="Approved by an agent review only (decision 0005)">Agent-approved</th><th class="num" title="Rejected by a human">Rejected</th><th class="num" title="Merged into another entry (decision 0027)">Merged duplicate</th><th class="num" title="Waiting for a human, with likely duplicates (decision 0027)">Flagged duplicate</th><th class="num" title="Waiting for a human">Pending</th><th class="num" title="Retired, or superseded by a better entry without a merge (decision 0026)">Retired</th><th class="num" title="Proposed by a reporter who is now suspended (decision 0029)">Suspended reporters</th></tr></thead><tbody>
+  {% for f in funnel %}<tr data-funnel="{{ f.model }}"><td class="mono">{{ f.model }}</td><td class="num" data-bucket="proposals">{{ f.proposals }}</td>
+    {% for b in buckets %}<td class="num" data-bucket="{{ b }}">{{ f[b] }}</td>{% endfor %}</tr>
+    {% if f.reasons %}<tr><td></td><td colspan="10" class="muted">Rejected because: {% for r in f.reasons %}{{ r.reason }} ({{ r.count }}){{ "; " if not loop.last }}{% endfor %}</td></tr>{% endif %}
+  {% else %}<tr><td colspan="11" class="empty">No proposals in the last 30 days.</td></tr>{% endfor %}
+  </tbody></table></div>
+  <h2 style="margin-top: 16px">Approved entries in search <span class="hint">all approved entries, by proposing model</span></h2><div class="table-wrap"><table>
+  <thead><tr><th>Model</th><th class="num">Approved</th><th class="num" title="Proposed 60 or more days ago">Not retrieved in 60 days</th><th class="num" title="Hooks never saw it used">Retrieved 3+ times, never used</th><th class="num">Suspended reporters'</th></tr></thead><tbody>
+  {% for a in approved_use %}<tr data-approved="{{ a.model }}"><td class="mono">{{ a.model }}</td>
+    {% for b in ("approved", "unretrieved", "never_used", "suspended") %}<td class="num" data-use="{{ b }}">{{ a[b] }}</td>{% endfor %}</tr>
+  {% else %}<tr><td colspan="5" class="empty">No approved entries yet.</td></tr>{% endfor %}
+  </tbody></table></div></section>
 {% endblock %}

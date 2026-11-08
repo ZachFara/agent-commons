@@ -8,12 +8,16 @@ import psycopg
 import pytest
 from fastmcp import FastMCP
 from psycopg import sql
+from psycopg.types.json import Jsonb
 from starlette.testclient import TestClient
 
 import factories
+from commons.service.duplicates import merge
+from commons.service.lifecycle import retire
 from commons.service.ranking import rank
 from commons.store import insights
 from commons.store.connection import Connection
+from commons.store.reporters import upsert_reporter
 from commons.web import app as web
 from mcp_client import call
 
@@ -447,3 +451,149 @@ def test_after_a_review_you_return_to_the_page_you_were_on(
         headers={"origin": BASE, "referer": "https://evil.example/phish"},
     )
     assert elsewhere.headers["location"].startswith("/queue?")
+
+
+# Proposal funnel
+
+
+def suspended_reporter(db: psycopg.Connection) -> uuid.UUID:
+    suspended = upsert_reporter(db, f"suspended-{uuid.uuid4().hex[:8]}", "entry")
+    db.execute("UPDATE reporters SET suspended_at = now() WHERE id = %s", (suspended,))
+    return suspended
+
+
+def add_review(
+    db: psycopg.Connection, entry_id: uuid.UUID, by: uuid.UUID, reason: str, source: str
+) -> None:
+    db.execute(
+        "INSERT INTO reviews (entry_id, reviewed_by, decision, reason, source, created_at) "
+        "VALUES (%s, %s, 'reject', %s, %s, clock_timestamp())",
+        (entry_id, by, reason, source),
+    )
+
+
+def funnel_proposals(db: psycopg.Connection, reporter: uuid.UUID, model: str) -> None:
+    """Proposals by `model` with every fate (see the expected counts in the tests below)."""
+
+    def entry(**fields: object) -> uuid.UUID:
+        return factories.entry(db, reporter, model, **fields)
+
+    # A human review leaves `provisional` set (test_safety), so one approval keeps it.
+    canonical = entry(human_reviewed=True, provisional=True)
+    entry(human_reviewed=True, provisional=False)
+    entry(human_reviewed=False, provisional=True)
+    entry(human_reviewed=False, provisional=True, sampled=True)
+    entry(human_reviewed=False, provisional=False)  # approved by an agent review
+    for reason in ("not reusable", "wrong fix", "not reusable"):
+        rejected = entry(status="rejected", human_reviewed=True, provisional=False)
+        add_review(db, rejected, reporter, "an agent's reason", "agent")
+        add_review(db, rejected, reporter, reason, "human")
+    # Merged: a pending duplicate is rejected, an approved one retired, both superseded.
+    for status in ("pending", "approved"):
+        merge(db, entry(status=status, human_reviewed=False, provisional=False), canonical)
+    # Superseded by an admin with no merge (decision 0026 §3): retired, not merged.
+    better = entry(human_reviewed=True, provisional=False)
+    retire(db, entry(human_reviewed=True, provisional=False), "a newer fix", superseded_by=better)
+    flag = Jsonb([{"entry_id": str(canonical), "score": 0.5}])
+    entry(status="pending", human_reviewed=False, provisional=False, duplicate_candidates=flag)
+    entry(status="pending", human_reviewed=False, provisional=False)
+    entry(status="rejected", human_reviewed=False, provisional=False)  # an agent's reject only
+    entry(status="retired", human_reviewed=True, provisional=False)
+    suspended = suspended_reporter(db)
+    for status in ("approved", "pending"):
+        factories.entry(db, suspended, model, status=status, human_reviewed=status == "approved")
+    # Proposed before the window: in no bucket.
+    entry(human_reviewed=True, provisional=False, created_at="2020-01-01")
+
+
+FUNNEL = {
+    "proposals": 18,
+    "human_approved": 3,
+    "auto_approved": 2,
+    "agent_approved": 1,
+    "rejected": 3,
+    "merged": 2,
+    "flagged": 1,
+    "pending": 2,
+    "retired": 2,
+    "suspended": 2,
+}
+
+
+def test_each_proposal_lands_in_one_funnel_bucket(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    model = f"funnel-{uuid.uuid4().hex[:8]}"
+    funnel_proposals(db, reporter, model)
+
+    (row,) = [row for row in insights.proposal_funnel(db) if row["model"] == model]
+    assert {bucket: row[bucket] for bucket in FUNNEL} == FUNNEL
+    assert sum(row[bucket] for bucket in insights.FUNNEL_BUCKETS) == row["proposals"]
+    assert row["reasons"] == [
+        {"reason": "not reusable", "count": 2},
+        {"reason": "wrong fix", "count": 1},
+    ]
+
+
+def test_overview_shows_the_proposal_funnel(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    model = f"funnel-{uuid.uuid4().hex[:8]}"
+    funnel_proposals(db, reporter, model)
+
+    page = client.get("/").text
+    row = page.split(f'<tr data-funnel="{model}">', 1)[1].split("</tr>", 1)[0]
+    assert dict(re.findall(r'data-bucket="(\w+)">(\d+)<', row)) == {
+        bucket: str(count) for bucket, count in FUNNEL.items()
+    }
+    assert "Rejected because: not reusable (2); wrong fix (1)" in page
+    assert "an agent&#39;s reason" not in page
+
+
+def approved_entries(db: psycopg.Connection, reporter: uuid.UUID, model: str) -> None:
+    """Approved entries by `model`: 3 not retrieved in 60 days, 2 retrieved 3+ times unused."""
+
+    def entry(**fields: object) -> uuid.UUID:
+        return factories.entry(db, reporter, model, human_reviewed=True, **fields)
+
+    def retrieved(entry_id: uuid.UUID, used: str | None, when: str | None = None) -> uuid.UUID:
+        outcome = factories.outcome(db, entry_id, reporter, created_at=when)
+        set_outcome(db, outcome, used=used)
+        return outcome
+
+    entry(created_at="2020-01-01")  # never retrieved
+    retrieved(entry(created_at="2020-01-01"), "yes", "2020-02-01")  # not in the last 60 days
+    exclude_retrieval_of(db, retrieved(entry(created_at="2020-01-01"), "yes"))  # doesn't count
+    retrieved(entry(created_at="2020-01-01"), "no")  # retrieved recently
+    entry()  # new: it hasn't had 60 days yet
+    never_used = entry()
+    for used in ("no", None, "no"):
+        retrieved(never_used, used)
+    used_once = entry()
+    for used in ("no", "partial", None):
+        retrieved(used_once, used)
+    twice = entry()  # under 3 retrievals
+    for used in ("no", "no"):
+        retrieved(twice, used)
+    unused_excluded = entry()  # its use is on an excluded retrieval, so never observed used
+    for used in ("no", "no", "no"):
+        retrieved(unused_excluded, used)
+    exclude_retrieval_of(db, retrieved(unused_excluded, "yes"))
+    factories.entry(db, suspended_reporter(db), model, human_reviewed=True, created_at="2020-01-01")
+    entry(status="retired", created_at="2020-01-01")  # not approved: in no count
+
+
+def test_approved_entries_never_retrieved_or_never_used(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    model = f"use-{uuid.uuid4().hex[:8]}"
+    approved_entries(db, reporter, model)
+    expected = {"approved": 9, "unretrieved": 3, "never_used": 2, "suspended": 1}
+
+    (row,) = [row for row in insights.approved_use(db) if row["model"] == model]
+    assert {key: row[key] for key in expected} == expected
+    page = client.get("/").text
+    row_html = page.split(f'<tr data-approved="{model}">', 1)[1].split("</tr>", 1)[0]
+    assert dict(re.findall(r'data-use="(\w+)">(\d+)<', row_html)) == {
+        key: str(count) for key, count in expected.items()
+    }
