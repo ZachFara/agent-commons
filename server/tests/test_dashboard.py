@@ -15,7 +15,8 @@ from starlette.testclient import TestClient
 
 import factories
 from commons.domain import prompts
-from commons.domain.corrections import Correction
+from commons.domain.corrections import Correction, CorrectionTable
+from commons.domain.duplicates import Candidate
 from commons.domain.entries import Proposal
 from commons.service import agent_text, corrections, trust
 from commons.service.duplicates import merge
@@ -26,6 +27,7 @@ from commons.service.seeds import SEED_MODEL, SEED_REPORTER
 from commons.store import insights
 from commons.store import trust as trust_store
 from commons.store.connection import Connection
+from commons.store.duplicates import save_candidates
 from commons.store.models import model_id
 from commons.store.prompt_versions import prompt_version_id
 from commons.store.reporters import upsert_reporter
@@ -210,7 +212,8 @@ def add_lookup(db: psycopg.Connection, task_id: uuid.UUID, library: str, version
 
 
 def lookup_section(page: str) -> str:
-    return page.split("Docs looked up", 1)[1].split("Recent searches", 1)[0]
+    """The lookups card alone: other cards (use by rank, found-not-used) follow it."""
+    return page.split("Docs looked up", 1)[1].split("</section>", 1)[0]
 
 
 def test_searches_page_shows_commons_misses_next_to_doc_lookups(
@@ -374,6 +377,19 @@ def searched(
     return search_id
 
 
+def logged_search(db: psycopg.Connection, reporter: uuid.UUID, hits: int, limit: int) -> uuid.UUID:
+    """Insert a searches row that returned `hits` of at most `limit` entries."""
+    row = db.execute(
+        "INSERT INTO searches (task_id, reporter_id, model_id, privacy_mode, query, "
+        "result_limit, hit_count) VALUES (%s, %s, %s, 'entry', 'rank check', %s, %s) "
+        "RETURNING id",
+        (uuid.uuid4(), reporter, model_id(db, "claude-opus-5-5"), limit, hits),
+    ).fetchone()
+    assert row
+    search_id: uuid.UUID = row[0]
+    return search_id
+
+
 def test_searches_where_nothing_returned_was_used(
     client: TestClient, server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
 ) -> None:
@@ -410,6 +426,145 @@ def test_searches_where_nothing_returned_was_used(
     assert '<span class="num"></span>' in section
 
 
+def ranked_retrieval(
+    db: psycopg.Connection,
+    entry_id: uuid.UUID,
+    reporter: uuid.UUID,
+    position: int,
+    used: str | None,
+    days_ago: int = 0,
+) -> uuid.UUID:
+    """Insert a retrieval at `position` with an outcome whose `used` is given (None: unknown)."""
+    row = db.execute(
+        "WITH r AS (INSERT INTO retrievals (entry_id, reporter_id, model_id, task_id, query, "
+        "rank_position, score_at_retrieval, created_at) VALUES (%s, %s, %s, %s, 'q', %s, 0.5, "
+        "now() - make_interval(days => %s)) "
+        "RETURNING id) INSERT INTO outcomes (retrieval_id, used) SELECT id, %s FROM r "
+        "RETURNING retrieval_id",
+        (
+            entry_id,
+            reporter,
+            model_id(db, "claude-opus-5-5"),
+            uuid.uuid4(),
+            position,
+            days_ago,
+            used,
+        ),
+    ).fetchone()
+    assert row
+    retrieval_id: uuid.UUID = row[0]
+    return retrieval_id
+
+
+def seed_rank_rows(db: psycopg.Connection, reporter: uuid.UUID) -> None:
+    """Searches with (hits, limit) of (5,5), (2,5), (0,5), and retrievals at ranks 1 to 5.
+
+    Counted: rank 1 yes and no, rank 2 partial, rank 3 no, rank 4 no, rank 5 yes. Not counted:
+    an unknown use, a retrieval with no outcome, and one from 40 days ago.
+    """
+    for hits in (5, 2, 0):
+        logged_search(db, reporter, hits, 5)
+    entry_id = factories.entry(db, reporter, symptom=f"rank-{uuid.uuid4().hex[:8]} failed")
+    for position, used in (
+        (1, "yes"),
+        (1, "no"),
+        (2, "partial"),
+        (3, "no"),
+        (4, "no"),
+        (5, "yes"),
+        (1, None),
+    ):
+        ranked_retrieval(db, entry_id, reporter, position, used)
+    ranked_retrieval(db, entry_id, reporter, 1, "yes", days_ago=40)
+    db.execute(
+        "INSERT INTO retrievals (entry_id, reporter_id, model_id, task_id, query, rank_position, "
+        "score_at_retrieval) VALUES (%s, %s, %s, %s, 'q', 2, 0.5)",
+        (entry_id, reporter, model_id(db, "claude-opus-5-5"), uuid.uuid4()),
+    )
+
+
+def only_this_tests_rows(db: psycopg.Connection) -> None:
+    """Move rows other tests committed out of the 30-day window, inside this rolled-back test."""
+    db.execute("UPDATE searches SET created_at = created_at - interval '1 year'")
+    db.execute("UPDATE retrievals SET created_at = created_at - interval '1 year'")
+
+
+def by_rank(db: psycopg.Connection) -> dict[int, tuple[int, int]]:
+    return {r["rank"]: (r["retrievals"], r["used"]) for r in insights.use_by_rank(db)}
+
+
+def test_searches_page_shows_full_result_sets_and_use_by_rank(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    only_this_tests_rows(db)
+    seed_rank_rows(db, reporter)
+
+    totals = insights.search_totals(db)
+    assert (totals["searches"], totals["full"]) == (3, 1)
+    rows = insights.use_by_rank(db)
+    assert [(r["rank"], r["retrievals"], r["used"], r["used_rate"]) for r in rows] == [
+        (1, 2, 1, 0.5),
+        (2, 1, 1, 1.0),
+        (3, 1, 0, 0.0),
+        (4, 2, 1, 0.5),
+    ]
+    page = " ".join(client.get("/searches").text.split())
+    assert "Full result sets" in page
+    assert "1 of 3 hit their limit (33%)" in page
+    assert "Use by rank" in page
+    for label, count, used, share in (
+        ("1", 2, 1, "50%"),
+        ("2", 1, 1, "100%"),
+        ("3", 1, 0, "0%"),
+        ("4+", 2, 1, "50%"),
+    ):
+        assert (
+            f'<td>{label}</td><td class="num">{count}</td> <td class="num">{used}</td>'
+            f'<td class="num">{share}</td>'
+        ) in page
+
+
+def figures(db: psycopg.Connection) -> tuple[tuple[int, int], dict[int, tuple[int, int]]]:
+    totals = insights.search_totals(db)
+    return (totals["searches"], totals["full"]), by_rank(db)
+
+
+def test_an_excluded_search_and_retrieval_leave_both_figures_unchanged(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    seed_rank_rows(db, reporter)
+    before = figures(db)
+    full = logged_search(db, reporter, 5, 5)
+    entry_id = factories.entry(db, reporter, symptom=f"rank-{uuid.uuid4().hex[:8]} excluded")
+    used = ranked_retrieval(db, entry_id, reporter, 1, "yes")
+    (searches, full_sets), ranks = before
+    retrievals, used_count = ranks[1]
+    assert figures(db) == (
+        (searches + 1, full_sets + 1),
+        {**ranks, 1: (retrievals + 1, used_count + 1)},
+    )
+
+    rows: tuple[tuple[CorrectionTable, uuid.UUID], ...] = (("searches", full), ("retrievals", used))
+    for table, row_id in rows:
+        correction = Correction(table, row_id, "excluded", value=True, reason="test", by="owner")
+        corrections.correct(db, correction)
+
+    assert figures(db) == before
+
+
+def test_searches_page_with_no_searches_shows_empty_states(
+    client: TestClient, db: psycopg.Connection
+) -> None:
+    only_this_tests_rows(db)
+    assert [r["used_rate"] for r in insights.use_by_rank(db)] == [None] * 4
+
+    response = client.get("/searches")
+    assert response.status_code == 200
+    page = response.text
+    assert "No retrievals with a known use yet." in page
+    assert page.count("no searches yet") == 2
+
+
 def test_entries_filter_by_status_and_unknown_entry_is_404(
     client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
 ) -> None:
@@ -433,6 +588,19 @@ def test_agent_written_text_is_escaped(
         html = client.get(path).text
         assert "<script>alert" not in html, path
         assert "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;" in html, path
+
+
+def test_a_duplicate_candidates_text_is_escaped_in_the_queue(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    candidate = factories.entry(
+        db, reporter, fix="<script>alert('fix')</script>", human_reviewed=True
+    )
+    proposal = factories.entry(db, reporter, status="pending")
+    save_candidates(db, proposal, [Candidate(candidate, 0.8, same_task=False)], None)
+    html = client.get("/queue").text
+    assert "<script>alert" not in html
+    assert "&lt;script&gt;alert(&#39;fix&#39;)&lt;/script&gt;" in html
 
 
 def test_dashboard_only_binds_to_localhost(monkeypatch: pytest.MonkeyPatch) -> None:

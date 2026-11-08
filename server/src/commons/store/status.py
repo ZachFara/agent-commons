@@ -8,6 +8,7 @@ from commons.store.connection import Connection
 from commons.store.outcome_stats import OUTCOME_STATS, OUTCOME_STATS_PARAMS
 from commons.store.reviews import IN_QUEUE
 
+# The inner join keeps only entries with a known result, so used_outcomes is at least 1.
 _TOP_ENTRIES = """
 SELECT e.id AS entry_id, e.symptom, o.used_outcomes, o.successes
 FROM entries e JOIN ({stats}) o ON o.entry_id = e.id

@@ -75,6 +75,30 @@ def test_top_entries_rank_by_success_rate_then_sample_size(
     assert ranked == [("always", 1.0, 2), ("once", 1.0, 1), ("half", 0.5, 2)]
 
 
+def test_top_entries_count_only_known_results(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    known = factories.entry(db, reporter, symptom="known")
+    no_result = factories.entry(db, reporter, symptom="no result")
+    for entry_id, results in [
+        (known, ["tests_passed", "unknown"]),
+        (no_result, ["unknown", "abandoned"]),
+    ]:
+        for result in results:
+            factories.outcome(db, entry_id, reporter, result)
+
+    ours = {str(known), str(no_result)}
+    db.execute(
+        "UPDATE entries SET status = 'retired' WHERE NOT (id::text = ANY(%s))", (list(ours),)
+    )
+    top = call(server, "status", {})["top_entries"]
+    ranked = [
+        (t["symptom"], t["success_rate"], t["used_outcomes"]) for t in top if t["entry_id"] in ours
+    ]
+    # An entry with no known result has no success rate to rank by, nor a zero to divide by.
+    assert ranked == [("known", 1.0, 1)]
+
+
 def test_status_command_prints_a_summary(
     database_url: str,
     tmp_path: Path,

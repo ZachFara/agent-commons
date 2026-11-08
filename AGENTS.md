@@ -254,3 +254,7 @@ from the Learned sections of merged PRs.
 - The Edit tool writes a `"​"`-style escape in a Python string as the real character, and ruff then fails with PLE2515. `ruff check --fix` puts the escape back.
 - Mypy rejects `tools.agent_eval.runner` as an attribute because it isn't explicitly exported. To monkeypatch the eval runner, import `tools.eval.runner` directly.
 - Command-line admin actions other than key management wrote no event line before `commons admin rescan`, which follows the dashboard's `admin_action` shape.
+- A test that fails only inside pre-commit is often reading git's hook environment. Reproduce it outside the hook by running it with `GIT_DIR=<worktree>/.git` set.
+- An approved entry no human has reviewed (`human_reviewed = false`, the `factories.entry` default) is its own item in the review queue. A test asserting that text appears only through a duplicate candidate must create the candidate with `human_reviewed=True`, or scope the check to the proposal's card.
+- To test a dashboard page's exact figures or empty state against the shared session database, move other tests' rows out of the 30-day window inside the test's own rolled-back transaction (`only_this_tests_rows` in `test_dashboard.py`). Nothing outside the test sees it.
+- `factories.outcome` always inserts rank 1 with `used = 'yes'`. For other ranks or an unknown `used`, use `ranked_retrieval` in `test_dashboard.py`.

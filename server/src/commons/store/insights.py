@@ -410,15 +410,44 @@ def tasks(conn: Connection, limit: int = 100) -> list[Row]:
 
 
 def search_totals(conn: Connection) -> Row:
-    """Count searches, and searches that found nothing, over the last 30 days."""
+    """Count searches over the last 30 days: all, those that found nothing, and full ones.
+
+    A full search returned as many hits as its limit, so more entries may have matched than
+    the agent was shown (decision 0024).
+    """
     rows = _rows(
         conn,
         "SELECT count(*) AS searches, count(*) FILTER (WHERE hit_count = 0) AS misses, "
+        "count(*) FILTER (WHERE hit_count = result_limit) AS full, "
         "count(DISTINCT reporter_id) AS reporters FROM counted_searches "
         "WHERE created_at > now() - interval '30 days'",
         {},
     )
     return rows[0]
+
+
+_RANK_BUCKETS = 4  # ranks 1, 2, 3, and 4 or lower in the list
+
+
+def use_by_rank(conn: Connection) -> list[Row]:
+    """Per rank position (1, 2, 3, 4+), retrievals in the last 30 days with a known use.
+
+    Each row has the count, how many were used (yes or partial), and that share, which is
+    None for a rank with no such retrievals.
+    """
+    return _rows(
+        conn,
+        "SELECT b.rank, coalesce(u.retrievals, 0) AS retrievals, coalesce(u.used, 0) AS used, "
+        "u.used::float / nullif(u.retrievals, 0) AS used_rate "
+        "FROM generate_series(1, %(buckets)s) AS b(rank) LEFT JOIN ("
+        "  SELECT least(r.rank_position, %(buckets)s) AS rank, count(*) AS retrievals, "
+        "    count(*) FILTER (WHERE o.used IN ('yes', 'partial')) AS used "
+        "  FROM counted_retrievals r JOIN counted_outcomes o ON o.retrieval_id = r.id "
+        "  WHERE o.used IS NOT NULL AND r.created_at > now() - interval '30 days' "
+        "  GROUP BY 1) u ON u.rank = b.rank "
+        "ORDER BY b.rank",
+        {"buckets": _RANK_BUCKETS},
+    )
 
 
 def missed_queries(conn: Connection, limit: int = 100) -> list[Row]:
@@ -792,8 +821,8 @@ def duplicate_flags(conn: Connection) -> dict[UUID, list[Row]]:
     rows = _rows(
         conn,
         "SELECT e.id AS entry_id, (c->>'entry_id')::uuid AS other_id, (c->>'score')::float "
-        "AS score, coalesce((c->>'retry')::boolean, false) AS retry, o.symptom, "
-        "o.status::text AS status, (o.id = e.duplicate_of) AS linked "
+        "AS score, coalesce((c->>'retry')::boolean, false) AS retry, o.symptom, o.cause, "
+        "o.fix, o.status::text AS status, (o.id = e.duplicate_of) AS linked "
         "FROM entries e, jsonb_array_elements(e.duplicate_candidates) c "
         "JOIN entries o ON o.id = (c->>'entry_id')::uuid "
         "WHERE NOT e.human_reviewed ORDER BY score DESC",
@@ -803,3 +832,16 @@ def duplicate_flags(conn: Connection) -> dict[UUID, list[Row]]:
     for row in rows:
         flags.setdefault(row["entry_id"], []).append(row)
     return flags
+
+
+def distinct_entries(conn: Connection, entry_id: UUID) -> list[Row]:
+    """Entries a reviewer kept distinct from this one, with their latest score (decision 0027)."""
+    return _rows(
+        conn,
+        "SELECT e.id, e.symptom, e.status::text AS status, e.human_reviewed, s.score "
+        "FROM distinct_pairs p "
+        "JOIN entries e ON e.id = CASE WHEN p.entry_a = %(id)s THEN p.entry_b ELSE p.entry_a END "
+        + _LATEST_SNAPSHOT
+        + "WHERE %(id)s IN (p.entry_a, p.entry_b) ORDER BY p.created_at",
+        {"id": entry_id},
+    )

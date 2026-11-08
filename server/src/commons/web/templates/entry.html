@@ -55,6 +55,9 @@
       <span class="badge soft">r{{ r.revision }}</span><span>{{ r.edited_by or "proposed" }}</span>
       <span class="muted">{{ r.created_at.strftime("%b %d %H:%M") }}</span>
       {% if r.reason %}<div style="width: 100%" class="muted">{{ r.reason }}</div>{% endif %}</li>{% endfor %}</ul></section>
+    {% if distinct %}<section class="card"><h2>Kept distinct from</h2><ul class="timeline">{% for d in distinct %}<li>
+      <a href="/entries/{{ d.id }}" style="overflow-wrap: anywhere">{{ d.symptom | truncate(100) }}</a>
+      {{ status(d.status, d.human_reviewed) }}<span class="muted">score {{ "%.2f" | format(d.score) if d.score is not none else "–" }}</span></li>{% endfor %}</ul></section>{% endif %}
     <section class="card"><h2>Reviews</h2>{% if reviews %}<ul class="timeline">{% for r in reviews %}<li>
       <span class="badge {{ 'good' if r.decision in ('approve', 'restore') else 'bad' }}">{{ r.decision }}</span>
       <span>{{ r.reviewer }}</span><span class="badge soft">{{ r.source }}</span>

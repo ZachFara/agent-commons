@@ -126,6 +126,7 @@ class Dashboard:
         data = await self._load(
             lambda conn: {
                 "totals": insights.search_totals(conn),
+                "by_rank": insights.use_by_rank(conn),
                 "missed": insights.missed_queries(conn),
                 "unused": insights.unused_searches(conn),
                 "recent": insights.recent_searches(conn),
@@ -477,6 +478,7 @@ def _entry_data(conn: Connection, entry_id: UUID) -> dict[str, Any]:
         "history": charts.line([(row["computed_at"], row["score"]) for row in history]),
         "funnel": insights.entry_funnel(conn, entry_id),
         "retrievals": insights.entry_retrievals(conn, entry_id),
+        "distinct": insights.distinct_entries(conn, entry_id),
     }
 
 
