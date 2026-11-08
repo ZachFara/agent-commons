@@ -76,10 +76,12 @@ proposal** is all three:
 **Grader v2** (2026-11-08, `docs/decisions/2026-11-08-MIT-661-grader-v2.md`) is the current
 grader (`runner.GRADER_VERSION`):
 
-- **Whole words.** A word matches only where no letter, digit or underscore touches it, ignoring
-  case. "utc" is not in "outcomes", "9.2" is not in "9.21", and "polars 2" is in "polars 2.0"
-  but not in "polars 2026". An edge that is punctuation ("int(", ".prom") needs no boundary.
-  Stems and plurals no longer match: "truncat" misses "truncates", "offset" misses "offsets".
+- **Words start at a word's start.** Ignoring case, no letter, digit or underscore may come
+  just before a word, so "utc" is not in "outcomes", "view" not in "reviews", "ops" not in
+  "drops". A word ending in a digit must also end there: "9.2" is not in "9.21", and
+  "polars 2" is in "polars 2.0" but not in "polars 2026". Any other word may run on, so stems
+  and plurals still match: "truncat" in "truncated", "round" in "rounding", "offset" in
+  "offsets". A word starting with punctuation (".prom") needs nothing before it.
 - **Version words never make the cause right.** A cause word that is only a version, maybe after
   a library name ("9.2", "2.14", "polars 2"), stays in the data and is skipped for
   `cause_right`. Every measured scenario and GitHub task must have another cause word (a test).
@@ -88,8 +90,9 @@ grader (`runner.GRADER_VERSION`):
 
 Version 1 matched substrings and counted version words. Every new ledger line and session JSON
 records `grader_version`; one without it (everything committed before 2026-11-08) is version 1.
-`report` and `compare` print a separate report per grader version, and `compare` a separate
-verdict, so no figure pools two graders. `trials` and `effects` still pool them.
+`report`, `compare`, `trials` and `effects` keep grader versions apart: `report`, `compare` and
+`effects` print a section per version (`compare` a verdict per version), and `trials` a row per
+version, so no figure pools two graders.
 
 ## GitHub tasks
 
@@ -792,5 +795,6 @@ other hold-outs' lists also occur in the shipped text: "removed" (both Python 3.
 `hard-pandas-cow-subset`) and "utc" (in "outcomes", `hard-sqlmodel-legacy-rows`). None of them
 gives a cause away, but the shipped text as a whole can't be held to the example check until
 those lists change, which would change how those scenarios grade. Grader v2 (see Grading)
-matches whole words, so "naive", "view" and "utc" no longer match those longer words; the
+matches only from a word's start, so "view" and "utc" no longer match inside "reviews" and
+"outcomes" ("naive" still starts "naive_arithmetic_ok"); the
 example checks in the tests still match substrings, which catches more.

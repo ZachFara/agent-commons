@@ -367,24 +367,26 @@ def by_variant() -> int:
     lines = _ledger_lines()
     # A line marked `invalid` stays in the ledger as a record but is never counted.
     rows = [row for row in lines if not row.get("invalid")]
-    groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    groups: dict[tuple[str, str, str, str, int], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         # The text fingerprint covers the server's text only, so the skill is its own group,
-        # and a line from before arms ran with the commons alone.
+        # and a line from before arms ran with the commons alone. Each grader version is its
+        # own group too, so no `good` figure mixes two graders.
         variant = f"{row['variant']}+skill" if row.get("skill") else row["variant"]
-        groups[(row.get("arm", "commons"), variant, row["text"], row["trigger"])].append(row)
+        arm = row.get("arm", "commons")
+        groups[(arm, variant, row["text"], row["trigger"], grader_version(row))].append(row)
     if skipped := len(lines) - len(rows):
         print(f"({skipped} trials marked invalid are not counted)")
     print(
         f"{'arm':<8} {'variant':<10} {'text':<13} {'trigger':<18} {'n':>3} "
-        f"{'search':>7} {'propose':>8} {'good':>5} {'fixed':>6}"
+        f"{'search':>7} {'propose':>8} {'good':>5} {'fixed':>6} {'grader':>6}"
     )
-    for (arm, variant, text, trigger), group in sorted(groups.items()):
+    for (arm, variant, text, trigger, version), group in sorted(groups.items()):
         good = sum(int(r["good_proposals"]) for r in group)
         print(
             f"{arm:<8} {variant:<10} {text:<13} {trigger:<18} {len(group):>3} "
             f"{_rate(group, 'searched'):>7} {_rate(group, 'proposed'):>8} {good:>5} "
-            f"{_rate(group, 'tests_pass'):>6}"
+            f"{_rate(group, 'tests_pass'):>6} {f'v{version}':>6}"
         )
     for line in passing_tokens(rows):
         print(line)
@@ -399,6 +401,7 @@ def effects(args: argparse.Namespace) -> int:
     """Pool a wording search by option and model: each session counts for every option it showed.
 
     Configs are ranked by their worse model, since the text has to work for every model.
+    Each grader version is pooled and ranked on its own, never with another.
     """
     rows = [
         row
@@ -411,6 +414,14 @@ def effects(args: argparse.Namespace) -> int:
     if not rows:
         print(f"no wording trials for condition {args.condition}")
         return 0
+    for version, graded in by_grader(rows).items():
+        print(f"== {args.condition}: {len(graded)} sessions, grader v{version}")
+        _effects_of(graded)
+    return 0
+
+
+def _effects_of(rows: list[dict[str, Any]]) -> None:
+    """Print the per-option and per-config lines of one grader version's wording trials."""
     models = sorted({str(row.get("model") or "sonnet") for row in rows})
     print("per option (pooled over every config that showed it)")
     for key, size in agent_text.SURFACES.items():
@@ -427,7 +438,6 @@ def effects(args: argparse.Namespace) -> int:
 
     for config in sorted(configs, key=worst, reverse=True):
         print(_effect_line(config, [row for row in rows if row["variant"] == config], models))
-    return 0
 
 
 def option_of(variant: str, key: str) -> int:

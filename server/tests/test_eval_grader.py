@@ -53,21 +53,28 @@ def test_a_library_change_still_needs_the_library_pinned() -> None:
 @pytest.mark.parametrize(
     ("text", "word", "found"),
     [
-        ("the outcomes table", "utc", False),  # grader v1 matched this, a substring
-        ("UTCDateTime stores aware datetimes", "utc", False),
+        # Nothing may come just before a word: grader v1 matched these substrings.
+        ("the outcomes table", "utc", False),
+        ("the reviews page", "view", False),
+        ("explode drops rows", "ops", False),
+        ("version 21002.0", "2.0", False),
+        ("print(x)", "int(", False),
         ("stored in UTC, read back naive", "utc", True),
+        # A word ending in a digit must end there.
         ("pytest 9.21 changed nothing", "9.2", False),
         ("since pytest 9.2.0, fixtures are per node", "9.2", True),
         ("pytest 9.2: fixtures are per node", "9.2", True),
         ("Polars 2.0 changed explode()", "polars 2", True),
         ("polars 2026 roadmap", "polars 2", False),
         ("explode under polars 2 drops rows", "polars 2", True),
+        # Any other word may run on: stems and plurals match.
+        ("it rounds down, rounding 19.99 to 1998", "round", True),
+        ("the float is truncated", "truncat", True),
+        ("utc offsets are dropped", "offset", True),
+        ("settings were overwritten", "overwr", True),
         ("now copy-on-write by default", "copy-on-write", True),
-        ("the range end is excluded", "end", True),
-        ("call the endpoint", "end", False),
-        ("int(x * 100) truncates", "int(", True),  # punctuation at an edge needs no boundary
-        ("print(x)", "int(", False),
-        ("writes node.prom", ".prom", True),
+        ("int(x * 100) truncates", "int(", True),
+        ("writes node.prom", ".prom", True),  # a word starting with punctuation: no boundary
     ],
 )
 def test_words_match_whole(text: str, word: str, *, found: bool) -> None:

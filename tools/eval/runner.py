@@ -136,7 +136,8 @@ EXCERPT_CUT = f"[excerpt cut at {EXCERPT_CAP} characters]"
 # How proposals are graded (docs/decisions/2026-11-08-MIT-661-grader-v2.md). Every result
 # records it; a result without it was graded by version 1 (substring matching).
 GRADER_VERSION = 2
-WORD_CHARACTER = "[a-z0-9_]"  # a word matches only where no such character touches it
+# None may come just before a word, nor just after a word that ends in a digit.
+WORD_CHARACTER = "[a-z0-9_]"
 # A cause word that names only a version, maybe after a library: "9.2", "v2", "polars 2".
 VERSION_WORD = re.compile(r"(?:[a-z][a-z0-9_.-]*\s+)?v?\d+(?:\.\d+)*")
 # The only hosts an experiment store may live on: scripts/test-db.sh's rule.
@@ -904,9 +905,9 @@ def _text(content: object) -> str:
 def grade_proposal(row: tuple[Any, ...], discovery: Discovery | None) -> Proposal:
     """Judge a proposal row (symptom, cause, fix, environment) against the discovery.
 
-    Grader version 2: words match whole (`mentions`), and a version word never makes the
-    cause right. The cause and fix are kept, scrubbed and cut, so the proposal can be graded
-    again.
+    Grader version 2: words match from a word's start (`mentions`), and a version word never
+    makes the cause right. The cause and fix are kept, scrubbed and cut, so the proposal can be
+    graded again.
     """
     symptom, cause, fix, environment = row
     kept_cause, kept_fix = excerpt(str(cause or "")), excerpt(str(fix or ""))
@@ -938,16 +939,18 @@ def grade_proposal(row: tuple[Any, ...], discovery: Discovery | None) -> Proposa
 
 
 def mentions(text: str, word: str) -> bool:
-    """Whether `word` appears in `text` as a whole word, ignoring case.
+    """Whether `word` starts a word in `text`, ignoring case; a word ending in a digit ends one.
 
-    No letter, digit or underscore may touch it, so "utc" is not in "outcomes", "9.2" is not
-    in "9.21", and "polars 2" is in "polars 2.0" but not in "polars 2026". Words may hold
-    spaces, dots or hyphens. An edge of the word that is itself punctuation ("int(", ".prom")
-    needs no boundary, or "int(" would never match "int(x)".
+    No letter, digit or underscore may come just before it, so "utc" is not in "outcomes" and
+    "view" is not in "reviews". It may run on, so stems and plurals match: "truncat" is in
+    "truncated", "offset" in "offsets". A word ending in a digit is a whole number, so "9.2"
+    is not in "9.21", and "polars 2" is in "polars 2.0" but not in "polars 2026". Words may
+    hold spaces, dots or hyphens. A word starting with punctuation (".prom") needs nothing
+    before it, or it would never match "node.prom".
     """
     word = word.lower()
     before = f"(?<!{WORD_CHARACTER})" if re.match(WORD_CHARACTER, word) else ""
-    after = f"(?!{WORD_CHARACTER})" if re.match(WORD_CHARACTER, word[-1:]) else ""
+    after = f"(?!{WORD_CHARACTER})" if word[-1:].isdigit() else ""
     return re.search(before + re.escape(word) + after, text.lower()) is not None
 
 
