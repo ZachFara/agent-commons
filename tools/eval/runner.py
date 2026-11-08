@@ -16,6 +16,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -132,6 +133,14 @@ FILE_CUT = f"[file cut at {FILE_CAP} bytes; sha256 "
 HASH_CHUNK = 64 * 1024  # bytes read at a time while hashing the rest of a cut file
 PATCH_CUT = f"[patch cut at {PATCH_CAP} characters]"
 EXCERPT_CUT = f"[excerpt cut at {EXCERPT_CAP} characters]"
+# How proposals are graded (docs/decisions/2026-11-08-MIT-661-grader-v2.md). Every result
+# records it; a result without it was graded by version 1 (substring matching).
+GRADER_VERSION = 2
+# None may come just before a word, nor just after a word that ends in a digit.
+WORD_CHARACTER = "[a-z0-9_]"
+# A cause word that names only a version, maybe after a prefix: "9.2", "v2", "polars 2".
+# `is_version_word` accepts only the discovery's library or "python" as the prefix.
+VERSION_WORD = re.compile(r"(?:(?P<prefix>[a-z][a-z0-9_.-]*)\s+)?v?\d+(?:\.\d+)*")
 # The only hosts an experiment store may live on: scripts/test-db.sh's rule.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
 _CLONING = threading.Lock()  # one clone of the store at a time
@@ -161,6 +170,9 @@ class Proposal:
     on_topic: bool  # names the real symptom
     cause_right: bool  # names the real cause (in cause or fix)
     pinned: bool  # the library appears with a version in environment
+    # Kept so a later grader can score the proposal again; scrubbed and cut (`excerpt`).
+    cause: str = ""
+    fix: str = ""
 
 
 @dataclass(frozen=True)
@@ -195,10 +207,11 @@ class Result:
     tokens_out: int = 0
     wall_clock_seconds: float = 0.0
     retrievals: list[Retrieval] = field(default_factory=list)
-    patch: str = ""  # the agent's diff of non-test files; never committed (`patch_excerpt`)
+    patch: str = ""  # the agent's diff of non-test files; never committed (`excerpt`)
     patch_hash: str = ""  # of the diff with whitespace removed
     repeat: int = 0  # which repeat of its task, arm and model (`arms`); 0 elsewhere
     patch_truncated: bool = False  # a changed file or the patch itself was cut at its cap
+    grader_version: int = GRADER_VERSION  # which grader judged `proposals`
 
     def summary(self) -> str:
         """One line describing what the agent did."""
@@ -782,12 +795,13 @@ def project_patch(pristine: Path, project: Path) -> Patch:
     )
 
 
-def patch_excerpt(patch: str) -> str:
-    """Return the part of a patch fit to commit: secrets scrubbed (as the server does), then cut.
+def excerpt(text: str) -> str:
+    """Return the part of a text fit to commit: secrets scrubbed (as the server does), then cut.
 
-    Scrubbing comes first, so a cut never splits a secret into a part the scrub misses.
+    It is how a patch, and a proposal's cause and fix, reach committed results. Scrubbing comes
+    first, so a cut never splits a secret into a part the scrub misses.
     """
-    return _cut(redact(patch).text, EXCERPT_CAP, EXCERPT_CUT)
+    return _cut(redact(text).text, EXCERPT_CAP, EXCERPT_CUT)
 
 
 def _without_whitespace(text: str) -> str:
@@ -890,11 +904,24 @@ def _text(content: object) -> str:
 
 
 def grade_proposal(row: tuple[Any, ...], discovery: Discovery | None) -> Proposal:
-    """Judge a proposal row (symptom, cause, fix, environment) against the discovery."""
+    """Judge a proposal row (symptom, cause, fix, environment) against the discovery.
+
+    Grader version 2: words match from a word's start (`mentions`), and a version word never
+    makes the cause right. The cause and fix are kept, scrubbed and cut, so the proposal can be
+    graded again.
+    """
     symptom, cause, fix, environment = row
+    kept_cause, kept_fix = excerpt(str(cause or "")), excerpt(str(fix or ""))
     if discovery is None:
-        return Proposal(symptom=symptom, on_topic=False, cause_right=False, pinned=False)
-    text = f"{cause} {fix}".lower()
+        return Proposal(
+            symptom=symptom,
+            on_topic=False,
+            cause_right=False,
+            pinned=False,
+            cause=kept_cause,
+            fix=kept_fix,
+        )
+    text = f"{cause} {fix}"
     environment = environment if isinstance(environment, dict) else {}
     pinned = any(
         discovery.library in name.lower() and any(ch.isdigit() for ch in str(version))
@@ -902,10 +929,44 @@ def grade_proposal(row: tuple[Any, ...], discovery: Discovery | None) -> Proposa
     ) or _runtime_pinned(discovery.library, str(environment.get("language", "")))
     return Proposal(
         symptom=symptom,
-        on_topic=any(word.lower() in symptom.lower() for word in discovery.symptom_words),
-        cause_right=any(word.lower() in text for word in discovery.cause_words),
+        on_topic=any(mentions(symptom, word) for word in discovery.symptom_words),
+        cause_right=any(
+            mentions(text, word)
+            for word in discovery.cause_words
+            if not is_version_word(word, discovery.library)
+        ),
         pinned=pinned,
+        cause=kept_cause,
+        fix=kept_fix,
     )
+
+
+def mentions(text: str, word: str) -> bool:
+    """Whether `word` starts a word in `text`, ignoring case; a word ending in a digit ends one.
+
+    No letter, digit or underscore may come just before it, so "utc" is not in "outcomes" and
+    "view" is not in "reviews". It may run on, so stems and plurals match: "truncat" is in
+    "truncated", "offset" in "offsets". A word ending in a digit is a whole number, so "9.2"
+    is not in "9.21", and "polars 2" is in "polars 2.0" but not in "polars 2026". Words may
+    hold spaces, dots or hyphens. A word starting with punctuation (".prom") needs nothing
+    before it, or it would never match "node.prom".
+    """
+    word = word.lower()
+    before = f"(?<!{WORD_CHARACTER})" if re.match(WORD_CHARACTER, word) else ""
+    after = f"(?!{WORD_CHARACTER})" if word[-1:].isdigit() else ""
+    return re.search(before + re.escape(word) + after, text.lower()) is not None
+
+
+def is_version_word(word: str, library: str) -> bool:
+    """Whether a cause word is only a version, maybe after `library` or "python".
+
+    "9.2", "polars 2" (for polars) and "python 3.14" are; "pep 649" and "rfc 3339" are not,
+    since their prefix is no library. A version says when the cause arrived, not what it is,
+    so it never makes a cause right.
+    """
+    match = VERSION_WORD.fullmatch(word.strip().lower())
+    prefix = match.group("prefix") if match else None
+    return match is not None and prefix in {None, library.lower(), "python"}
 
 
 def best_grade(row: tuple[Any, ...], discoveries: list[Discovery | None]) -> Proposal:
@@ -1161,7 +1222,7 @@ def save_result(transcripts: Path, stem: str, result: Result) -> None:
     committed, so the JSON holds the patch's scrubbed excerpt in place of the patch.
     """
     (transcripts / f"{stem}.patch").write_text(result.patch, encoding="utf-8")
-    record = {**asdict(result), "patch_excerpt": patch_excerpt(result.patch)}
+    record = {**asdict(result), "patch_excerpt": excerpt(result.patch)}
     del record["patch"]
     (transcripts / f"{stem}.json").write_text(json.dumps(record, indent=1), encoding="utf-8")
 

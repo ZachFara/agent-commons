@@ -198,6 +198,33 @@ def test_the_verdict_counts_both_folds_of_github_arms_and_never_same_task_lines(
     assert "verdict: continue" in capsys.readouterr().out  # reported apart, never pooled
 
 
+def test_compare_never_pools_grader_versions_and_gives_each_its_own_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Lines without `grader_version` are grader v1; v2 lines of the condition are apart."""
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    old = arm_runs("both", [3] * 10, 3) + arm_runs("context7", [1] * 10, 3)  # a clear win
+    equal = [3, 2, 0, 1, 3, 3, 2, 1, 0, 3]
+    new = [
+        {**row, "grader_version": 2}
+        for row in arm_runs("both", equal, 2) + arm_runs("context7", equal, 2)
+    ]
+    ledger.write_text("".join(json.dumps(row) + "\n" for row in old + new), encoding="utf-8")
+
+    assert tools.agent_eval.compare(argparse.Namespace(condition=CONDITION)) == 0
+    out = capsys.readouterr().out
+    assert f"{CONDITION} holds results of graders v1, v2" in out
+    first, second = out.split(f"== {CONDITION}: 40 sessions, grader v2")
+    assert f"== {CONDITION}: 60 sessions, grader v1" in first
+    assert "primary: both vs context7 over 10 tasks" in first
+    assert "verdict: continue" in first
+    assert "verdict: kill" not in first
+    assert "verdict: kill" in second  # the v2 lines alone: equal arms
+    assert "verdict: continue" not in second
+    assert "grader v1" not in second
+
+
 def test_compare_with_no_trials_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

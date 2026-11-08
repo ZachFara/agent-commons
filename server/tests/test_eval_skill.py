@@ -301,6 +301,11 @@ def test_the_ledger_records_the_skill_and_old_lines_still_load(
     out = capsys.readouterr().out.splitlines()
     # The table, then the per-condition median-token lines (MIT-601), which aren't rows.
     rows = [line.split() for line in out[1:] if "median tokens per passing session" not in line]
-    # Columns: arm, variant, text, trigger, n, ... (the arm column came with the eval arms).
-    assert [(row[1], row[4]) for row in rows] == [("baseline", "2"), ("baseline+skill", "1")]
+    # Columns: arm, variant, text, trigger, n, ..., grader (the arm column came with the eval
+    # arms). The old line was graded by v1, the new ones by v2: separate groups, never pooled.
+    assert [(row[1], row[4], row[-1]) for row in rows] == [
+        ("baseline", "1", "v1"),
+        ("baseline", "1", "v2"),
+        ("baseline+skill", "1", "v2"),
+    ]
     assert out[-1].startswith("s: median tokens per passing session in 0 out 0 (n=2)")

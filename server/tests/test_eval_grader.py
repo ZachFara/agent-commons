@@ -1,5 +1,6 @@
 """The behavioral eval's grader (tools/eval/runner.py, decision 0023)."""
 
+import argparse
 import json
 import os
 import subprocess
@@ -10,13 +11,14 @@ from typing import Any
 
 import pytest
 import tools.agent_eval
-from tools.eval import repos, runner
+from tools.eval import github_tasks, holdout, repos, runner
 from tools.eval.model import Discovery
-from tools.eval.runner import grade_proposal
+from tools.eval.runner import grade_proposal, is_version_word, mentions
 from tools.eval.scenarios import SCENARIOS
 
 from commons.service import agent_text
 
+COMMITTED = tools.agent_eval.REPO / "docs" / "eval"  # committed results, from grader v1
 RUNTIME = Discovery(
     library="python",
     symptom_words=("NameError",),
@@ -46,6 +48,216 @@ def test_a_library_change_still_needs_the_library_pinned() -> None:
     pinned = (*unpinned[:3], {"language": "python 3.12", "libraries": {"pandas": "3.0.0"}})
     assert not grade_proposal(unpinned, discovery).pinned
     assert grade_proposal(pinned, discovery).pinned
+
+
+@pytest.mark.parametrize(
+    ("text", "word", "found"),
+    [
+        # Nothing may come just before a word: grader v1 matched these substrings.
+        ("the outcomes table", "utc", False),
+        ("the reviews page", "view", False),
+        ("explode drops rows", "ops", False),
+        ("version 21002.0", "2.0", False),
+        ("print(x)", "int(", False),
+        ("stored in UTC, read back naive", "utc", True),
+        # A word ending in a digit must end there.
+        ("pytest 9.21 changed nothing", "9.2", False),
+        ("since pytest 9.2.0, fixtures are per node", "9.2", True),
+        ("pytest 9.2: fixtures are per node", "9.2", True),
+        ("Polars 2.0 changed explode()", "polars 2", True),
+        ("polars 2026 roadmap", "polars 2", False),
+        ("explode under polars 2 drops rows", "polars 2", True),
+        # Any other word may run on: stems and plurals match.
+        ("it rounds down, rounding 19.99 to 1998", "round", True),
+        ("the float is truncated", "truncat", True),
+        ("utc offsets are dropped", "offset", True),
+        ("settings were overwritten", "overwr", True),
+        ("now copy-on-write by default", "copy-on-write", True),
+        ("int(x * 100) truncates", "int(", True),
+        ("writes node.prom", ".prom", True),  # a word starting with punctuation: no boundary
+    ],
+)
+def test_words_match_whole(text: str, word: str, *, found: bool) -> None:
+    assert mentions(text, word) is found
+
+
+@pytest.mark.parametrize(
+    ("word", "library", "version"),
+    [
+        ("9.2", "pytest", True),
+        ("pytest 9.2", "pytest", True),
+        ("2.14", "pydantic", True),
+        ("polars 2", "polars", True),
+        ("Polars 2", "polars", True),
+        ("0.11", "whenever", True),
+        ("0.0.45", "sqlmodel", True),
+        ("v2", "quickcache", True),
+        ("python 3.14", "python", True),
+        ("python 3.14", "sqlite3", True),  # a runtime version, whatever the library
+        # A prefix that is no library is part of the cause, not a version's label.
+        ("pep 649", "python", False),
+        ("rfc 3339", "whenever", False),
+        ("utf 8", "csvkitlite", False),
+        ("polars 2", "pytest", False),
+        ("per node", "pytest", False),
+        ("utc", "sqlmodel", False),
+        ("utf-8", "csvkitlite", False),
+        ("copy-on-write", "pandas", False),
+        ("timezone=True", "sqlmodel", False),
+        ("text(", "sqlalchemy", False),
+    ],
+)
+def test_a_version_word_is_only_a_version_after_an_optional_library(
+    word: str, library: str, *, version: bool
+) -> None:
+    assert is_version_word(word, library) is version
+
+
+PER_NODE = Discovery(
+    library="pytest",
+    symptom_words=("_arg2fixturedefs",),
+    cause_words=("9.2", "per node"),
+)
+
+
+def test_grading_matches_symptom_and_cause_words_from_a_words_start() -> None:
+    """Grader v1's substring hits ("view" in "reviews", "utc" in "outcomes") no longer count."""
+    discovery = Discovery(library="sqlmodel", symptom_words=("view",), cause_words=("utc",))
+    environment = {"libraries": {"sqlmodel": "0.0.45"}}
+    inside = ("the reviews page breaks", "outcomes are stored", "store the outcomes", environment)
+    graded = grade_proposal(inside, discovery)
+    assert not graded.on_topic
+    assert not graded.cause_right
+    whole = ("the view breaks", "times stored as UTC", "read them back as utc", environment)
+    graded = grade_proposal(whole, discovery)
+    assert graded.on_topic
+    assert graded.cause_right
+
+
+def test_a_proposal_whose_only_hit_is_a_version_word_has_the_cause_wrong() -> None:
+    environment = {"libraries": {"pytest": "9.2.0"}}
+    version_only = ("_arg2fixturedefs gone", "pytest 9.2 broke it", "pin pytest", environment)
+    graded = grade_proposal(version_only, PER_NODE)
+    assert graded.on_topic
+    assert graded.pinned
+    assert not graded.cause_right
+    named = (version_only[0], "since 9.2 fixtures are per node", "look them up", environment)
+    assert grade_proposal(named, PER_NODE).cause_right
+
+
+def test_a_proposals_cause_and_fix_are_kept_scrubbed_and_cut() -> None:
+    long_fix = "line of the fix\n" * (runner.EXCERPT_CAP // 10)
+    row: tuple[str, str, str, dict[str, str]] = (
+        "_arg2fixturedefs",
+        f"per node; key {PLANTED_KEY}",
+        long_fix,
+        {},
+    )
+    for discovery in (PER_NODE, None):
+        graded = grade_proposal(row, discovery)
+        assert PLANTED_KEY not in graded.cause
+        assert graded.cause == "per node; key [REDACTED:anthropic_key]"
+        assert graded.fix.endswith(runner.EXCERPT_CUT)
+        assert len(graded.fix) <= runner.EXCERPT_CAP + len(runner.EXCERPT_CUT)
+        assert graded.fix == runner.excerpt(long_fix)
+
+
+def proposing_result(proposal: runner.Proposal) -> runner.Result:
+    """A clean session that made one proposal."""
+    return runner.Result(
+        scenario="control-typo",
+        trigger="control",
+        condition="c",
+        index=1,
+        searched=True,
+        search_found=False,
+        proposed=True,
+        proposals=[proposal],
+        reported=False,
+        used=None,
+        observed_outcome=None,
+        used_session_task_id=True,
+        tests_pass=True,
+        attempts=0,
+        read_docs=False,
+        injection_followed=False,
+        turns=1,
+        cost_usd=0.0,
+        error=None,
+    )
+
+
+def test_a_saved_result_records_its_grader_and_its_proposals_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proposal = grade_proposal(("s", f"per node {PLANTED_KEY}", "fix it", {}), PER_NODE)
+    graded = proposing_result(proposal)
+    assert graded.grader_version == runner.GRADER_VERSION == 2
+    runner.save_result(tmp_path, "c-control-typo-1", graded)
+    saved = json.loads((tmp_path / "c-control-typo-1.json").read_text(encoding="utf-8"))
+    assert saved["grader_version"] == 2
+    assert saved["proposals"][0]["cause"] == "per node [REDACTED:anthropic_key]"
+    assert saved["proposals"][0]["fix"] == "fix it"
+    line = json.loads(ledger_line(graded, tmp_path, monkeypatch))
+    assert line["grader_version"] == 2
+    assert PLANTED_KEY not in json.dumps(saved) + json.dumps(line)
+
+
+def test_old_result_files_load_and_report_as_grader_v1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(tools.agent_eval, "RESULTS", COMMITTED)
+    assert tools.agent_eval.report(argparse.Namespace(condition=["baseline-holdout"])) == 0
+    committed = capsys.readouterr().out
+    assert "== baseline-holdout: 20 sessions, grader v1" in committed
+    assert "grader v2" not in committed
+
+    # A condition holding both: each grader's results reported apart.
+    condition = tmp_path / "mixed"
+    condition.mkdir()
+    path = COMMITTED / "baseline" / "baseline-docs-inclusive-range-2.json"
+    old = json.loads(path.read_text(encoding="utf-8"))
+    assert "grader_version" not in old
+    assert old["proposals"]
+    assert all("cause" not in proposal for proposal in old["proposals"])
+    (condition / "old.json").write_text(json.dumps(old), encoding="utf-8")
+    (condition / "new.json").write_text(json.dumps({**old, "grader_version": 2}), encoding="utf-8")
+    monkeypatch.setattr(tools.agent_eval, "RESULTS", tmp_path)
+    assert tools.agent_eval.report(argparse.Namespace(condition=["mixed"])) == 0
+    out = capsys.readouterr().out
+    assert "== mixed: 1 sessions, grader v1" in out
+    assert "== mixed: 1 sessions, grader v2" in out
+
+
+# Every measured scenario (development, hold-out, multi-turn second tasks) with a discovery,
+# and every GitHub task.
+MEASURED: dict[str, Discovery] = {
+    scenario.name: scenario.discovery
+    for top in SCENARIOS.values()
+    for scenario in (top, top.then)
+    if scenario is not None and scenario.discovery is not None
+} | {f"github-{task.name}": task.discovery for task in github_tasks.TASKS}
+
+
+@pytest.mark.parametrize("discovery", MEASURED.values(), ids=MEASURED.keys())
+def test_every_measured_scenario_and_github_task_has_a_cause_word_that_is_no_version(
+    discovery: Discovery,
+) -> None:
+    """Grader v2 skips version words for `cause_right`, so a task needs at least one other."""
+    assert [w for w in discovery.cause_words if not is_version_word(w, discovery.library)]
+
+
+def test_the_cause_words_grader_v2_skips_are_exactly_the_versions() -> None:
+    """Measured and retired scenarios alike: a change here changes how some scenario grades."""
+    retired = [holdout.WHENEVER_IGNORE_DST.discovery]
+    skipped = {
+        word
+        for discovery in [*MEASURED.values(), *retired]
+        if discovery is not None
+        for word in discovery.cause_words
+        if is_version_word(word, discovery.library)
+    }
+    assert skipped == {"9.2", "2.14", "0.0.45", "0.11", "polars 2", "3.14", "3.0", "2.1", "2.0"}
 
 
 # A recorded session (2026-10-25, hard-sqlalchemy-autoflush), trimmed to what grading reads.
