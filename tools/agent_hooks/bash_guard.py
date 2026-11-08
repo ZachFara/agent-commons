@@ -29,10 +29,13 @@ Denied (exit code 2, reason on stderr):
   body, message, `--head`, `git push` argument or `gh api graphql` argument; brace or glob
   expansion (`{a,b}`, `{a..b}`, `*`, `?`, `[`) in a pushed refspec or `--head`; an unquoted
   heredoc that substitutes; stdin (`-F -`) unless a heredoc, and no pipe, feeds that same
-  command; a message file that isn't a regular file, is over 1 MiB or can't be read; and
-  `gh pr create --fill` or without an explicit title and body.
+  command; a message file that isn't a regular file, is over 1 MiB or can't be read;
+  `gh pr create --fill` or without an explicit title and body; a current branch it can't read
+  when that branch is pushed or is the PR head; and a directory (`git -C`, `env -C`, `sudo -D`)
+  the shell expands, or, for the wrappers, one that isn't there.
 
-Commands are split into simple commands on `;`, `&&`, `||`, `|`, newlines and `$(`; each
+Comments are dropped where bash drops them (strip_comments), then commands are split into
+simple commands on `;`, `&&`, `||`, `|`, newlines and `$(`; each
 one's program comes after any keywords (`{`, `!`, `if`, `then`, `do`...), assignments and
 wrappers (`env`, `sudo`, `timeout 120`, `nice`, `stdbuf`...) with their options, and runs in
 the directory `env -C` or `sudo -D` names. Shell wrappers (`bash -c`, `eval` with its
@@ -82,6 +85,17 @@ HEREDOC_MARK = "\0heredoc"
 # The word simple_commands leaves where an unquoted backtick cuts a command short, as the
 # tokenizer leaves a `$` where `$(` does. SUBSTITUTION matches it.
 CUT = "`"
+# What strip_comments tracks so a `#` inside it isn't a comment: the quotes and expansions
+# that open inside each context ("" is outside all of them), and what closes each one.
+QUOTE_OPENERS: dict[str, tuple[str, ...]] = {
+    "": ("$'", "${", "'", '"', "`"),
+    '"': ("${", "`"),
+    "${": ("${", "'", '"', "`"),
+    "'": (),
+    "$'": (),
+    "`": (),
+}
+QUOTE_CLOSERS = {"'": "'", "$'": "'", '"': '"', "`": "`", "${": "}"}
 SEPARATORS = ";&|()`\n"
 PUNCTUATION = SEPARATORS + "<>"
 WRAPPERS = frozenset(
@@ -144,6 +158,9 @@ ISSUE_ID = re.compile(r"(?<![a-z])(?:p-)?mit-\d+", re.IGNORECASE)
 # matches too; branch names never hold these (`HEAD@{1}` has no `,` or `..`), and a `*`
 # refspec pushes every branch, main too.
 EXPANSION = re.compile(r"[*?\[]|\{[^{}]*(?:,|\.\.)[^{}]*\}")
+# What the shell may expand in a directory (`env -C`, `sudo -D`, `git -C`), besides a leading
+# `~`. Stricter than EXPANSION: a directory name never needs these.
+DIRECTORY_EXPANSION = re.compile(r"[$`*?\[{]")
 # Shell substitution in an argument:`$(`, `${`, `$NAME`, `$1`, a `$` cut off by an unquoted
 # `$(` (the tokenizer splits there), or a backtick.
 SUBSTITUTION = re.compile(r"\$(?:[\w({]|$)|`")
@@ -234,12 +251,46 @@ def split_heredocs(command: str) -> tuple[str, list[str], bool]:
     return without, [match[4] for match in matches], expands
 
 
+def opening(text: str, index: int, context: str) -> str:
+    """Return the quote or expansion that opens at `index` inside `context`, or ""."""
+    return next((start for start in QUOTE_OPENERS[context] if text.startswith(start, index)), "")
+
+
+def strip_comments(text: str) -> str:
+    """Return a command line without its comments, as bash reads them.
+
+    A `#` starts a comment only where it starts a word (at the start or after unescaped
+    whitespace) outside quotes, backticks and `${...}`; the comment runs up to its newline.
+    Anything else that looks like a comment is kept, so the guard checks more, never less.
+    """
+    kept: list[str] = []
+    stack: list[str] = []  # the quotes and expansions open at `index`, innermost last
+    index, word_start = 0, True
+    while index < len(text):
+        context = stack[-1] if stack else ""
+        if word_start and not stack and text[index] == "#":
+            newline = text.find("\n", index)
+            index = len(text) if newline < 0 else newline
+            continue
+        step = 2 if text[index] == "\\" and context != "'" else 1
+        if step == 1 and context and text.startswith(QUOTE_CLOSERS[context], index):
+            stack.pop()
+        elif step == 1 and (start := opening(text, index, context)):
+            stack.append(start)
+            step = len(start)
+        kept.append(text[index : index + step])
+        word_start = not stack and text[index] in " \t\n"
+        index += step
+    return "".join(kept)
+
+
 def tokenize(text: str) -> list[str]:
-    """Split a command line into words, separators and redirections."""
-    lexer = shlex.shlex(text, posix=True, punctuation_chars=PUNCTUATION)
-    # Newlines separate commands, so they are punctuation, not whitespace. shlex reads both
-    # settings internally, so set them through vars() where vulture can't misread them.
-    vars(lexer).update(whitespace=" \t\r", whitespace_split=True)
+    """Split a command line into words, separators and redirections, without comments."""
+    lexer = shlex.shlex(strip_comments(text), posix=True, punctuation_chars=PUNCTUATION)
+    # Newlines separate commands, so they are punctuation, not whitespace. shlex reads these
+    # settings internally, so set them through vars() where vulture can't misread them. Its
+    # own comments start at any `#`, even inside a word, so strip_comments does that instead.
+    vars(lexer).update(whitespace=" \t\r", whitespace_split=True, commenters="")
     return list(lexer)
 
 
@@ -342,12 +393,16 @@ def simple_commands(text: str) -> list[SimpleCommand]:
         else:
             words.append(token)
     stripped = [command_words(command) for command in commands]
-    return [command for command in stripped if command.words]
+    # `env -C $(pwd) git ...` leaves `env -C $` with no program; its directory is still checked.
+    return [command for command in stripped if command.words or command.chdirs]
 
 
 def program(words: list[str]) -> str:
-    """Return the program a simple command runs, without its directory (`.` stays `.`)."""
-    return PurePosixPath(words[0]).name or words[0]
+    """Return the program a simple command runs, without its directory (`.` stays `.`).
+
+    A wrapper cut short before its program (`env -C $(pwd)`) runs none: "".
+    """
+    return (PurePosixPath(words[0]).name or words[0]) if words else ""
 
 
 def option_values(
@@ -465,8 +520,8 @@ def read_message_file(path: Path) -> str:
     return data.decode("utf-8")
 
 
-def git_output(cwd: str, *args: str) -> str:
-    """Return what a git command prints in `cwd`, or "" if it fails."""
+def git_output(cwd: str, *args: str) -> str | None:
+    """Return what a git command prints in `cwd`, or None if it fails."""
     result = subprocess.run(
         ["git", "-C", cwd, *args],
         capture_output=True,
@@ -474,12 +529,33 @@ def git_output(cwd: str, *args: str) -> str:
         check=False,
         env=state.git_environment(),
     )
-    return result.stdout.strip() if result.returncode == 0 else ""
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
-def current_branch(cwd: str) -> str:
-    """Return the branch checked out in `cwd`, or "" if it can't be read."""
+def current_branch(cwd: str) -> str | None:
+    """Return the branch checked out in `cwd`, or None if it can't be read (or HEAD detached)."""
     return git_output(cwd, "symbolic-ref", "--short", "-q", "HEAD")
+
+
+def unknown_branch(cwd: str, advice: str) -> str:
+    """Return the reason to deny a command whose current branch can't be read."""
+    return f"can't read the current branch in {cwd}; {advice}"
+
+
+def check_directory(cwd: str, value: str, where: str, *, must_exist: bool) -> str | None:
+    """Deny a directory the shell expands before the command sees it, or one that isn't there.
+
+    The guard reads the branch and message files there, so it must be the directory the
+    command really runs in.
+    """
+    if DIRECTORY_EXPANSION.search(value) or value.startswith("~"):
+        return (
+            f"{where} {value} uses shell expansion ($, backticks, ~, *, ?, [ or {{), which the"
+            " guard can't follow: name the directory literally"
+        )
+    if must_exist and not (Path(cwd) / value).is_dir():
+        return f"{where} {value} isn't a directory in {cwd}"
+    return None
 
 
 def is_force(option: str) -> bool:
@@ -547,6 +623,8 @@ def check_push(args: list[str], cwd: str) -> str | None:
     branch = current_branch(cwd) if pushes_current else ""
     if "main" in targets or branch == "main":
         return "only Zach changes main; push your own branch and open a PR"
+    if branch is None:
+        return unknown_branch(cwd, "push your branch by name")
     sides = [side for spec in refspecs for side in spec.split(":")]
     return check_ids([*sides, branch], "the pushed branch name")
 
@@ -641,13 +719,24 @@ def check_git_subcommand(subcommand: str, args: list[str], shell: Shell) -> str 
     return check_ids(new_branches(subcommand, args), "the new branch name")
 
 
+def check_git_directories(options: list[str]) -> str | None:
+    """Deny a `git -C` directory the shell expands. git itself stops at one that isn't there."""
+    for option, value in itertools.pairwise(options):
+        if option == "-C" and (reason := check_directory("", value, "git -C", must_exist=False)):
+            return reason
+    return None
+
+
 def check_git(args: list[str], shell: Shell, *, expanded: bool = False) -> str | None:
     """Check a git command: find its subcommand past the global options, expanding an alias."""
     options, subcommand, rest, cwd = git_subcommand(args, shell.cwd)
-    if reason := check_git_config(options, subcommand, rest, shell):
+    if reason := check_git_directories(options) or check_git_config(
+        options, subcommand, rest, shell
+    ):
         return reason
+    # `git config --get` exits 1 for a key that isn't set: no alias.
     alias = (
-        git_output(cwd, "config", "--get", f"alias.{subcommand}")
+        git_output(cwd, "config", "--get", f"alias.{subcommand}") or ""
         if subcommand and subcommand not in GIT_INSPECTED
         else ""
     )
@@ -742,9 +831,15 @@ def check_pr_create(args: list[str], shell: Shell) -> str | None:
             "the head branch name uses shell substitution, which the guard can't check:"
             " name the branch literally"
         )
-    return expansion(heads, "the head branch name") or check_ids(
-        heads or [current_branch(shell.cwd)], "the head branch name"
-    )
+    return expansion(heads, "the head branch name") or check_heads(heads, shell.cwd)
+
+
+def check_heads(heads: list[str], cwd: str) -> str | None:
+    """Deny a PR head (`--head`, else the current branch) unreadable or naming a foreign ID."""
+    branch = "" if heads else current_branch(cwd)
+    if branch is None:
+        return unknown_branch(cwd, "pass --head <branch>")
+    return check_ids(heads or [branch], "the head branch name")
 
 
 def check_pr_text(subcommand: str, args: list[str], shell: Shell) -> str | None:
@@ -808,6 +903,16 @@ PROGRAMS: dict[str, Check] = {
 def scan(patterns: tuple[tuple[re.Pattern[str], str], ...], text: str) -> str | None:
     """Return the reason of the first pattern found in `text`, or None."""
     return next((reason for pattern, reason in patterns if pattern.search(text)), None)
+
+
+def check_simple(simple: SimpleCommand, shell: Shell) -> str | None:
+    """Check one simple command in the directory its wrappers run it in (`env -C dir`)."""
+    cwd = shell.cwd
+    for directory in simple.chdirs:
+        if reason := check_directory(cwd, directory, "the wrapper's directory", must_exist=True):
+            return reason
+        cwd = str(Path(cwd) / directory)
+    return check_words(simple.words, shell._replace(cwd=cwd, heredoc_stdin=simple.heredoc_stdin))
 
 
 def check_words(words: list[str], shell: Shell) -> str | None:
@@ -877,15 +982,7 @@ def reason_to_deny(command: str, cwd: str, outer: Shell | None = None) -> str | 
     shell = Shell(cwd, tuple(bodies), expands, sets_git_config=config)
     if bodies and any(program(simple.words) in SCRIPT_RUNNERS for simple in commands):
         reasons.extend(reason_to_deny(body, cwd, outer=shell) for body in bodies)
-    reasons.extend(
-        check_words(
-            simple.words,
-            shell._replace(
-                cwd=str(Path(cwd).joinpath(*simple.chdirs)), heredoc_stdin=simple.heredoc_stdin
-            ),
-        )
-        for simple in commands
-    )
+    reasons.extend(check_simple(simple, shell) for simple in commands)
     return next((reason for reason in reasons if reason), None)
 
 
