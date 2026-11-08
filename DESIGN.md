@@ -63,7 +63,7 @@ retrievals
 - task_id: UUID. One task is one agent session or one user request; the client mints it.
 - query: text. What the agent searched for.
 - rank_position: int. Where the entry appeared in results.
-- score_at_retrieval: float. The ranking score at the time, so ranking changes can be evaluated later.
+- score_at_retrieval: float. The ranking score at the time, so ranking changes can be evaluated later; its factors `relevance`, `version_factor` and `outcome_score` are logged beside it.
 
 searches
 - task_id, reporter_id, model_id, privacy_mode, created_at.

@@ -122,6 +122,37 @@ def test_each_result_logs_a_retrieval(
     }
 
 
+def test_each_retrieval_logs_the_factors_of_its_score(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    entry_id = factories.entry(
+        db, reporter, environment={"language": "python 3.12", "libraries": {"markupsafe": "2.1.0"}}
+    )
+    db.execute(
+        "INSERT INTO ranking_snapshots (entry_id, computed_at, score, retrieval_count_30d) "
+        "VALUES (%s, now(), 0.8, 0)",
+        (entry_id,),
+    )
+    task_id = str(uuid.uuid4())
+    result = search(server, task_id=task_id, environment={"libraries": {"markupsafe": "2.1.5"}})
+
+    (hit,) = hits(result, entry_id)
+    shown = {"entry_id", "symptom", "environment", "cause", "fix", "repro", "score", "provenance"}
+    assert set(hit) == shown  # the factors are logged, never returned
+    rows = db.execute(
+        "SELECT entry_id, score_at_retrieval, relevance, version_factor, outcome_score "
+        "FROM retrievals WHERE task_id = %s",
+        (task_id,),
+    ).fetchall()
+    assert rows
+    for _, score, fit, versions, outcome_score in rows:
+        assert fit * versions * outcome_score == pytest.approx(score, abs=1e-9)
+    (ours,) = [row for row in rows if row[0] == entry_id]
+    assert ours[1] == hit["score"]
+    assert 0.25 <= ours[2] <= 1
+    assert ours[3:] == (1.2, 0.8)
+
+
 def test_language_filter_excludes_other_languages_only(
     server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
 ) -> None:
