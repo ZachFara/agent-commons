@@ -75,10 +75,13 @@ searches
 - prompt_version_id: nullable, references prompt_versions. The text the MCP server served when the agent searched.
 
 prompt_versions (decision 2026-11-07-MIT-566-prompt-versions)
-- hash: text, unique, 64 lowercase hex characters (shown as the first 12). SHA-256 over canonical JSON (sorted keys) of `surfaces`.
-- label: text, up to 120 characters. The `COMMONS_INSTRUCTIONS_VARIANT` name, with the wording it stands for when it is `baseline` or `previous` (`baseline:w-...`), and `+turn-nudge`, `+record` when those are on. The first label to serve a hash keeps it.
-- surfaces: jsonb, {surface: text}. The instructions; each tool's description, input schema (JSON, sorted keys) and `_meta`; registered prompts; the untrusted note and the empty-result note; and, only when switched on, the record prompt, the turn nudge template and a session feedback marker. Templates, never formatted text, so ids and counts never make a new version.
-- `build_server` builds the version once, from the same tool and prompt objects it gives FastMCP; `search` and `propose` upsert it (insert, do nothing on conflict, then select) and point their rows at it.
+- kind: enum server, hooks. `server` is the text the MCP server serves; `hooks` is the text the installed hook client shows (the SessionStart sentence, the Stop report reminder, and the variant's start line and nudge). The Prompts page lists the two kinds apart; `commons prompts` lists only `server` versions.
+- hash: text, unique, lowercase hex, shown as the first 12. SHA-256 over canonical JSON (sorted keys) of `surfaces`. A row is one of two shapes: 64 hex characters with `surfaces`, or a `hooks` row with only the 12 characters a hosted client sent and NULL `surfaces`.
+- label: text, up to 120 characters. For `server`, the `COMMONS_INSTRUCTIONS_VARIANT` name, with the wording it stands for when it is `baseline` or `previous` (`baseline:w-...`), and `+turn-nudge`, `+record` when those are on. For `hooks`, the variants that show that text (e.g. `original, examples, rule, invite`), or `wording g<n>` for a start line only the wording search uses. The first label to serve a hash keeps it.
+- surfaces: jsonb, {surface: text}, nullable. For `server`: the instructions; each tool's description, input schema (JSON, sorted keys) and `_meta`; registered prompts; the untrusted note and the empty-result note; and, only when switched on, the record prompt, the turn nudge template and a session feedback marker. For `hooks`: `session_start`, `report_reminder`, and `start_line` and `nudge` when the variant has them. Templates, never formatted text, so ids and counts never make a new version.
+- `build_server` builds the server version once, from the same tool and prompt objects it gives FastMCP; `search` and `propose` upsert it (insert, do nothing on conflict, then select) and point their rows at it.
+- Hook versions: a local hook stores the version it shows, with its surfaces. A hosted client sends only `prompt_hash`, the first 12 hex characters, and the server labels it from the hook texts its own code has released (`RELEASED_HOOK_TEXTS` in `agent_text`, crossed with every variant and wording start line), storing that 64-hex version with its surfaces. A hash it doesn't know is stored as sent, labelled `unrecognized`, with NULL surfaces: the server never stores text a client sent.
+- tasks.hook_prompt_version_id: nullable, references prompt_versions. The hook version SessionStart recorded for the task. A resume that sends a version overwrites it with the newer one; a resume that sends none keeps it. Tasks from older hosted clients, from test keys (decision 0030) and from before migration 0018 have none.
 
 outcomes
 - retrieval_id.
@@ -168,7 +171,7 @@ Observed outcomes come from hooks, not from the agent:
 - PostToolUse on Bash: when the command matches a test runner (pytest, npm test, cargo test, go test, and a configurable list), record command, exit code, and timestamp against the current task_id.
 - PostToolUse on Edit and Write: record a hash of the touched file so `used` can be computed from the diff at task end.
 - Stop: compute `used` by matching entry fix text against the session diff, assemble the evidence, and write the outcome. Prompt the agent to file its assessment if it hasn't.
-- SessionStart: mint task_id, set privacy mode from the reporter's default.
+- SessionStart: mint task_id, set privacy mode from the reporter's default, and record the hook version on the task (`tasks.hook_prompt_version_id`). The hosted body carries `prompt_hash`, the first 12 hex characters of that version, and no hook text.
 
 Hook details, including what stays on the user's machine, are in decision 0016. Hooks are Claude Code's hook system (settings.json). The installed hooks only call `commons hook <event>`; the logic lives in the server package so it is typed and tested. Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
 
