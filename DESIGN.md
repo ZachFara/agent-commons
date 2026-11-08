@@ -71,7 +71,7 @@ searches
 - environment, results: jsonb, redacted. Only written in full_trace mode (decision 0024).
 - One row per search call, whether or not anything matched.
 
-doc_lookups: one row per Context7 `query-docs` call hooks saw: task_id, reporter_id, the task's model_id, privacy_mode, library_id, version, excluded, and the redacted query only in full_trace mode; counts read `counted_doc_lookups`.
+doc_lookups: one row per Context7 `query-docs` call hooks saw: task_id, reporter_id, the task's model_id, privacy_mode, library_id, version, excluded, and the redacted query only in full_trace mode; counts read `counted_doc_lookups`. Lookups older than 180 days are folded into doc_lookup_months (month, library_id, version, lookups), then deleted.
 
 outcomes
 - retrieval_id.
@@ -89,9 +89,9 @@ reporters
 - trust_level: 0-2, recomputed with `commons rank` from the reporter's own record (decision 0028). suspended_at: set by a purge (decision 0029).
 
 corrections (decision 0030)
-- target_table (outcomes, retrievals, searches), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by.
+- target_table (outcomes, retrievals, searches, doc_lookups), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by.
 - Raw observations are never deleted. A correction writes the new value into the row and records the old one; a standing correction of `used` or `outcome` is not overwritten by later hooks or reports.
-- retrievals, outcomes and searches carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes` and `counted_searches` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start.
+- retrievals, outcomes, searches and doc_lookups carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes`, `counted_searches` and `counted_doc_lookups` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start.
 
 api_keys (hosted mode only; decision 0032)
 - reporter_id, prefix (first characters, shown in listings), key_hash (SHA-256, unique).
