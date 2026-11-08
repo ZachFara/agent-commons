@@ -8,6 +8,7 @@ from psycopg.rows import dict_row
 
 from commons.domain.outcomes import SUCCESS_OUTCOMES
 from commons.store.connection import Connection
+from commons.store.trust import FAILURE_EVIDENCE, FAILURE_PARAMS
 
 Row = dict[str, Any]
 _SUCCESS = {"success": list(SUCCESS_OUTCOMES)}
@@ -554,6 +555,23 @@ def stale_candidates(conn: Connection, limit: int = 20) -> list[Row]:
         "ORDER BY retrievals DESC LIMIT %(limit)s",
         {"days": STALE_DAYS, "limit": limit, **_SUCCESS},
     )
+
+
+def failure_rates(conn: Connection, limit: int = 20) -> list[Row]:
+    """Approved entries with a failure, highest failure rate first, retired ones left out.
+
+    The counts are what the reopen rule for human-approved entries weighs (decision 0026,
+    amended): the same outcomes, window and reopen cut-off, through `FAILURE_EVIDENCE`.
+    """
+    query = sql.SQL(
+        "SELECT e.id, e.symptom, e.human_reviewed, evidence.failures, evidence.successes, "
+        "evidence.failures::float / (evidence.failures + evidence.successes) AS failure_rate, "
+        "evidence.failing_reporters, evidence.last_failure "
+        "FROM entries e {evidence} WHERE e.status = 'approved' "
+        "ORDER BY failure_rate DESC, evidence.failures DESC, evidence.last_failure DESC "
+        "LIMIT %(limit)s"
+    ).format(evidence=FAILURE_EVIDENCE)
+    return _rows(conn, query, {**FAILURE_PARAMS, "limit": limit})
 
 
 def duplicate_flags(conn: Connection) -> dict[UUID, list[Row]]:

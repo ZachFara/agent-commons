@@ -88,3 +88,26 @@ def validate_role(role: str) -> Role:
         msg = "role must be contributor, reviewer or admin."
         raise InvalidInputError(msg)
     return _ROLES[role]
+
+
+# A human-approved entry goes back to the queue when its hook-observed used outcomes with a
+# known result, from reporters other than its author, over the last REOPEN_WINDOW_DAYS days
+# and since it was last reopened, hold at least REOPEN_FAILURES failures from at least
+# REOPEN_REPORTERS reporters, and more failures than successes (decision 0026, amended). The
+# reporter floor keeps one reporter from pulling an entry a human approved.
+REOPEN_FAILURES = 3
+REOPEN_REPORTERS = 2
+REOPEN_WINDOW_DAYS = 90
+
+
+def failures_to_reopen(failures: int, successes: int, failing_reporters: int) -> int:
+    """How many more failures send a human-approved entry back to the queue; 0: it goes now.
+
+    Each further failure can come from one new reporter, so the count is reachable.
+    """
+    return max(
+        REOPEN_FAILURES - failures,
+        successes + 1 - failures,
+        REOPEN_REPORTERS - failing_reporters,
+        0,
+    )

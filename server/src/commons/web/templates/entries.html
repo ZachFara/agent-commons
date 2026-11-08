@@ -15,6 +15,12 @@
   {% for s in stale %}<tr><td><a href="/entries/{{ s.id }}">{{ s.symptom | truncate(90) }}</a></td><td class="num">{{ s.retrievals }}</td>
     <td>{{ s.last_success.strftime("%b %d") if s.last_success else "never" }}</td><td class="num">{% if s.used %}{{ s.worked }}/{{ s.used }}{% else %}–{% endif %}</td></tr>{% endfor %}
   </tbody></table></div></section>{% endif %}
+{% if failing %}<section class="card" style="margin-bottom: 16px"><h2>Highest failure rates <span class="hint">approved entries; hook-observed used outcomes with a known result in {{ failing_days }} days, the author's own left out; a human-approved entry with 3 or more failures from 2 or more reporters, and more failures than successes, goes back to the queue at the next rank</span></h2><div class="table-wrap"><table>
+  <thead><tr><th>Entry</th><th class="num">Failed</th><th class="num">Worked</th><th class="num">Failure rate</th><th>Last failure</th><th>Reopen threshold</th></tr></thead><tbody>
+  {% for f in failing %}<tr><td><a href="/entries/{{ f.id }}">{{ f.symptom | truncate(90) }}</a></td><td class="num">{{ f.failures }}</td><td class="num">{{ f.successes }}</td>
+    <td class="num">{{ pct(f.failure_rate) }}</td><td>{{ f.last_failure.strftime("%b %d") }}</td>
+    <td>{% if f.to_reopen is none %}<span class="badge soft" title="No human approved it; the provisional rule (decision 0028) applies">unreviewed</span>{% elif f.to_reopen == 0 %}<span class="badge bad">reopens at the next rank</span>{% elif f.to_reopen == 1 %}<span class="badge bad">1 more failure reopens it</span>{% else %}<span class="muted">{{ f.to_reopen }} more failures</span>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div></section>{% endif %}
 <section class="card">{% if entries %}<div class="table-wrap"><table>
   <thead><tr><th>Symptom</th><th>Status</th><th class="num">Score</th><th class="num">Retrievals 30d</th><th class="num">Used</th><th class="num">Success</th>
     <th class="num" title="Size of the entry in search results: its text fields, characters ÷ 4">≈ Tokens</th>
