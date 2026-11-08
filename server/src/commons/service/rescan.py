@@ -5,7 +5,8 @@ can carry a report the current patterns disagree with. A rescan reruns the scann
 current text of each pending entry and each entry search can show, retired ones with a fix
 version included. Applied, it stores the new report, and an approved provisional entry no
 human has reviewed that gains a finding goes back to the queue (0028: any finding blocks
-provisional approval). A retired entry is never reopened.
+provisional approval). A retired entry is never reopened. Restoring an entry rescans it the
+same way, since a rescan skips entries out of search.
 
 The text is never changed: invisible characters still in it are reported, not stripped
 (changing text is a revision, which the admin editor makes).
@@ -21,7 +22,7 @@ from commons.service import events
 from commons.service.identity import current_key
 from commons.store import trust
 from commons.store.connection import Connection
-from commons.store.entries import scannable_entries, set_risk_report
+from commons.store.entries import scan_row, scannable_entries, set_risk_report
 
 REOPEN_REASON = "new risk finding on rescan (0029)"
 
@@ -49,9 +50,7 @@ def rescan(conn: Connection, *, apply: bool) -> list[Rescanned]:
                 continue
             changed.append(found)
             if apply:
-                set_risk_report(conn, found.entry_id, _report(found.after))
-                if found.reopened:
-                    trust.reopen(conn, [found.entry_id], REOPEN_REASON)
+                _apply(conn, found)
     if apply:
         reopened = sum(found.reopened for found in changed)
         actor = current_key()
@@ -64,6 +63,22 @@ def rescan(conn: Connection, *, apply: bool) -> list[Rescanned]:
             key_id=None if actor is None else str(actor),
         )
     return changed
+
+
+def rescan_entry(conn: Connection, entry_id: UUID) -> None:
+    """Rescan one entry and apply the result exactly as `rescan` does.
+
+    Restoring calls this: an entry out of search when the patterns changed was skipped.
+    """
+    found = _rescanned(scan_row(conn, entry_id))
+    if found is not None:
+        _apply(conn, found)
+
+
+def _apply(conn: Connection, found: Rescanned) -> None:
+    set_risk_report(conn, found.entry_id, _report(found.after))
+    if found.reopened:
+        trust.reopen(conn, [found.entry_id], REOPEN_REASON)
 
 
 def _rescanned(row: dict[str, Any]) -> Rescanned | None:
