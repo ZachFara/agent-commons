@@ -125,9 +125,39 @@ def test_the_context7_key_comes_from_the_environment_and_never_lands_in_the_file
     assert "ctx7-planted-key" not in (tmp_path / "mcp.json").read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("arm", ["commons", "none"])
+def test_a_session_without_context7_never_sees_its_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arm: str
+) -> None:
+    monkeypatch.setenv("CONTEXT7_API_KEY", "ctx7-planted-key")
+    env, _settings, _mcp = runner.session_files(
+        tmp_path, "postgresql://unused", tools.agent_eval.arm_variant(arm), hooks=True, arm=arm
+    )
+    assert "CONTEXT7_API_KEY" not in env
+    both, _settings, _mcp = runner.session_files(
+        tmp_path, "postgresql://unused", agent_text.SHIPPED, hooks=True, arm="both"
+    )
+    assert both["CONTEXT7_API_KEY"] == "ctx7-planted-key"  # expanded into the header
+
+
+def problem(events: list[dict[str, Any]], arm: str) -> str | None:
+    return runner.mcp_problem(events, arm, tools.agent_eval.arm_variant(arm))
+
+
 @pytest.mark.parametrize("arm", runner.ARMS)
 def test_a_session_with_its_arms_servers_connected_is_fine(arm: str) -> None:
-    assert runner.mcp_problem([INITS[arm], {"type": "result"}], arm) is None
+    assert problem([INITS[arm], {"type": "result"}], arm) is None
+
+
+@pytest.mark.parametrize(
+    ("arm", "missing"),
+    [("context7", "mcp__context7__query-docs"), ("both", "mcp__commons__search")],
+)
+def test_a_session_that_lacks_an_allowed_mcp_tool_is_a_problem(arm: str, missing: str) -> None:
+    """A wrong Context7 tool name would otherwise leave the arm blind without a word."""
+    init = INITS[arm]
+    short = {**init, "tools": [tool for tool in init["tools"] if tool != missing]}
+    assert problem([short], arm) == f"MCP tools allowed but not offered: {missing}"
 
 
 @pytest.mark.parametrize(
@@ -144,15 +174,13 @@ def test_a_session_with_its_arms_servers_connected_is_fine(arm: str) -> None:
     ],
 )
 def test_a_session_without_its_arms_servers_is_a_problem(init: dict[str, Any], arm: str) -> None:
-    assert runner.mcp_problem([init], arm)
+    assert problem([init], arm)
 
 
 def test_every_turn_must_have_its_arms_servers_and_a_session_must_report_them() -> None:
     pending = {**COMMONS_INIT, "mcp_servers": [{"name": "commons", "status": "pending"}]}
-    assert runner.mcp_problem([COMMONS_INIT, pending], "commons") == (
-        "MCP server not connected: commons"
-    )
-    assert runner.mcp_problem([{"type": "result"}], "commons")
+    assert problem([COMMONS_INIT, pending], "commons") == "MCP server not connected: commons"
+    assert problem([{"type": "result"}], "commons")
 
 
 def result(arm: str, error: str | None) -> runner.Result:
@@ -186,8 +214,8 @@ def test_a_session_in_the_wrong_arm_never_reaches_the_ledger_and_is_retried(
 ) -> None:
     ledger = tmp_path / "trials.jsonl"
     monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
-    wrong = result("both", runner.mcp_problem([COMMONS_INIT], "both"))
-    right = result("commons", runner.mcp_problem([COMMONS_INIT], "commons"))
+    wrong = result("both", problem([COMMONS_INIT], "both"))
+    right = result("commons", problem([COMMONS_INIT], "commons"))
     tools.agent_eval.append_ledger([wrong, right])
     lines = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
     assert [line["arm"] for line in lines] == ["commons"]

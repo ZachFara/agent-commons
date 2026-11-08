@@ -141,13 +141,17 @@ four:
 `context7` is Context7's remote HTTP server (`https://mcp.context7.com/mcp`). If
 `CONTEXT7_API_KEY` is set, the session sends it as `Authorization: Bearer ${CONTEXT7_API_KEY}`,
 which Claude Code expands from the session's environment, so the key is never written to a
-file. Without it Context7 serves anonymous, rate-limited requests. `--allowedTools` lists only
+file. Without it Context7 serves anonymous, rate-limited requests. Sessions in arms without
+Context7 (`commons`, `none`) run with `CONTEXT7_API_KEY` removed from their environment.
+`--allowedTools` lists only
 the arm's servers' tools: `mcp__context7__resolve-library-id` and `mcp__context7__query-docs`
 for Context7 (re-confirm against the first real session's init event), and the commons tools
 for the commons.
 
 **A session runs in its arm or not at all.** Every init event's `mcp_servers` must name exactly
-the arm's servers, all `connected`. Otherwise the session is errored, so it never reaches the
+the arm's servers, all `connected`, and its `tools` must include every `mcp__*` tool the arm
+allows (so a wrong Context7 tool name can't leave the arm silently blind). Otherwise the session
+is errored, so it never reaches the
 ledger and `--resume` runs it again. `--resume` skips only a clean result for the same arm,
 variant, and model. In an arm without the commons, the commons expectations (search, propose,
 proposals, report, used) are not checked.
@@ -165,8 +169,9 @@ Each result and ledger line also records, in every arm and in `run` and `search`
 | `patch_hash` | 16 hex digits of sha256 over the same diff taken with whitespace removed and blank lines dropped, so whitespace-only differences share a hash |
 
 Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
-`conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as are `.venv`,
-`node_modules`, caches, and `*.egg-info`. `trials` groups by arm too, and `effects` counts only
+`conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:
+`.venv`, `node_modules`, `__pycache__`, the pytest, mypy, ruff and hypothesis caches, `build/`,
+`dist/`, `*.egg-info`, `*.pyc`, `.coverage*`, and `uv.lock` (which `uv run` creates). `trials` groups by arm too, and `effects` counts only
 `commons`-arm lines.
 
 ## Trial ledger

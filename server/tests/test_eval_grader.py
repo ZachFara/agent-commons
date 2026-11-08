@@ -1,10 +1,13 @@
 """The behavioral eval's grader (tools/eval/runner.py, decision 0023)."""
 
+import json
 import subprocess
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
+import tools.agent_eval
 from tools.eval import runner
 from tools.eval.model import Discovery
 from tools.eval.runner import grade_proposal
@@ -49,6 +52,19 @@ RECORDED: list[dict[str, Any]] = [
         "type": "system",
         "subtype": "init",
         "session_id": "21929f00-8422-4c45-a5ea-2213f9e580be",
+        "tools": [
+            "Bash",
+            "Edit",
+            "Read",
+            "ToolSearch",
+            "mcp__commons__approve",
+            "mcp__commons__pending",
+            "mcp__commons__propose",
+            "mcp__commons__reject",
+            "mcp__commons__report",
+            "mcp__commons__search",
+            "mcp__commons__status",
+        ],
         "mcp_servers": [{"name": "commons", "status": "connected", "source": "dynamic"}],
     },
     {
@@ -83,18 +99,28 @@ def project_pair(tmp_path: Path, edited: dict[str, str]) -> tuple[Path, Path]:
     return pristine, project
 
 
-def test_grading_a_recorded_session_yields_its_tokens_and_wall_clock(
-    tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def graded_recording(
+    tmp_path: Path,
+    database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    arm: str = "commons",
+    events: list[dict[str, Any]] | None = None,
+) -> runner.Result:
+    """Grade the recorded session in `arm`, its tests' run stubbed as passing."""
     pristine, project = project_pair(tmp_path, {"app.py": FIXED})
     passed = subprocess.CompletedProcess(["pytest"], 0, "1 passed", "")
     monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: passed)  # the tests' run
     scenario = SCENARIOS["control-typo"]
     session = runner.Session(
-        scenario, "c", 1, project, tmp_path, database_url, agent_text.SHIPPED, "commons", pristine
+        scenario, "c", 1, project, tmp_path, database_url, agent_text.SHIPPED, arm, pristine
     )
+    return runner.grade(session, events or RECORDED)
 
-    graded = runner.grade(session, RECORDED)
+
+def test_grading_a_recorded_session_yields_its_tokens_and_wall_clock(
+    tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graded = graded_recording(tmp_path, database_url, monkeypatch)
 
     assert graded.error is None
     assert graded.tokens_in == 8 + 8363 + 72960
@@ -103,6 +129,49 @@ def test_grading_a_recorded_session_yields_its_tokens_and_wall_clock(
     assert "+    return sum(xs)" in graded.patch
     assert graded.arm == "commons"
     assert graded.text_fingerprint
+
+
+FAILED_COMMONS = [
+    {**RECORDED[0], "mcp_servers": [{"name": "commons", "status": "failed"}]},
+    RECORDED[1],
+]
+
+
+@pytest.mark.parametrize(
+    ("arm", "events"),
+    [("both", RECORDED), ("commons", FAILED_COMMONS)],
+    ids=["servers-differ-from-the-arm", "commons-not-connected"],
+)
+def test_grading_a_session_outside_its_arm_errors_it_off_the_ledger_and_into_resume(
+    tmp_path: Path,
+    database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    arm: str,
+    events: list[dict[str, Any]],
+) -> None:
+    graded = graded_recording(tmp_path, database_url, monkeypatch, arm, events)
+    assert graded.error
+
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    tools.agent_eval.append_ledger([graded])
+    assert ledger.read_text(encoding="utf-8") == ""
+    (tmp_path / "c-control-typo-1.json").write_text(json.dumps(asdict(graded)), encoding="utf-8")
+    job = runner.Job(SCENARIOS["control-typo"], 1, agent_text.SHIPPED, "", arm)
+    assert not tools.agent_eval.finished(tmp_path, "c", job)
+
+
+def test_a_clean_graded_session_is_logged_and_skipped_on_resume(
+    tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graded = graded_recording(tmp_path, database_url, monkeypatch)
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    tools.agent_eval.append_ledger([graded])
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+    (tmp_path / "c-control-typo-1.json").write_text(json.dumps(asdict(graded)), encoding="utf-8")
+    job = runner.Job(SCENARIOS["control-typo"], 1, agent_text.SHIPPED, "", "commons")
+    assert tools.agent_eval.finished(tmp_path, "c", job)
 
 
 def test_the_turns_of_a_multi_turn_session_add_up() -> None:
@@ -140,3 +209,21 @@ def test_test_file_edits_are_left_out_of_the_patch(tmp_path: Path) -> None:
     assert "test" not in patch
     assert "pycache" not in patch
     assert runner.project_patch(pristine, pristine)[0] == ""
+
+
+def test_files_tools_generate_while_running_are_left_out_of_the_patch(tmp_path: Path) -> None:
+    pristine, project = project_pair(tmp_path, {})
+    clean = runner.project_patch(pristine, pristine)
+    generated = {
+        "uv.lock": "version = 1\n",  # `uv run` creates it
+        ".coverage": "data",
+        ".coverage.host.123": "data",
+        ".hypothesis/examples/x": "data",
+        "build/lib/app.py": FIXED,
+        "dist/app-0.1.tar.gz": "data",
+        "app.egg-info/PKG-INFO": "Name: app\n",
+        "__pycache__/app.cpython-312.pyc": "data",
+    }
+    runner.write_files(project, generated)
+    assert runner.project_patch(pristine, project) == clean
+    assert clean[0] == ""

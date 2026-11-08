@@ -8,6 +8,7 @@ An arm names which MCP servers a session gets: the commons, Context7, both, or n
 """
 
 import difflib
+import fnmatch
 import hashlib
 import json
 import os
@@ -81,7 +82,19 @@ ARM_SERVERS: dict[str, frozenset[str]] = {
 ARMS = tuple(ARM_SERVERS)
 NO_COMMONS_VARIANT = "none"  # the variant recorded for an arm whose agent sees no commons text
 # Left out of the pristine copy and of patches: environments, caches, and build output.
-GENERATED = (".venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
+GENERATED = (
+    ".venv",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".hypothesis",
+    "build",
+    "dist",
+)
+# Files a tool writes as it runs (`uv run` creates uv.lock), never the agent's fix.
+GENERATED_FILES = ("uv.lock", ".coverage", ".coverage.*", "*.pyc", "*.egg-info")
 TEST_DIRS = frozenset({"tests", "test", "__tests__"})
 
 
@@ -249,6 +262,8 @@ def session_files(
         "NODE_PATH": str(workdir / "site"),
         VARIANT_KEY: variant,  # read by the MCP server and the hooks alike
     }
+    if "context7" not in ARM_SERVERS[arm]:
+        env.pop(CONTEXT7_KEY, None)  # a session without Context7 has no use for its key
     settings = workdir / "settings.json"
     hook_groups = commons_hooks(commons_executable()) if hooks and has_commons(arm) else {}
     settings.write_text(json.dumps({"hooks": hook_groups}), encoding="utf-8")
@@ -362,21 +377,29 @@ def allowed_tools(variant: str, arm: str = "commons") -> list[str]:
     return tools
 
 
-def mcp_problem(events: list[dict[str, Any]], arm: str) -> str | None:
+def mcp_problem(events: list[dict[str, Any]], arm: str, variant: str) -> str | None:
     """Return why a session's MCP servers aren't its arm's, from its init events, or None.
 
-    A session whose servers differ, or one of which didn't connect, didn't run in its arm.
+    A session whose servers differ, one of which didn't connect, or that lacks an MCP tool it
+    was allowed (a wrong tool name would leave the arm silently blind), didn't run in its arm.
     """
     inits = [e for e in events if e.get("type") == "system" and e.get("subtype") == "init"]
     if not inits:
         return "no init event: the session's MCP servers are unknown"
+    wanted = {tool for tool in allowed_tools(variant, arm) if tool.startswith("mcp__")}
+    problems = (_init_problem(init, arm, wanted) for init in inits)
+    return next((problem for problem in problems if problem), None)
+
+
+def _init_problem(init: dict[str, Any], arm: str, wanted: set[str]) -> str | None:
     expected = ARM_SERVERS[arm]
-    for init in inits:
-        servers = {str(s.get("name")): str(s.get("status")) for s in init.get("mcp_servers", [])}
-        if set(servers) != expected:
-            return f"MCP servers {sorted(servers)}, but arm {arm} has {sorted(expected)}"
-        if down := sorted(name for name, status in servers.items() if status != "connected"):
-            return f"MCP server not connected: {', '.join(down)}"
+    servers = {str(s.get("name")): str(s.get("status")) for s in init.get("mcp_servers", [])}
+    if set(servers) != expected:
+        return f"MCP servers {sorted(servers)}, but arm {arm} has {sorted(expected)}"
+    if down := sorted(name for name, status in servers.items() if status != "connected"):
+        return f"MCP server not connected: {', '.join(down)}"
+    if missing := sorted(wanted - {str(tool) for tool in init.get("tools", [])}):
+        return f"MCP tools allowed but not offered: {', '.join(missing)}"
     return None
 
 
@@ -432,17 +455,20 @@ def is_test_file(relative: Path) -> bool:
     )
 
 
+def is_generated(name: str) -> bool:
+    """Whether a file or directory name is generated output: an environment, cache, or build."""
+    return name in GENERATED or any(fnmatch.fnmatch(name, glob) for glob in GENERATED_FILES)
+
+
 def source_files(root: Path) -> dict[str, str]:
     """Return the project's non-test, non-generated files as {relative path: text}."""
     files: dict[str, str] = {}
     for directory, subdirectories, names in os.walk(root):
-        subdirectories[:] = [
-            d for d in subdirectories if d not in GENERATED and not d.endswith(".egg-info")
-        ]
+        subdirectories[:] = [d for d in subdirectories if not is_generated(d)]
         for name in names:
             path = Path(directory) / name
             relative = path.relative_to(root)
-            if path.is_file() and path.suffix != ".pyc" and not is_test_file(relative):
+            if path.is_file() and not is_generated(name) and not is_test_file(relative):
                 files[relative.as_posix()] = path.read_text(encoding="utf-8", errors="replace")
     return files
 
@@ -699,7 +725,7 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         turns=sum(int(e.get("num_turns", 0)) for e in finals),
         cost_usd=sum(float(e.get("total_cost_usd", 0.0)) for e in finals),
         # A session that didn't get its arm's servers is no trial of the arm: errored, retried.
-        error=failed or mcp_problem(events, session.arm),
+        error=failed or mcp_problem(events, session.arm, session.variant),
         variant=session.variant,
         text_fingerprint=agent_text.fingerprint(shown) if shown is not None else "",
         arm=session.arm,
@@ -730,7 +756,10 @@ def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: b
                 repos.prepare(scenario.repo, project)
             pristine = Path(tmp) / "pristine"
             shutil.copytree(
-                project, pristine, symlinks=True, ignore=shutil.ignore_patterns(*GENERATED)
+                project,
+                pristine,
+                symlinks=True,
+                ignore=shutil.ignore_patterns(*GENERATED, *GENERATED_FILES),
             )
             if scenario.then is not None:  # the second task's files are the harness's, not a fix
                 write_files(pristine, scenario.then.files)
