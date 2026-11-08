@@ -71,6 +71,8 @@ searches
 - environment, results: jsonb, redacted. Only written in full_trace mode (decision 0024).
 - One row per search call, whether or not anything matched.
 
+doc_lookups: one row per Context7 `query-docs` call hooks saw: task_id, reporter_id, the task's model_id, privacy_mode, library_id, version, excluded, and the redacted query only in full_trace mode; counts read `counted_doc_lookups`.
+
 outcomes
 - retrieval_id.
 - used: enum yes, partial, no. Determined by checking whether the entry's fix text or commands appear in what the task changed or ran after the retrieval, not by asking the agent. Work done before the retrieval is a lookup, not a use. Each of the fix's artifacts is weighted by how rare it is across the store's fixes, generic tokens (common flags, ordinary hyphenated words, localhost URLs) weigh nothing, and edits to prose files (.md, .rst, .txt, docs/) are not evidence: `used` is the weighted share present (decision 0036). An observed test pass counts for the entry only if it came after the work that matched.
@@ -158,6 +160,7 @@ Observed outcomes come from hooks, not from the agent:
 
 - PostToolUse on Bash: when the command matches a test runner (pytest, npm test, cargo test, go test, and a configurable list), record command, exit code, and timestamp against the current task_id.
 - PostToolUse on Edit and Write: record a hash of the touched file so `used` can be computed from the diff at task end.
+- PostToolUse on Context7 `query-docs` (`mcp__*__query-docs`): record the library id and version from the tool input; the response is never read.
 - Stop: compute `used` by matching entry fix text against the session diff, assemble the evidence, and write the outcome. Prompt the agent to file its assessment if it hasn't.
 - SessionStart: mint task_id, set privacy mode from the reporter's default.
 
