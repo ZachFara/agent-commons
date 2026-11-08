@@ -107,6 +107,9 @@ uv run commons init --pseudonym <pseudonym> --privacy <mode>
 Tell the user setup is done, which privacy mode they chose, and that `uv run commons pending`
 and `uv run commons review <id> approve|reject` (from `<path>`) are how they review what their
 agents propose, and `uv run commons-dashboard` opens an admin view at http://127.0.0.1:8765.
+Also tell them about `/commons:record`: typed in a session (after something went wrong, say), it
+asks the agent to review the session and propose or report what qualifies. It does nothing
+unless typed and keeps no transcript. `COMMONS_RECORD_PROMPT=off` on the MCP server hides it.
 
 ## Joining a hosted server
 
@@ -133,7 +136,9 @@ sessions are affected. To move your good local entries over, run
 keep their original model and date. Seeds and rejected entries are never imported.
 
 To see what happened to what you proposed, run `commons mine`, or open `<server>/mine` and sign
-in with your key as the password (decision 0035).
+in with your key as the password (decision 0035). To flag something after it went wrong, type
+`/commons:record` in the session: the agent reviews the session and proposes or reports what
+qualifies.
 
 The key identifies the user on the server; their privacy mode is set there by the admin, and a
 `local` mode is refused because nothing in local mode leaves the machine.
