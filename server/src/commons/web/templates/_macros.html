@@ -37,3 +37,7 @@
 {% macro meter(v) %}{% if v is none %}<span class="muted">–</span>{% else %}<span class="meter"><b style="width: {{ "%.0f" | format(v * 100) }}%"></b></span>{{ "%.2f" | format(v) }}{% endif %}{% endmacro %}
 
 {% macro outcome(o, source) %}{% if not o %}<span class="muted">none yet</span>{% else %}<span class="badge {{ 'good' if o in ('tests_passed', 'error_resolved', 'user_accepted') else ('bad' if o in ('tests_failed', 'error_persisted', 'user_rejected') else '') }}">{{ o | replace("_", " ") }}</span>{% if source %} <span class="muted" title="{{ 'Observed by hooks' if source == 'hook' else 'Reported by the agent' }}">{{ 'observed' if source == 'hook' else 'self-reported' }}</span>{% endif %}{% endif %}{% endmacro %}
+
+{% macro tokens(v) %}{% if v is none %}<span class="muted">no data</span>{% else %}{{ "{:,.0f}".format(v) }}{% endif %}{% endmacro %}
+
+{% macro per_success(c) %}{% if c is none %}<span class="muted">no data</span>{% elif c.tokens_per_success is none %}<span class="muted">no success yet</span>{% else %}{{ tokens(c.tokens_per_success) }}{% endif %}{% endmacro %}

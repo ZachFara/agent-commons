@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import status, pct, meter %}
+{% from "_macros.html" import status, pct, meter, tokens, per_success %}
 {% block title %}Entries{% endblock %}
 {% block content %}
 <header class="page"><div><h1>Entries</h1><div class="sub">{{ entries | length }} shown{% if query or status_filter %}, filtered{% endif %}.</div></div>
@@ -16,13 +16,19 @@
     <td>{{ s.last_success.strftime("%b %d") if s.last_success else "never" }}</td><td class="num">{% if s.used %}{{ s.worked }}/{{ s.used }}{% else %}–{% endif %}</td></tr>{% endfor %}
   </tbody></table></div></section>{% endif %}
 <section class="card">{% if entries %}<div class="table-wrap"><table>
-  <thead><tr><th>Symptom</th><th>Status</th><th class="num">Score</th><th class="num">Retrievals 30d</th><th class="num">Used</th><th class="num">Success</th><th>Proposed</th></tr></thead><tbody>
-  {% for e in entries %}<tr>
+  <thead><tr><th>Symptom</th><th>Status</th><th class="num">Score</th><th class="num">Retrievals 30d</th><th class="num">Used</th><th class="num">Success</th>
+    <th class="num" title="Size of the entry in search results: its text fields, characters ÷ 4">≈ Tokens</th>
+    <th class="num" title="Tokens after retrieval (input includes cache reads) over used outcomes with a known result, per success">Tokens / success</th>
+    <th class="num" title="Median tokens after retrieval, when it worked and when it failed">Median worked · failed</th><th>Proposed</th></tr></thead><tbody>
+  {% for e in entries %}{% set c = e.cost %}<tr>
     <td><div class="clip"><a href="/entries/{{ e.id }}">{{ e.symptom }}</a></div><div class="muted">{{ e.domains | join(" · ") }}</div></td>
     <td>{{ status(e.status, e.human_reviewed) }}</td>
     <td class="num">{{ meter(e.score) }}</td>
     <td class="num">{{ e.retrieval_count_30d if e.retrieval_count_30d is not none else "–" }}</td>
     <td class="num">{{ pct(e.used_rate) }}</td><td class="num">{{ pct(e.success_rate) }}</td>
+    <td class="num">≈ {{ tokens(e.hit_tokens) }}</td>
+    <td class="num">{{ per_success(c) }}<div class="muted">n = {{ c.costed if c else 0 }}</div></td>
+    <td class="num">{{ tokens(c.median_success if c else none) }} · {{ tokens(c.median_failure if c else none) }}<div class="muted">n = {{ c.successes if c else 0 }} · {{ c.failures if c else 0 }}</div></td>
     <td class="muted" style="white-space: nowrap">{{ e.created_at.strftime("%b %d") }} · {{ e.proposed_by }}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">No entries match.</div>{% endif %}</section>
 {% endblock %}

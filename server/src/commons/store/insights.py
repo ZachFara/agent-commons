@@ -83,6 +83,26 @@ _ORDERS = {
     "used": "s.retrieval_count_30d DESC",
 }
 
+# Token cost per entry over the outcomes that say whether it worked: used, with a known
+# outcome (the filter of `_SAMPLES` in store/ranking.py), with tokens recorded by the Stop
+# hook (MIT-600), and neither row excluded. A row without tokens counts in none of these.
+_COSTS = """
+SELECT r.entry_id,
+       count(*) AS costed,
+       sum(o.tokens_in::bigint + o.tokens_out)::bigint AS tokens,
+       count(*) FILTER (WHERE o.outcome = ANY(%(success)s::outcome_kind[])) AS successes,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY o.tokens_in::bigint + o.tokens_out)
+           FILTER (WHERE o.outcome = ANY(%(success)s::outcome_kind[])) AS median_success,
+       count(*) FILTER (WHERE o.outcome <> ALL(%(success)s::outcome_kind[])) AS failures,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY o.tokens_in::bigint + o.tokens_out)
+           FILTER (WHERE o.outcome <> ALL(%(success)s::outcome_kind[])) AS median_failure
+FROM counted_outcomes o JOIN counted_retrievals r ON r.id = o.retrieval_id
+WHERE r.entry_id = ANY(%(ids)s) AND o.used IN ('yes', 'partial')
+  AND o.outcome NOT IN ('unknown', 'abandoned')
+  AND o.tokens_in IS NOT NULL AND o.tokens_out IS NOT NULL
+GROUP BY r.entry_id
+"""
+
 
 def daily_activity(conn: Connection, days: int) -> list[Row]:
     """Per day for the last `days` days: retrievals, successes, failures, proposals."""
@@ -120,6 +140,18 @@ def entry(conn: Connection, entry_id: UUID) -> Row | None:
         {"id": entry_id},
     )
     return rows[0] if rows else None
+
+
+def entry_costs(conn: Connection, entry_ids: list[UUID]) -> dict[UUID, Row]:
+    """Return each entry's token cost: tokens per success and median tokens by result.
+
+    An entry with no costed outcome is left out. Every figure comes with its n: `costed`
+    outcomes behind `tokens`, `successes` and `failures` behind the two medians.
+    """
+    rows = _rows(conn, _COSTS, {"ids": entry_ids, **_SUCCESS})
+    for row in rows:
+        row["tokens_per_success"] = row["tokens"] / row["successes"] if row["successes"] else None
+    return {row["entry_id"]: row for row in rows}
 
 
 def entry_reviews(conn: Connection, entry_id: UUID) -> list[Row]:

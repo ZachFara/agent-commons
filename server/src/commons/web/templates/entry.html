@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import status, pct, meter, line, outcome %}
+{% from "_macros.html" import status, pct, meter, line, outcome, tokens, per_success %}
 {% block title %}Entry{% endblock %}
 {% block content %}
 <header class="page"><div><div class="muted"><a href="/entries">Entries</a> / <span class="mono">{{ e.id | string | truncate(8, true, "") }}</span></div>
@@ -10,6 +10,13 @@
   <div class="card kpi"><div class="label">Retrievals, 30 days</div><div class="value">{{ e.retrieval_count_30d if e.retrieval_count_30d is not none else "–" }}</div></div>
   <div class="card kpi"><div class="label">Used when retrieved</div><div class="value">{{ pct(e.used_rate) }}</div></div>
   <div class="card kpi"><div class="label">Worked when used</div><div class="value">{{ pct(e.success_rate) }}</div></div>
+</div>
+{% set c = e.cost %}
+<div class="grid kpis" title="Tokens after the retrieval, from the Stop hook; input includes cache reads. Over used outcomes with a known result.">
+  <div class="card kpi"><div class="label">Size in search results</div><div class="value">≈ {{ tokens(e.hit_tokens) }} tokens</div><div class="note">its text fields, characters ÷ 4</div></div>
+  <div class="card kpi"><div class="label">Tokens per success</div><div class="value">{{ per_success(c) }}</div><div class="note">n = {{ c.costed if c else 0 }} used outcomes with tokens, {{ c.successes if c else 0 }} worked</div></div>
+  <div class="card kpi"><div class="label">Median tokens after, worked</div><div class="value">{{ tokens(c.median_success if c else none) }}</div><div class="note">n = {{ c.successes if c else 0 }}</div></div>
+  <div class="card kpi"><div class="label">Median tokens after, failed</div><div class="value">{{ tokens(c.median_failure if c else none) }}</div><div class="note">n = {{ c.failures if c else 0 }}</div></div>
 </div>
 <div class="grid two">
   <section class="card"><h2>Entry</h2><dl class="facts">
