@@ -15,11 +15,12 @@ from starlette.testclient import TestClient
 from tools.search_eval import JUDGED, load_judged
 
 import factories
-from commons.domain.duplicates import DEFAULT_THRESHOLD, DuplicateSettings
+from commons.domain.duplicates import DEFAULT_THRESHOLD, Candidate, DuplicateSettings
 from commons.domain.errors import InvalidInputError
 from commons.service import duplicates
 from commons.store import insights
 from commons.store.connection import Connection
+from commons.store.duplicates import save_candidates
 from commons.store.migrate import apply_migrations
 from commons.store.reporters import upsert_reporter
 from commons.store.search import similar_entries
@@ -162,11 +163,7 @@ def test_the_queue_shows_the_flag_and_merges_from_it(
     existing, word = canonical(db, reporter)
     dup = propose(server, f"{word} CacheConfig ignores ttl: expire_after None, never expire")
 
-    @contextmanager
-    def test_connection() -> Iterator[Connection]:
-        yield db
-
-    client = TestClient(build_app(test_connection), base_url=ORIGIN, follow_redirects=False)
+    client = dashboard(db)
     assert "Looks like" in client.get("/queue").text
     assert uuid.UUID(dup["entry_id"]) in insights.duplicate_flags(db)
     merged = client.post(
@@ -175,6 +172,69 @@ def test_the_queue_shows_the_flag_and_merges_from_it(
         headers={"origin": ORIGIN, "referer": f"{ORIGIN}/queue"},
     )
     assert "Merged" in merged.headers["location"]
+
+
+@pytest.mark.parametrize("status", ["approved", "pending"])
+def test_the_queue_shows_each_candidates_cause_and_fix_under_the_proposals(
+    db: psycopg.Connection, reporter: uuid.UUID, status: str
+) -> None:
+    tag = uuid.uuid4().hex[:8]
+    old = factories.entry(
+        db, reporter, status=status, cause=f"{tag} old cause", fix=f"{tag} old fix"
+    )
+    new = factories.entry(
+        db, reporter, status="pending", cause=f"{tag} new cause", fix=f"{tag} new fix"
+    )
+    save_candidates(db, new, [Candidate(old, 0.8, same_task=False)], None)
+
+    item = card(dashboard(db).get("/queue").text, f'id="{new}"')
+
+    order = [
+        item.index(f"{tag} {text}") for text in ("new cause", "new fix", "old cause", "old fix")
+    ]
+    assert order == sorted(order)
+
+
+def test_keeping_both_lists_each_entry_on_the_others_page(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    first, word = canonical(db, reporter)
+    second = factories.entry(db, reporter, status="pending", symptom=f"{word} pool exhausted")
+    db.execute(
+        "INSERT INTO ranking_snapshots (entry_id, computed_at, score, retrieval_count_30d) "
+        "VALUES (%(e)s, now() - interval '1 day', 0.41, 0), (%(e)s, now(), 0.73, 0)",
+        {"e": first},
+    )
+    client = dashboard(db)
+    assert "Kept distinct from" not in client.get(f"/entries/{first}").text
+
+    kept = client.post(
+        f"/entries/{second}/duplicate",
+        data={"other": str(first), "action": "keep"},
+        headers={"origin": ORIGIN, "referer": f"{ORIGIN}/queue"},
+    )
+
+    assert "Kept" in kept.headers["location"]
+    pages = ((first, second, "pending", "\N{EN DASH}"), (second, first, "approved", "0.73"))
+    for page, other, status, score in pages:
+        listed = card(client.get(f"/entries/{page}").text, "Kept distinct from")
+        assert f'href="/entries/{other}"' in listed
+        assert f'class="badge {status}"' in listed
+        assert f"score {score}" in listed
+
+
+def dashboard(db: psycopg.Connection) -> TestClient:
+    @contextmanager
+    def test_connection() -> Iterator[Connection]:
+        yield db
+
+    return TestClient(build_app(test_connection), base_url=ORIGIN, follow_redirects=False)
+
+
+def card(html: str, start: str) -> str:
+    """Return the page from `start` to the end of its card."""
+    rest = html[html.index(start) :]
+    return rest[: rest.index("</section>")]
 
 
 # Tuning (decision 0027 step 5)

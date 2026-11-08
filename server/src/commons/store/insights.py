@@ -328,8 +328,8 @@ def duplicate_flags(conn: Connection) -> dict[UUID, list[Row]]:
     rows = _rows(
         conn,
         "SELECT e.id AS entry_id, (c->>'entry_id')::uuid AS other_id, (c->>'score')::float "
-        "AS score, coalesce((c->>'retry')::boolean, false) AS retry, o.symptom, "
-        "o.status::text AS status, (o.id = e.duplicate_of) AS linked "
+        "AS score, coalesce((c->>'retry')::boolean, false) AS retry, o.symptom, o.cause, "
+        "o.fix, o.status::text AS status, (o.id = e.duplicate_of) AS linked "
         "FROM entries e, jsonb_array_elements(e.duplicate_candidates) c "
         "JOIN entries o ON o.id = (c->>'entry_id')::uuid "
         "WHERE NOT e.human_reviewed ORDER BY score DESC",
@@ -339,3 +339,16 @@ def duplicate_flags(conn: Connection) -> dict[UUID, list[Row]]:
     for row in rows:
         flags.setdefault(row["entry_id"], []).append(row)
     return flags
+
+
+def distinct_entries(conn: Connection, entry_id: UUID) -> list[Row]:
+    """Entries a reviewer kept distinct from this one, with their latest score (decision 0027)."""
+    return _rows(
+        conn,
+        "SELECT e.id, e.symptom, e.status::text AS status, e.human_reviewed, s.score "
+        "FROM distinct_pairs p "
+        "JOIN entries e ON e.id = CASE WHEN p.entry_a = %(id)s THEN p.entry_b ELSE p.entry_a END "
+        + _LATEST_SNAPSHOT
+        + "WHERE %(id)s IN (p.entry_a, p.entry_b) ORDER BY p.created_at",
+        {"id": entry_id},
+    )
