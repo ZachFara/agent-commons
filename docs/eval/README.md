@@ -348,3 +348,50 @@ agent's sight. Not yet verified with a real session, so not counted (decision 00
 - `config-default-wins`: a router (`switchyard`) whose unlisted `exporter` default (`cloud`) beats the documented `textfile_dir`; the export prints the cloud's 401, exits 0, and writes no metrics file.
 - `known-config-app-overwrites`: `config-app-overwrites` with the answer already in the commons.
 - `known-config-default-wins`: `config-default-wins` with the answer already in the commons.
+
+## Condition: the skill (MIT-624)
+
+Decision 0034 built a skill (`client/plugin/skills/agent-commons/SKILL.md`) but never measured
+it. A skill's name and description sit in context from the start, while the MCP tools stay
+deferred behind `ToolSearch`. `run --skill` measures it: each session also gets
+`--plugin-dir` pointing at a copy of `client/plugin` in its temp dir, and the `Skill` tool is
+allowed for that one skill. Everything else matches a plain session, including the server text
+(`--variant`, the shipped text by default).
+
+- **Hooks run once.** The copy leaves out the plugin's `hooks/`: they are the hooks
+  `commons join` installs, which the session's settings already carry, so loading both would run
+  each hook twice. The settings' copy also points at this checkout's `commons` and the session's
+  own database; the plugin's runs whatever `commons` is on `PATH`. So `--skill` is the plugin as
+  it would run (skill plus hooks, once each), and no separate "skill without hooks" condition is
+  needed. `--skill --no-hooks` gives the skill with no hooks at all.
+- **Checked at start.** A skill session whose init event (each turn's) does not list
+  `commons:agent-commons` is marked errored: it never reaches the ledger and `--resume` reruns it.
+- **Recorded.** Ledger lines carry `"skill": true` (older lines have no key and count as
+  `false`); `trials` shows such rows as `<variant>+skill`.
+
+Not run yet. Run one session first to confirm the skill loads (the init check has only been
+tested on a recorded init with the skill added by hand):
+
+```
+uv run python tools/agent_eval.py run --skill --scenario control-typo --condition s-smoke
+```
+
+Then the comparison: the shipped text with and without the skill, on the four no-test scenarios
+(MIT-597) and the five genuine controls, 3 runs each, on both models. That is
+9 scenarios x 3 runs x 2 conditions x 2 models = **108 sessions** (about 45 minutes at the
+`eval-confirm` rate). Add `--resume` to rerun after a usage limit.
+
+```
+scenarios=(--scenario config-app-overwrites --scenario config-default-wins
+  --scenario known-config-app-overwrites --scenario known-config-default-wins
+  --scenario control-typo --scenario control-arithmetic --scenario control-clear-error
+  --scenario control-documented-option --scenario control-documented-flag --runs 3)
+for model in sonnet claude-opus-5-5; do
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --condition s-shipped-$model
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --skill --condition s-skill-$model
+done
+```
+
+The bar (decision 0034): the skill beats the shipped text on both models, with no new proposals
+on the controls. `uv run python tools/agent_eval.py report --condition s-shipped-sonnet
+--condition s-skill-sonnet` (and the same for Opus) compares them.
