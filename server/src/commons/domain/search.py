@@ -3,12 +3,14 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from commons.domain.errors import InvalidInputError
 from commons.domain.reporters import PrivacyDefault
 
 MAX_LIMIT = 20
+CHARS_PER_TOKEN = 4  # a rough rule for English text and code, for size estimates only
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,24 @@ class SearchHit:
     def score(self) -> float:
         """What results are ranked by: relevance x version factor x outcome score."""
         return self.relevance * self.version_factor * self.outcome_score
+
+    def as_json(self) -> dict[str, Any]:
+        """Return what `search` gives the agent for this hit."""
+        return {
+            "entry_id": str(self.entry_id),
+            "symptom": self.symptom,
+            "environment": self.environment,
+            "cause": self.cause,
+            "fix": self.fix,
+            "repro": self.repro,
+            "score": self.score,
+            "provenance": self.provenance(),
+        }
+
+    def approx_tokens(self) -> int:
+        """Return roughly how many tokens the hit's text fields add to an agent's context."""
+        text = (value for value in self.as_json().values() if isinstance(value, str))
+        return round(sum(map(len, text)) / CHARS_PER_TOKEN)
 
     def provenance(self) -> str:
         """One line on where the entry came from and how it has held up."""

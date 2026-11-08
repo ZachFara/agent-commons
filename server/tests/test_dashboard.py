@@ -10,6 +10,7 @@ from starlette.testclient import TestClient
 
 import factories
 from commons.service.ranking import rank
+from commons.store import insights
 from commons.store.connection import Connection
 from commons.web import app as web
 from mcp_client import call
@@ -55,6 +56,96 @@ def test_every_page_renders_with_data(
     assert "error resolved" in entry
     for path in ("/activity", "/people"):
         assert client.get(path).status_code == 200
+
+
+def costed_entry(db: psycopg.Connection, reporter: uuid.UUID, word: str) -> uuid.UUID:
+    """An entry whose counted, used, known outcomes cost 1,200, 2,400, 3,600 (worked), 6,000."""
+    entry_id = factories.entry(
+        db, reporter, symptom=f"CostError: {word}", human_reviewed=True, provisional=False
+    )
+    for tokens in ((1000, 200), (2000, 400), (3000, 600)):
+        factories.outcome(db, entry_id, reporter, "tests_passed", tokens=tokens)
+    factories.outcome(db, entry_id, reporter, "tests_failed", tokens=(5000, 1000))
+    # Each of these would change the figures if it counted.
+    factories.outcome(db, entry_id, reporter, "tests_passed")  # no tokens recorded
+    unused = factories.outcome(db, entry_id, reporter, "tests_passed", tokens=(90000, 0))
+    db.execute("UPDATE outcomes SET used = 'no' WHERE id = %s", (unused,))
+    factories.outcome(db, entry_id, reporter, "unknown", tokens=(90000, 0))
+    factories.outcome(db, entry_id, reporter, "abandoned", tokens=(90000, 0))
+    excluded = factories.outcome(db, entry_id, reporter, "tests_passed", tokens=(90000, 0))
+    db.execute("UPDATE outcomes SET excluded = true WHERE id = %s", (excluded,))
+    on_excluded = factories.outcome(db, entry_id, reporter, "tests_failed", tokens=(90000, 0))
+    db.execute(
+        "UPDATE retrievals SET excluded = true "
+        "WHERE id = (SELECT retrieval_id FROM outcomes WHERE id = %s)",
+        (on_excluded,),
+    )
+    return entry_id
+
+
+def test_entry_costs_count_used_known_outcomes_with_tokens(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    entry_id = costed_entry(db, reporter, "store-figures")
+    cost = insights.entry_costs(db, [entry_id])[entry_id]
+    assert (cost["costed"], cost["tokens"], cost["successes"], cost["failures"]) == (
+        4,
+        13200,
+        3,
+        1,
+    )
+    assert cost["tokens_per_success"] == 4400
+    assert (cost["median_success"], cost["median_failure"]) == (2400, 6000)
+
+
+def test_entry_page_shows_tokens_per_success_and_search_size(
+    client: TestClient, server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    word = f"costpage{uuid.uuid4().hex[:6]}"
+    entry_id = costed_entry(db, reporter, word)
+    (hit,) = call(server, "search", {"query": word, "task_id": str(uuid.uuid4())})["data"]
+    size = round(sum(len(v) for v in hit.values() if isinstance(v, str)) / 4)
+
+    page = client.get(f"/entries/{entry_id}").text
+    assert f"≈ {size:,} tokens" in page
+    assert '<div class="value">4,400</div>' in page
+    assert "n = 4 used outcomes with tokens, 3 worked" in page
+    assert '<div class="value">2,400</div><div class="note">n = 3</div>' in page
+    assert '<div class="value">6,000</div><div class="note">n = 1</div>' in page
+
+    listing = client.get(f"/entries?q={word}").text
+    assert f"≈ {size:,}" in listing
+    assert "4,400<div" in listing
+    assert "2,400 · 6,000" in listing
+    assert "n = 3 · 1" in listing
+
+
+def test_an_entry_without_token_data_shows_no_data(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    word = f"nocost{uuid.uuid4().hex[:6]}"
+    entry_id = factories.entry(
+        db, reporter, symptom=f"CostError: {word}", human_reviewed=True, provisional=False
+    )
+    factories.outcome(db, entry_id, reporter, "tests_passed")  # used and worked, no tokens
+    assert insights.entry_costs(db, [entry_id]) == {}
+
+    page = client.get(f"/entries/{entry_id}").text
+    cost = page.split("Tokens per success", 1)[1].split("Score over time", 1)[0]
+    assert cost.count("no data") == 3
+    assert '<div class="value">0</div>' not in cost
+    listing = client.get(f"/entries?q={word}").text
+    assert listing.count("no data") == 3
+
+
+def test_tokens_per_success_with_no_success_says_so(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    entry_id = factories.entry(db, reporter, human_reviewed=True, provisional=False)
+    factories.outcome(db, entry_id, reporter, "tests_failed", tokens=(800, 200))
+    page = client.get(f"/entries/{entry_id}").text
+    assert "no success yet" in page
+    assert '<div class="value">1,000</div><div class="note">n = 1</div>' in page
 
 
 def test_searches_page_lists_what_was_not_found(

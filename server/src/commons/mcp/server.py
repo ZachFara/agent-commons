@@ -15,7 +15,7 @@ from pydantic import Field
 from commons.domain.entries import Proposal
 from commons.domain.outcomes import OutcomeKind, Report
 from commons.domain.reviews import PendingEntry, ReviewRequest
-from commons.domain.search import MAX_LIMIT, SearchHit, SearchRequest
+from commons.domain.search import MAX_LIMIT, SearchRequest
 from commons.domain.status import StoreStatus
 from commons.mcp.auth import ApiKeyVerifier, calling_reporter, require_review_scope
 from commons.mcp.call_log import CallLog, log_calls_to_stdout
@@ -107,7 +107,7 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
         with structured_errors(), calling_reporter(), connection() as conn:
             hits = search_service.search(conn, request, model)
         note = shown.invite_note if not hits and shown.invite_note else UNTRUSTED_NOTE
-        return {"note": note, "data": [_hit_json(hit) for hit in hits], "store": _store()}
+        return {"note": note, "data": [hit.as_json() for hit in hits], "store": _store()}
 
     def report(
         *,
@@ -287,19 +287,6 @@ def _pending_json(entry: PendingEntry) -> dict[str, Any]:
         "proposed_by_model": entry.proposed_by_model,
         "agent_reviews": entry.agent_reviews,
         "redaction_report": entry.redaction_report,
-    }
-
-
-def _hit_json(hit: SearchHit) -> dict[str, Any]:
-    return {
-        "entry_id": str(hit.entry_id),
-        "symptom": hit.symptom,
-        "environment": hit.environment,
-        "cause": hit.cause,
-        "fix": hit.fix,
-        "repro": hit.repro,
-        "score": hit.score,
-        "provenance": hit.provenance(),
     }
 
 
