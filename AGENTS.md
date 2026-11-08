@@ -181,3 +181,7 @@ Things past sessions found that the next one needs. The orchestrator's docs code
 from the Learned sections of merged PRs.
 
 - `make check` needs local Postgres running (`make db`).
+- Ruff S608 flags SQL built with f-strings or `+` inside `execute(...)`, but not a module-level constant built with `.replace("{name}", FRAGMENT)`. Share SQL fragments that way (`status._TOP_ENTRIES`, `store.reviews.IN_QUEUE`).
+- "Awaiting review" means `store.reviews.IN_QUEUE`, everywhere. New counts of waiting entries use it, not `NOT human_reviewed`.
+- A human review leaves `provisional` set. Filters on provisional entries must also test `NOT human_reviewed`. `factories.entry` defaults `provisional=False`, so a "human-reviewed" test entry must set `provisional=True` too, or the clause goes untested (reviewers caught this twice).
+- In hosted mode `/entries/<id>` needs a review key. Only `/mine` is open to any key (decision 0035).

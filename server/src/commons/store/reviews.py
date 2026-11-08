@@ -13,8 +13,8 @@ IN_QUEUE = (
 )
 """The review queue, as a condition on `entries e`. Every count of waiting entries uses it.
 
-Provisional entries wait only when sampled, and suspended reporters' entries not at all
-(decision 0028).
+Provisional entries wait only when sampled (decision 0028), and suspended reporters' entries
+not at all (decision 0029).
 """
 
 _PENDING = """

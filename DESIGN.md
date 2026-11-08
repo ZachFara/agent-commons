@@ -141,7 +141,7 @@ approve(entry_id) and reject(entry_id, reason)
 Writes a reviews row. When an agent calls them, the review is provisional (source agent): it sets the entry's status but leaves human_reviewed false, and search provenance says "unreviewed". Human reviews come from `commons review` or the dashboard locally, and the admin-key-protected dashboard in hosted mode. MCP reviews are always agent reviews, even with an admin key (decision 0018).
 
 pending()
-Lists entries awaiting review: status pending, or not yet human-reviewed.
+Lists the review queue: entries no human has reviewed, except retired entries, unsampled provisional entries (decision 0028) and entries by suspended reporters (decision 0029).
 
 status()
 Store statistics: entry counts by status, retrievals and outcomes in the last 30 days, top entries by success rate, entries flagged as decaying.
