@@ -31,7 +31,7 @@ search-eval:  ## Search precision@5 and recall@5 on the judged set (decision 002
 EVAL_CONDITION ?= confirm-$(shell date +%Y%m%d)
 EVAL_MODELS ?= --model sonnet --model claude-opus-5-5
 EVAL_CONFIRMATION = real-py314-itertools-copy real-py314-sqlite-params real-sqlmodel-utc \
-  real-whenever-ignore-dst docs-inclusive-range docs-timezone-default multi-rounding-key \
+  real-polars-explode-empty docs-inclusive-range docs-timezone-default multi-rounding-key \
   multi-shared-registry version-default-flip control-typo control-arithmetic \
   control-documented-flag known-default-flip
 
