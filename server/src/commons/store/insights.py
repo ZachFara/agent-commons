@@ -3,10 +3,12 @@
 from typing import Any
 from uuid import UUID
 
+from psycopg import sql
 from psycopg.rows import dict_row
 
 from commons.domain.outcomes import SUCCESS_OUTCOMES
 from commons.store.connection import Connection
+from commons.store.entries import WRITTEN_HERE
 
 Row = dict[str, Any]
 _SUCCESS = {"success": list(SUCCESS_OUTCOMES)}
@@ -270,12 +272,16 @@ def models(conn: Connection) -> list[Row]:
 # redeploy keeps reading the old text while its later rows carry the new stamp. A row with no
 # task (or whose task has no counted search or proposal) counts under its own stamp. A task
 # whose rows carry two hashes straddled a change. First and last seen use the rows' own stamps.
-# Rates come with their n, the count they are a share of.
-_PROMPT_VERSIONS = """
-WITH task_rows AS (
+# Rates come with their n, the count they are a share of. Seeded and imported entries are no
+# agent's work here, so they count nowhere: an import's task_id is a fresh one per entry.
+_PROMPT_VERSIONS = sql.SQL("""
+WITH agent_entries AS (
+    SELECT e.task_id, e.prompt_version_id, e.created_at, e.status FROM entries e
+    WHERE {written_here}
+), task_rows AS (
     SELECT task_id, prompt_version_id, created_at FROM counted_searches
     UNION ALL
-    SELECT task_id, prompt_version_id, created_at FROM entries WHERE task_id IS NOT NULL
+    SELECT task_id, prompt_version_id, created_at FROM agent_entries WHERE task_id IS NOT NULL
 ), task_first AS (
     SELECT DISTINCT ON (task_id) task_id, prompt_version_id FROM task_rows
     ORDER BY task_id, created_at, prompt_version_id NULLS FIRST
@@ -313,7 +319,7 @@ WITH task_rows AS (
                AS prompt_version_id,
            count(*) AS proposals,
            count(*) FILTER (WHERE e.status = 'approved') AS approved
-    FROM entries e LEFT JOIN task_first f ON f.task_id = e.task_id
+    FROM agent_entries e LEFT JOIN task_first f ON f.task_id = e.task_id
     GROUP BY 1
 ), seen AS (
     SELECT prompt_version_id, min(created_at) AS first_seen, max(created_at) AS last_seen
@@ -322,7 +328,7 @@ WITH task_rows AS (
         UNION ALL
         SELECT prompt_version_id, created_at FROM counted_retrievals
         UNION ALL
-        SELECT prompt_version_id, created_at FROM entries
+        SELECT prompt_version_id, created_at FROM agent_entries
     ) stamped
     GROUP BY prompt_version_id
 ), versions AS (
@@ -349,7 +355,7 @@ LEFT JOIN proposal_counts p ON p.prompt_version_id IS NOT DISTINCT FROM v.id
 LEFT JOIN seen ON seen.prompt_version_id IS NOT DISTINCT FROM v.id
 WHERE v.id IS NOT NULL OR seen.first_seen IS NOT NULL
 ORDER BY v.id IS NOT NULL, first_seen, v.hash
-"""
+""").format(written_here=WRITTEN_HERE)
 
 
 def prompt_versions(conn: Connection) -> list[Row]:
@@ -375,7 +381,7 @@ def hook_prompt_versions(conn: Connection) -> list[Row]:
     return _rows(conn, _HOOK_PROMPT_VERSIONS, {})
 
 
-def _rows(conn: Connection, query: str, params: dict[str, Any]) -> list[Row]:
+def _rows(conn: Connection, query: str | sql.Composed, params: dict[str, Any]) -> list[Row]:
     with conn.cursor(row_factory=dict_row) as cursor:
         cursor.execute(query, params)
         return cursor.fetchall()

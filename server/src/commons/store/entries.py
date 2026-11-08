@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from commons.domain.entries import Proposal
@@ -53,15 +54,24 @@ def set_imported_from(conn: Connection, entry_id: UUID, origin: dict[str, object
     conn.execute("UPDATE entries SET imported_from = %s WHERE id = %s", (Jsonb(origin), entry_id))
 
 
+# A condition on `entries e`: an agent wrote the entry in this store, so it is neither a seed
+# nor an import from another store.
+WRITTEN_HERE = sql.SQL(
+    "e.imported_from IS NULL AND NOT EXISTS (SELECT 1 FROM reporters seed "
+    "WHERE seed.id = e.created_by AND seed.pseudonym = 'agent-commons-seed')"
+)
+
+
 def importable_entries(conn: Connection, statuses: list[str]) -> list[dict[str, object]]:
     """Local entries that may move to a hosted store: never seeds, never rejected ones."""
     rows = conn.execute(
-        "SELECT e.id, e.symptom, e.environment, e.cause, e.fix, e.repro, e.domains, "
-        "e.status::text, e.created_at, m.name FROM entries e "
-        "JOIN models m ON m.id = e.created_by_model JOIN reporters rp ON rp.id = e.created_by "
-        "WHERE e.status::text = ANY(%s) AND e.status <> 'rejected' "
-        "AND rp.pseudonym <> 'agent-commons-seed' AND e.imported_from IS NULL "
-        "ORDER BY e.created_at",
+        sql.SQL(
+            "SELECT e.id, e.symptom, e.environment, e.cause, e.fix, e.repro, e.domains, "
+            "e.status::text, e.created_at, m.name FROM entries e "
+            "JOIN models m ON m.id = e.created_by_model "
+            "WHERE e.status::text = ANY(%s) AND e.status <> 'rejected' AND {} "
+            "ORDER BY e.created_at"
+        ).format(WRITTEN_HERE),
         (statuses,),
     ).fetchall()
     names = (
