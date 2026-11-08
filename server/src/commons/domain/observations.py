@@ -71,6 +71,11 @@ class ToolUse:
     output: str | None = None  # Bash only; read for the runner's summary, never stored
 
 
+# The outcomes token columns are int4. Cache reads re-read the context on every call, so a long
+# task can pass this; counts are clamped to it rather than losing the turn's `used`.
+MAX_TOKENS = 2**31 - 1
+
+
 @dataclass(frozen=True)
 class TaskCost:
     """What the task cost after a retrieval (DESIGN.md §3), summed from the transcript."""

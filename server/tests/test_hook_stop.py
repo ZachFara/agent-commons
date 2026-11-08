@@ -11,6 +11,7 @@ import psycopg
 import pytest
 
 import factories
+from commons.domain.observations import MAX_TOKENS
 from commons.mcp.server import build_server
 from commons.service.local_state import spool_path
 from commons.store.reporters import find_reporter
@@ -362,4 +363,26 @@ def test_without_usage_the_cost_stays_unknown(session: Session) -> None:
     payload = {"session_id": session.session_id, "stop_hook_active": False}
     session.env.run("stop", payload)  # no transcript at all
     assert session.cost() == (None, None, None)
+    assert "failed" not in session.env.log()
+
+
+def test_a_cost_past_the_column_limit_is_clamped_and_used_is_still_recorded(
+    session: Session,
+) -> None:
+    """Review of MIT-600: an out-of-range cost rolled back the whole Stop, `used` with it."""
+    session.search()
+    session.tool("Edit", {"file_path": "/r/requirements.txt", "new_string": "markupsafe<2.1"})
+    session.tool("Bash", {"command": "pytest -q"})
+    at = session.retrieved_at()
+    huge = 2**31 + 5
+    transcript = [
+        assistant("msg_a", at + timedelta(seconds=10), (1, 0, huge, 2)),
+        assistant("msg_b", at + timedelta(seconds=20), (1, 0, huge, 3)),
+    ]
+
+    session.stop(transcript=transcript)
+
+    used, outcome, _evidence, _model = session.outcome()
+    assert (used, outcome) == ("partial", "tests_passed")
+    assert session.cost() == (MAX_TOKENS, 5, 20.0)
     assert "failed" not in session.env.log()

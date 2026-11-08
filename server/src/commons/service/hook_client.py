@@ -18,6 +18,7 @@ import httpx2
 
 from commons.domain.errors import NotInitializedError, NotPermittedError, RateLimitedError
 from commons.domain.observations import (
+    MAX_TOKENS,
     TaskCost,
     ToolUse,
     command_tail,
@@ -448,6 +449,7 @@ def _cost_after(messages: list[_MessageUsage], retrieved_at: datetime) -> TaskCo
 
     A message streams over several lines that repeat its id and usage, so each id counts
     once. Allow for skew between this machine's clock and the database's, as for the spool.
+    Sums are clamped to what the columns hold: cost is secondary and must never cost `used`.
     """
     after = [message for message in messages if message.at >= retrieved_at - CLOCK_SKEW]
     if not after:
@@ -462,8 +464,8 @@ def _cost_after(messages: list[_MessageUsage], retrieved_at: datetime) -> TaskCo
         counted.append(message)
     last = max(message.at for message in after)
     return TaskCost(
-        tokens_in=sum(message.tokens_in for message in counted),
-        tokens_out=sum(message.tokens_out for message in counted),
+        tokens_in=min(sum(message.tokens_in for message in counted), MAX_TOKENS),
+        tokens_out=min(sum(message.tokens_out for message in counted), MAX_TOKENS),
         wall_clock_seconds=max((last - retrieved_at).total_seconds(), 0.0),
     )
 

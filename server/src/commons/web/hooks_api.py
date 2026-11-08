@@ -23,7 +23,7 @@ from starlette.routing import Route
 from commons.domain.entries import Proposal
 from commons.domain.errors import InvalidInputError, NotPermittedError, RateLimitedError
 from commons.domain.keys import KeyHolder
-from commons.domain.observations import TaskCost, command_tail
+from commons.domain.observations import MAX_TOKENS, TaskCost, command_tail
 from commons.domain.outcomes import Usage
 from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
@@ -40,7 +40,6 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _REFUSALS = {400: "invalid_input", 401: "unauthorized", 403: "forbidden", 429: "rate_limited"}
 _USAGES: frozenset[Usage | None] = frozenset({"yes", "partial", "no", None})
 _COST_FIELDS = {"tokens_in", "tokens_out", "wall_clock_seconds"}
-_MAX_TOKENS = 2**31 - 1  # the outcomes columns are integers
 
 
 def hook_routes(connection: ConnectionFactory) -> list[Route]:
@@ -328,7 +327,7 @@ def _is_cost(value: object) -> bool:
     tokens = (value["tokens_in"], value["tokens_out"])
     seconds = value["wall_clock_seconds"]
     return all(
-        isinstance(t, int) and not isinstance(t, bool) and 0 <= t <= _MAX_TOKENS for t in tokens
+        isinstance(t, int) and not isinstance(t, bool) and 0 <= t <= MAX_TOKENS for t in tokens
     ) and (
         isinstance(seconds, int | float)
         and not isinstance(seconds, bool)
