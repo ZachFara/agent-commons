@@ -9,15 +9,21 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from commons.domain.errors import NotPermittedError
+from commons.domain.observations import DocLookup, TaskCost
 from commons.domain.outcomes import ObservedRun, merge_observation
+from commons.domain.prompts import PromptVersion
 from commons.domain.usage import ArtifactFrequencies, UseObservation, count_artifacts
+from commons.privacy.doc_lookup_log import doc_lookup_record
 from commons.service.agent_text import TURN_NUDGE
-from commons.service.identity import current_reporter
+from commons.service.identity import current_reporter, test_traffic
 from commons.service.ranking import rank, ranking_is_stale
 from commons.store.connection import Connection
+from commons.store.doc_lookups import record_doc_lookup
 from commons.store.entries import approved_fixes
 from commons.store.models import model_id
-from commons.store.outcomes import locked_outcome, save_outcome, set_used
+from commons.store.outcomes import locked_outcome, save_outcome, set_cost, set_used
+from commons.store.prompt_versions import prompt_version_id
+from commons.store.searches import privacy_mode
 from commons.store.task_events import (
     TaskRetrieval,
     acted_in_turn,
@@ -31,16 +37,21 @@ from commons.store.task_events import (
 from commons.store.tasks import start_task
 
 
-def session_start(conn: Connection, session_id: str, model: str | None) -> UUID:
+def session_start(
+    conn: Connection, session_id: str, model: str | None, *, prompt: PromptVersion | None = None
+) -> UUID:
     """Create or resume the calling reporter's task for this session; return its id.
 
+    `prompt` is the hook version the client shows (MIT-609); hosted clients older than it
+    send none. A test key's task records none, so it never counts (decision 0030).
     Re-ranks if snapshots are over a day old (decision 0017), so neither mode needs a
     scheduler; ranking is fast at this scale.
     """
     with conn.transaction():
         reporter = current_reporter(conn)
         model_row = model_id(conn, model) if model else None
-        task_id = start_task(conn, session_id, reporter, model_row)
+        hook_row = None if test_traffic() else prompt_version_id(conn, prompt)
+        task_id = start_task(conn, session_id, reporter, model_row, hook_row)
         if task_id is None:
             msg = "That session belongs to another reporter."
             raise NotPermittedError(msg)
@@ -54,16 +65,23 @@ def record_tool_use(
     session_id: str,
     test_run: dict[str, object] | None,
     file_change: dict[str, object] | None,
+    doc_lookup: DocLookup | None = None,
 ) -> None:
     """Store derived observations of one tool call; ignore sessions we have no task for."""
     with conn.transaction():
-        task_id = task_for_session(conn, session_id, current_reporter(conn))
+        reporter = current_reporter(conn)
+        task_id = task_for_session(conn, session_id, reporter)
         if task_id is None:
             return
         if test_run is not None:
             add_task_event(conn, task_id, "test_run", test_run)
         if file_change is not None:
             add_task_event(conn, task_id, "file_change", file_change)
+        if doc_lookup is not None:
+            mode = privacy_mode(conn, reporter, task_id)
+            record = doc_lookup_record(doc_lookup, task_id, mode)
+            # A test key's lookups never count (decision 0030).
+            record_doc_lookup(conn, record, reporter, excluded=test_traffic())
 
 
 def retrievals_to_judge(conn: Connection, session_id: str) -> list[TaskRetrieval]:
@@ -98,12 +116,14 @@ def finish_turn(
     used: dict[UUID, UseObservation],
     *,
     paired: bool = True,
+    cost: dict[UUID, TaskCost] | None = None,
 ) -> StopResult | None:
     """Record the observed model, `used` per retrieval, and observed outcomes (decision 0016).
 
     With `paired` (decision 0036), a test run counts for a retrieval only if it came after
     the work that matched the fix. Hooks from before 0036 don't say when that was, so their
-    turns are recorded unpaired, as before.
+    turns are recorded unpaired, as before. `cost` is what the task cost after each
+    retrieval; a retrieval it leaves out keeps the cost it had (hooks that don't send it).
     """
     with conn.transaction():
         task_id = task_for_session(conn, session_id, current_reporter(conn))
@@ -116,6 +136,8 @@ def finish_turn(
         for item in retrieved:
             seen = used.get(item.retrieval_id, UseObservation(None))
             _record_observation(conn, item, runs, seen, paired=paired)
+            if cost and (spent := cost.get(item.retrieval_id)) is not None:
+                set_cost(conn, item.retrieval_id, spent)
         nudge = _turn_nudge(conn, task_id, runs)
     return StopResult(
         task_id,

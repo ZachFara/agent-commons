@@ -17,8 +17,9 @@ from commons.cli.main import main
 from commons.domain.corrections import Correction, CorrectionField, CorrectionTable
 from commons.domain.errors import InvalidInputError, NotFoundError
 from commons.domain.keys import KeyOptions
+from commons.domain.observations import DocLookup
 from commons.domain.search import SearchRequest
-from commons.service import corrections, keys
+from commons.service import corrections, hooks, keys, purges
 from commons.service.identity import acting_as
 from commons.service.search import search
 from commons.store import insights
@@ -26,7 +27,9 @@ from commons.store.connection import Connection
 from commons.store.outcome_stats import OUTCOME_STATS, OUTCOME_STATS_PARAMS
 from commons.store.outcomes import set_used
 from commons.store.ranking import entry_stats, outcome_samples
+from commons.store.reporters import find_reporter
 from commons.store.status import store_status
+from commons.store.tasks import start_task
 from commons.web.app import build_app
 
 READERS = Path(__file__).parents[1] / "src/commons/store"
@@ -133,13 +136,14 @@ def test_every_reader_counts_through_the_views() -> None:
     allowed = {
         "insights.py": {"entry_retrievals", "recent_searches"},
         "outcomes.py": {"task_retrieval", "locked_outcome", "save_outcome", "set_used"},
-        "retention.py": {"fold_searches_before"},
+        "retention.py": {"fold_searches_before", "fold_doc_lookups_before"},
         "task_events.py": {"*"},
         "retrievals.py": {"*"},
         "searches.py": {"*"},
+        "doc_lookups.py": {"*"},
         "corrections.py": {"*"},
     }
-    raw = re.compile(r"\b(FROM|JOIN) (retrievals|outcomes|searches)\b")
+    raw = re.compile(r"\b(FROM|JOIN) (retrievals|outcomes|searches|doc_lookups)\b")
     offenders = []
     for path in READERS.glob("*.py"):
         functions = re.split(r"\n(?=def )", path.read_text(encoding="utf-8"))
@@ -217,6 +221,77 @@ def test_a_whole_task_is_excluded_and_restored_together(
     assert corrections.undo(db, one["id"], by="owner") == counted[0]
     with pytest.raises(NotFoundError, match="nothing left"):
         corrections.exclude_task(db, uuid.uuid4(), reason="x", by="owner")
+
+
+def lookups_of(db: psycopg.Connection, task_id: uuid.UUID) -> list[bool]:
+    rows = db.execute("SELECT excluded FROM doc_lookups WHERE task_id = %s", (task_id,))
+    return [excluded for (excluded,) in rows]
+
+
+def counted_lookups(db: psycopg.Connection, task_id: uuid.UUID) -> int:
+    row = db.execute(
+        "SELECT count(*) FROM counted_doc_lookups WHERE task_id = %s", (task_id,)
+    ).fetchone()
+    assert row
+    return int(row[0])
+
+
+def test_excluding_a_task_excludes_its_lookups_and_undo_restores_them(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    session = f"session-{uuid.uuid4()}"
+    task_id = start_task(db, session, reporter, None)
+    assert task_id
+    for library in ("/vercel/next.js", "/mongodb/docs"):
+        hooks.record_tool_use(db, session, None, None, DocLookup(library, "", None))
+    assert counted_lookups(db, task_id) == 2
+
+    assert corrections.exclude_task(db, task_id, reason="lookup check", by="owner") == 2
+
+    assert lookups_of(db, task_id) == [True, True]
+    assert counted_lookups(db, task_id) == 0
+    one = next(c for c in insights.corrections(db) if c["reason"] == "lookup check")
+    assert one["target_table"] == "doc_lookups"
+    assert corrections.undo(db, one["id"], by="owner") == 2
+    assert lookups_of(db, task_id) == [False, False]
+    assert counted_lookups(db, task_id) == 2
+
+
+def test_one_lookup_can_be_excluded_on_its_own(db: psycopg.Connection, reporter: uuid.UUID) -> None:
+    session = f"session-{uuid.uuid4()}"
+    task_id = start_task(db, session, reporter, None)
+    assert task_id
+    hooks.record_tool_use(db, session, None, None, DocLookup("/a/b", "1.0", None))
+    row = db.execute("SELECT id FROM doc_lookups WHERE task_id = %s", (task_id,)).fetchone()
+    assert row
+
+    corrections.correct(db, exclude("doc_lookups", row[0]))
+
+    assert lookups_of(db, task_id) == [True]
+    with pytest.raises(InvalidInputError, match="no correctable"):
+        corrections.correct(db, Correction("doc_lookups", row[0], "used", "yes", "r", "o"))
+
+
+def test_a_purge_leaves_lookups_counted_as_it_leaves_searches(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    """A purge excludes outcomes only (decision 0029); lookups follow searches there."""
+    del reporter
+    keys.issue_key(db, "lookup-purged", "agent")
+    purged = find_reporter(db, "lookup-purged")
+    assert purged
+    session = f"session-{uuid.uuid4()}"
+    task_id = start_task(db, session, purged, None)
+    assert task_id
+    with acting_as(purged):
+        search(db, SearchRequest("zzqp purged miss", task_id, None, 5), "claude-opus-5-5")
+        hooks.record_tool_use(db, session, None, None, DocLookup("/a/b", "", None))
+
+    purges.purge(db, "lookup-purged", "spam")
+
+    searched = db.execute("SELECT excluded FROM searches WHERE task_id = %s", (task_id,))
+    assert [excluded for (excluded,) in searched] == [False]
+    assert lookups_of(db, task_id) == [False]
 
 
 @pytest.mark.parametrize(

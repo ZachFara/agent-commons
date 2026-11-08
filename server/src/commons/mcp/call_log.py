@@ -3,7 +3,9 @@
 Decisions 0024 and 0037. Lines are JSON with a `severity` field, which Cloud Logging reads as
 structured entries. FastMCP opens a `tools/call` span for every call; this middleware puts the
 same fields on it. Lines, spans and samples carry ids, counts, and timings only: never queries
-or entry text, since server logs and telemetry sit outside the store's privacy modes.
+or entry text, since server logs and telemetry sit outside the store's privacy modes. Lines and
+spans also name the served prompt version (decision MIT-566), so calls that never reach the
+database, such as ones rejected on argument shape, can still be counted per version.
 """
 
 import json
@@ -33,13 +35,18 @@ _duration = metrics.get_meter("commons.calls").create_histogram(
     explicit_bucket_boundaries_advisory=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
 )
 _MAX_FIELD = 80
+_SHORT_HASH = 12  # a prompt version is shown as the first 12 hex characters of its hash
 # Incubating semantic conventions for MCP: the method, and the tool a tools/call names.
 MCP_METHOD = "mcp.method.name"
 TOOL_NAME = "gen_ai.tool.name"
 
 
 class CallLog(Middleware):
-    """Observe every tool call: tool, reporter, task, model, result count, error code, duration."""
+    """Observe every tool call: tool, reporter, task, model, prompt, results, error, duration."""
+
+    def __init__(self, prompt_hash: str) -> None:
+        """`prompt_hash` is the served prompt version's full hash; lines carry its first 12."""
+        self._prompt = prompt_hash[:_SHORT_HASH]
 
     @override
     async def __call__(self, context: MiddlewareContext[Any], call_next: CallNext[Any, Any]) -> Any:
@@ -50,7 +57,7 @@ class CallLog(Middleware):
         """
         if context.method != "tools/call":
             return await call_next(context)
-        line = _describe(context.message)
+        line = {**_describe(context.message), "prompt": self._prompt}
         span = trace.get_current_span()  # FastMCP's `tools/call` span, or none over a bare stack
         started = time.perf_counter()
         try:
@@ -110,7 +117,7 @@ def _observe(span: Span, line: dict[str, Any], seconds: float) -> None:
         labels[ERROR_TYPE] = str(line["error"])
     _duration.record(seconds, labels)
     span.set_attributes({MCP_METHOD: "tools/call", TOOL_NAME: labels[TOOL_NAME]})
-    for key in ("reporter_id", "task_id", "model", "results", "error"):
+    for key in ("reporter_id", "task_id", "model", "prompt", "results", "error"):
         if line.get(key) is not None:
             span.set_attribute(f"commons.{key}", line[key])
 

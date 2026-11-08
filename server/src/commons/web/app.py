@@ -30,6 +30,7 @@ from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializ
 from commons.domain.keys import KEY_SCOPES, KeyOptions, KeyScope, NewKey, parse_duration
 from commons.domain.lifecycle import FixedIn
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
+from commons.domain.trust import REOPEN_WINDOW_DAYS, failures_to_reopen
 from commons.service import (
     contributors,
     corrections,
@@ -45,6 +46,7 @@ from commons.service import (
 from commons.service.identity import current_key, current_pseudonym, serving_hosted
 from commons.store import insights
 from commons.store.connection import Connection, connect
+from commons.store.search import entry_hits
 from commons.web import charts
 from commons.web.admin_auth import Endpoint, admin_only
 from commons.web.hooks_api import hook_routes
@@ -79,6 +81,7 @@ class Dashboard:
                 "pending": reviews.pending(conn),
                 "duplicates": insights.duplicate_flags(conn),
                 "health": trust.queue_health(conn),
+                "live_unreviewed": insights.live_unreviewed(conn),
             }
         )
         return self._render(request, "queue.html", "queue", data)
@@ -87,11 +90,17 @@ class Dashboard:
         """Render the entry list with search, status filter, and ordering."""
         query = request.query_params.get("q", "").strip() or None
         status = request.query_params.get("status") or None
-        order = request.query_params.get("order", "score")
+        # Provisional entries are new and mostly unscored, so they sort newest first.
+        default_order = "newest" if status == "provisional" else "score"
+        order = request.query_params.get("order") or default_order
         data = await self._load(
             lambda conn: {
-                "entries": insights.entries(conn, status=status, query=query, order=order),
+                "entries": _with_costs(
+                    conn, insights.entries(conn, status=status, query=query, order=order)
+                ),
                 "stale": insights.stale_candidates(conn),
+                "failing": _failing(conn),
+                "failing_days": REOPEN_WINDOW_DAYS,
                 "query": query,
                 "status_filter": status,
                 "order": order,
@@ -117,11 +126,26 @@ class Dashboard:
         data = await self._load(
             lambda conn: {
                 "totals": insights.search_totals(conn),
+                "by_rank": insights.use_by_rank(conn),
                 "missed": insights.missed_queries(conn),
+                "unused": insights.unused_searches(conn),
                 "recent": insights.recent_searches(conn),
+                "lookups": insights.lookup_totals(conn),
+                "missed_lookups": insights.misses_with_lookups(conn),
+                "libraries": insights.libraries_looked_up(conn),
             }
         )
         return self._render(request, "searches.html", "searches", data)
+
+    async def prompts(self, request: Request) -> Response:
+        """Render outcomes per served prompt version (decision MIT-566), then hook versions."""
+        data = await self._load(
+            lambda conn: {
+                "versions": insights.prompt_versions(conn),
+                "hooks": insights.hook_prompt_versions(conn),
+            }
+        )
+        return self._render(request, "prompts.html", "prompts", data)
 
     async def mine(self, request: Request) -> Response:
         """Render the caller's own entries and what happened to them (decision 0035)."""
@@ -247,7 +271,7 @@ class Dashboard:
         return await self._act(request, run)
 
     async def exclude_task(self, request: Request) -> Response:
-        """Exclude a whole task's retrievals and searches."""
+        """Exclude a whole task's retrievals, searches and doc lookups."""
         if not _same_origin(request, hosted=self._hosted):
             return PlainTextResponse("Cross-origin request refused.", status_code=403)
         reason = str((await request.form()).get("reason") or "")
@@ -429,6 +453,9 @@ def _overview_data(conn: Connection) -> dict[str, Any]:
             classes=("s1", "s1-tint"),
         ),
         "top": [e for e in top if e["success_rate"] is not None][:TOP_ENTRIES],
+        "funnel": insights.proposal_funnel(conn),
+        "buckets": insights.FUNNEL_BUCKETS,
+        "approved_use": insights.approved_use(conn),
     }
 
 
@@ -443,13 +470,45 @@ def _people_data(conn: Connection) -> dict[str, Any]:
 
 def _entry_data(conn: Connection, entry_id: UUID) -> dict[str, Any]:
     history = insights.score_history(conn, entry_id)
+    entry = insights.entry(conn, entry_id)
     return {
-        "e": insights.entry(conn, entry_id),
+        "e": _with_costs(conn, [entry])[0] if entry else None,
         "revisions": insights.entry_revisions(conn, entry_id),
         "reviews": insights.entry_reviews(conn, entry_id),
         "history": charts.line([(row["computed_at"], row["score"]) for row in history]),
+        "funnel": insights.entry_funnel(conn, entry_id),
         "retrievals": insights.entry_retrievals(conn, entry_id),
+        "distinct": insights.distinct_entries(conn, entry_id),
     }
+
+
+def _failing(conn: Connection) -> list[dict[str, Any]]:
+    """Entries by failure rate, with how many more failures reopen a human-approved one.
+
+    `to_reopen` is None for an entry no human approved: the provisional rule (0028) covers it.
+    """
+    return [
+        {
+            **row,
+            "to_reopen": failures_to_reopen(
+                row["failures"], row["successes"], row["failing_reporters"]
+            )
+            if row["human_reviewed"]
+            else None,
+        }
+        for row in insights.failure_rates(conn)
+    ]
+
+
+def _with_costs(conn: Connection, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add each entry's search size (`hit_tokens`) and token cost (`cost`, None if no data)."""
+    ids = [row["id"] for row in rows]
+    hits = entry_hits(conn, ids)
+    costs = insights.entry_costs(conn, ids)
+    return [
+        {**row, "hit_tokens": hits[row["id"]].approx_tokens(), "cost": costs.get(row["id"])}
+        for row in rows
+    ]
 
 
 def build_app(connection: ConnectionFactory = connect, *, hosted: bool = False) -> Starlette:
@@ -497,6 +556,7 @@ def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute
         ("/entries/{entry_id:uuid}", pages.entry, "GET", "review"),
         ("/activity", pages.activity, "GET", "admin"),
         ("/searches", pages.searches, "GET", "admin"),
+        ("/prompts", pages.prompts, "GET", "admin"),
         ("/people", pages.people, "GET", "admin"),
         ("/entries/{entry_id:uuid}/review", pages.review, "POST", "review"),
         ("/keys", pages.create_key, "POST", "admin"),

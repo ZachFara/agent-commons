@@ -1,6 +1,7 @@
 """The Agent Commons MCP server (DESIGN.md §4). Tools are thin: parse, call service, shape JSON."""
 
 import argparse
+import json
 import os
 import uuid
 from collections.abc import Callable, Sequence
@@ -8,14 +9,16 @@ from contextlib import AbstractContextManager
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from fastmcp.prompts import Prompt
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.tools import Tool
 from pydantic import Field
 
 from commons.domain.entries import Proposal
 from commons.domain.outcomes import OutcomeKind, Report
+from commons.domain.prompts import PromptVersion, prompt_version
 from commons.domain.reviews import PendingEntry, ReviewRequest
-from commons.domain.search import MAX_LIMIT, SearchHit, SearchRequest
+from commons.domain.search import MAX_LIMIT, SearchRequest
 from commons.domain.status import StoreStatus
 from commons.mcp.auth import ApiKeyVerifier, calling_reporter, require_review_scope
 from commons.mcp.call_log import CallLog, log_calls_to_stdout
@@ -23,6 +26,7 @@ from commons.mcp.errors import StructuredValidationErrors, structured_errors
 from commons.service import agent_text, proposals, reports, reviews, telemetry
 from commons.service import search as search_service
 from commons.service import status as status_service
+from commons.service.contributors import FEEDBACK_SETTING
 from commons.service.identity import serving_hosted
 from commons.store.connection import Connection, connect
 
@@ -47,9 +51,12 @@ ModelArg = Annotated[
 def build_server(connection: ConnectionFactory = connect, *, hosted: bool = False) -> FastMCP:
     """Build the server. `connection` opens a database connection per tool call.
 
-    Hosted servers require an API key on every request (decision 0018).
+    Hosted servers require an API key on every request (decision 0018). `search` and `propose`
+    record the prompt version hashed below from the same objects FastMCP serves (MIT-566),
+    and every tool call's log line and span carry its short hash (MIT-608).
     """
     shown = agent_text.variant()
+    empty_note = shown.invite_note or UNTRUSTED_NOTE
 
     def propose(  # keyword-only: tools are always called with named arguments
         *,
@@ -84,7 +91,7 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
             task_id=task_id,
         )
         with structured_errors(), calling_reporter(), connection() as conn:
-            result = proposals.propose(conn, proposal, model)
+            result = proposals.propose(conn, proposal, model, prompt=version)
         return {
             "entry_id": str(result.entry_id),
             "status": result.status,
@@ -105,9 +112,9 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
     ) -> dict[str, Any]:
         request = SearchRequest(query=query, task_id=task_id, environment=environment, limit=limit)
         with structured_errors(), calling_reporter(), connection() as conn:
-            hits = search_service.search(conn, request, model)
-        note = shown.invite_note if not hits and shown.invite_note else UNTRUSTED_NOTE
-        return {"note": note, "data": [_hit_json(hit) for hit in hits], "store": _store()}
+            hits = search_service.search(conn, request, model, prompt=version)
+        note = UNTRUSTED_NOTE if hits else empty_note
+        return {"note": note, "data": [hit.as_json() for hit in hits], "store": _store()}
 
     def report(
         *,
@@ -178,45 +185,96 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
             result = status_service.status(conn)
         return _status_json(result)
 
+    tools = _tools(shown, propose, search, report, approve, reject, pending, status)
+    prompts = _prompts()
+    version = _prompt_version(shown, tools, prompts, empty_note)  # read by search and propose
     server = FastMCP(
         "commons",
         instructions=shown.instructions,
-        middleware=[CallLog(), StructuredValidationErrors()],
+        middleware=[CallLog(version.hash), StructuredValidationErrors()],
         mask_error_details=True,
         auth=ApiKeyVerifier(connection) if hosted else None,
-        tools=[
-            _described(
-                Tool.from_function(propose, name=shown.propose_name, description=shown.propose),
-                "propose",
-                shown,
-            ),
-            _described(
-                Tool.from_function(search, name=shown.search_name, description=shown.search),
-                "search",
-                shown,
-            ),
-            Tool.from_function(report, description=shown.report),
-            approve,
-            reject,
-            pending,
-            status,
-        ],
+        tools=tools,
     )
-    return _with_record_prompt(server)
+    return _with_prompts(server, prompts)
 
 
-def _with_record_prompt(server: FastMCP) -> FastMCP:
-    """Offer `/commons:record` when COMMONS_RECORD_PROMPT=on (decision 0034; off by default)."""
-    if os.environ.get("COMMONS_RECORD_PROMPT", "off").strip().lower() == "on":
-        server.prompt(name="record", description="Review this session and record what to share.")(
-            _record
-        )
+def _tools(
+    shown: agent_text.Variant,
+    propose: Callable[..., Any],
+    search: Callable[..., Any],
+    report: Callable[..., Any],
+    *others: Callable[..., Any],
+) -> list[Tool]:
+    """Every tool, in serving order, with the names and descriptions the variant gives them."""
+    return [
+        _described(
+            Tool.from_function(propose, name=shown.propose_name, description=shown.propose),
+            "propose",
+            shown,
+        ),
+        _described(
+            Tool.from_function(search, name=shown.search_name, description=shown.search),
+            "search",
+            shown,
+        ),
+        Tool.from_function(report, description=shown.report),
+        *(Tool.from_function(tool) for tool in others),
+    ]
+
+
+def _with_prompts(server: FastMCP, prompts: list[Prompt]) -> FastMCP:
+    for prompt in prompts:
+        server.add_prompt(prompt)
     return server
+
+
+def _switched_on(setting: str) -> bool:
+    return os.environ.get(setting, "off").strip().lower() == "on"
+
+
+def _prompts() -> list[Prompt]:
+    """Offer `/commons:record` unless COMMONS_RECORD_PROMPT=off (decision 0034; on by default)."""
+    if os.environ.get("COMMONS_RECORD_PROMPT", "on").strip().lower() == "off":
+        return []
+    description = "Review this session and record what to share."
+    return [Prompt.from_function(_record, name="record", description=description)]
 
 
 def _record() -> str:
     """`/commons:record`: review the session against the propose and report rules (0034)."""
     return agent_text.RECORD_PROMPT
+
+
+def _prompt_version(
+    shown: agent_text.Variant, tools: list[Tool], prompts: list[Prompt], empty_note: str
+) -> PromptVersion:
+    """Hash every text an agent can read from this server, taken from what FastMCP serves.
+
+    Templates only (the turn nudge before its task id is filled in, a marker for the
+    feedback line), so ids and counts never make a new version (decision MIT-566).
+    """
+    surfaces = {
+        "instructions": shown.instructions,
+        "note/untrusted": UNTRUSTED_NOTE,
+        "note/empty": empty_note,
+    }
+    for tool in tools:
+        surfaces[f"tool/{tool.name}/description"] = tool.description or ""
+        surfaces[f"tool/{tool.name}/input_schema"] = json.dumps(tool.parameters, sort_keys=True)
+        surfaces[f"tool/{tool.name}/_meta"] = json.dumps(tool.get_meta(), sort_keys=True)
+    for prompt in prompts:
+        surfaces[f"prompt/{prompt.name}/description"] = prompt.description or ""
+    record = bool(prompts)
+    if record:
+        surfaces["record_prompt"] = agent_text.RECORD_PROMPT
+    turn_nudge = _switched_on("COMMONS_TURN_NUDGE")
+    if turn_nudge:
+        surfaces["turn_nudge"] = agent_text.TURN_NUDGE
+    if _switched_on(FEEDBACK_SETTING):
+        surfaces["session_feedback"] = "on"
+    label = agent_text.variant_label(turn_nudge=turn_nudge, record=record)
+    return prompt_version(label, surfaces)
 
 
 def _store() -> str:
@@ -287,19 +345,6 @@ def _pending_json(entry: PendingEntry) -> dict[str, Any]:
         "proposed_by_model": entry.proposed_by_model,
         "agent_reviews": entry.agent_reviews,
         "redaction_report": entry.redaction_report,
-    }
-
-
-def _hit_json(hit: SearchHit) -> dict[str, Any]:
-    return {
-        "entry_id": str(hit.entry_id),
-        "symptom": hit.symptom,
-        "environment": hit.environment,
-        "cause": hit.cause,
-        "fix": hit.fix,
-        "repro": hit.repro,
-        "score": hit.score,
-        "provenance": hit.provenance(),
     }
 
 

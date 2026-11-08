@@ -5,6 +5,8 @@ COMMONS_INSTRUCTIONS_VARIANT. Hooks and the MCP server both read it.
 """
 
 import dataclasses
+import json
+import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -15,8 +17,10 @@ from typing import Any
 import psycopg
 import pytest
 from fastmcp import FastMCP
+from tools.eval.scenarios import SCENARIOS
 
 import factories
+from commons.domain.entries import Proposal, validate_proposal
 from commons.domain.outcomes import ObservedRun
 from commons.mcp.server import build_server
 from commons.service import agent_text
@@ -27,6 +31,7 @@ from mcp_client import call
 from test_hook_stop import Session
 
 AT = datetime(2026, 10, 25, tzinfo=UTC)
+SKILL = Path(__file__).parents[2] / "client" / "plugin" / "skills" / "agent-commons" / "SKILL.md"
 
 
 def run(exit_code: int, minutes: int) -> ObservedRun:
@@ -209,3 +214,133 @@ def test_combined_variants_take_each_surface_from_their_parts(name: str, parts: 
             else getattr(baseline, field.name)
         )
         assert getattr(combined, field.name) == expected, field.name
+
+
+# Unshipped drafts (MIT-625): each changes one surface of the shipped text; `combined` has all.
+DRAFTS = {
+    "search-surprise": "instructions",
+    "own-mistake": "instructions",
+    "lesson-also-propose": "instructions",
+    "propose-example": "propose",
+}
+
+
+def differing(name: str) -> set[str]:
+    shipped, draft = agent_text.VARIANTS["baseline"], agent_text.VARIANTS[name]
+    return {
+        field.name
+        for field in dataclasses.fields(agent_text.Variant)
+        if getattr(draft, field.name) != getattr(shipped, field.name)
+    }
+
+
+@pytest.mark.parametrize("name", [*DRAFTS, "combined"])
+def test_each_draft_is_selected_by_its_name(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("COMMONS_INSTRUCTIONS_VARIANT", name)
+    assert agent_text.variant() == agent_text.VARIANTS[name]
+
+
+@pytest.mark.parametrize(("name", "surface"), DRAFTS.items())
+def test_each_draft_changes_one_surface_of_the_shipped_text(name: str, surface: str) -> None:
+    assert differing(name) == {surface}
+
+
+def without_drafts(instructions: str) -> str:
+    """Undo every draft edit, which must give back the shipped instructions exactly."""
+    return (
+        instructions.replace(agent_text.SEARCH_RULE_SURPRISE, agent_text.SEARCH_RULES[4])
+        .replace(f" {agent_text.OWN_MISTAKE_LINE}", "")
+        .replace(f" {agent_text.LESSON_ALSO_PROPOSE_LINE}", "")
+    )
+
+
+@pytest.mark.parametrize("name", ["search-surprise", "own-mistake", "lesson-also-propose"])
+def test_an_instructions_draft_only_adds_its_line_or_swaps_the_search_rule(name: str) -> None:
+    draft, shipped = agent_text.VARIANTS[name], agent_text.VARIANTS["baseline"]
+    assert without_drafts(draft.instructions) == shipped.instructions
+
+
+def test_the_combined_draft_has_all_four_changes() -> None:
+    combined, shipped = agent_text.VARIANTS["combined"], agent_text.VARIANTS["baseline"]
+    assert differing("combined") == {"instructions", "propose"}
+    for line in (
+        agent_text.SEARCH_RULE_SURPRISE,
+        agent_text.OWN_MISTAKE_LINE,
+        agent_text.LESSON_ALSO_PROPOSE_LINE,
+    ):
+        assert line in combined.instructions
+    assert without_drafts(combined.instructions) == shipped.instructions
+    assert combined.propose == agent_text.VARIANTS["propose-example"].propose
+
+
+def test_the_search_draft_covers_surprises_with_no_error_text() -> None:
+    rule = agent_text.SEARCH_RULE_SURPRISE
+    for trigger in ("tool", "a default", "a bare error page", "no error text", "what you saw"):
+        assert trigger in rule
+    assert "Skip" not in rule  # an exemption clause becomes the default reading (round one)
+
+
+def test_the_example_draft_extends_the_shipped_example_with_a_versioned_app() -> None:
+    shipped = agent_text.VARIANTS["baseline"].propose
+    draft = agent_text.VARIANTS["propose-example"].propose
+    assert draft == shipped + agent_text.APP_EXAMPLE
+    environments = re.findall(r"^  environment: (\{.*\})$", draft, re.MULTILINE)
+    assert len(environments) == 2
+    for environment in map(json.loads, environments):
+        validate_proposal(Proposal("s", environment, "c", "f", ("d",), None, uuid.uuid4()))
+    assert json.loads(environments[1]) == {"tool": "cronie 1.7.2"}
+
+
+def every_cause_word() -> set[str]:
+    """Every word the eval grader takes as naming a scenario's cause, on each turn of each."""
+    words: set[str] = set()
+    for scenario in SCENARIOS.values():
+        for turn in (scenario, scenario.then):  # a multi-turn scenario has one more turn
+            if turn is not None and turn.discovery is not None:
+                words.update(word.lower() for word in turn.discovery.cause_words)
+    return words
+
+
+def examples() -> dict[str, str]:
+    """The draft's added worked example and the skill's `search`, `propose` and `report` examples.
+
+    The `search` and three `propose` blocks are checked whole. Of the `report` block only its
+    free text, `agent_assessment`, is checked: its field name `outcome` contains the cause word
+    "utc", and neither that name nor the enum value `tests_passed` can hint at a cause.
+
+    Exempt: the shipped worked example (the whenever `ignore_dst` case in `PROPOSE_EXAMPLES_TOOL`
+    and the texts built on it), which names a hold-out scenario's cause; `baseline` keeps it
+    byte-identical until the question on it is settled.
+    """
+    blocks = re.findall(r"```json\n(.*?)```", SKILL.read_text(encoding="utf-8"), re.DOTALL)
+    calls = [block for block in blocks if '"symptom"' in block or '"query"' in block]
+    assert len(calls) == 4
+    reports = [json.loads(block) for block in blocks if '"agent_assessment"' in block]
+    assert len(reports) == 1
+    skill = {f"skill example {n}": block for n, block in enumerate(calls, start=1)}
+    return {
+        "propose-example": agent_text.APP_EXAMPLE,
+        **skill,
+        "skill report example": reports[0]["agent_assessment"],
+    }
+
+
+@pytest.mark.parametrize(("where", "example"), examples().items())
+def test_no_example_names_a_scenarios_cause(where: str, example: str) -> None:
+    # An example that named a scenario's cause would fit the eval to it (decision 0023).
+    assert every_cause_word() >= {"memory", "on exit", "default", "exporter"}
+    named = {word for word in every_cause_word() if word in example.lower()}
+    assert not named, where
+
+
+def test_no_draft_ships() -> None:
+    shipped = agent_text.VARIANTS["baseline"]
+    assert shipped == agent_text.resolve(agent_text.SHIPPED)
+    assert agent_text.variant() == shipped
+    for text in (
+        agent_text.SEARCH_RULE_SURPRISE,
+        agent_text.OWN_MISTAKE_LINE,
+        agent_text.LESSON_ALSO_PROPOSE_LINE,
+    ):
+        assert text not in shipped.instructions
+    assert shipped.propose != agent_text.PROPOSE_EXAMPLES_APP

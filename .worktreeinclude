@@ -1,0 +1,2 @@
+# Gitignored files Claude Code copies into every new worktree (agent coders get one each).
+.env.agent

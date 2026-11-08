@@ -11,6 +11,7 @@ from pathlib import PurePosixPath
 
 ALLOWED_DIRS = frozenset(
     {
+        ".claude",
         ".claude-plugin",
         ".github",
         "client",
@@ -18,6 +19,7 @@ ALLOWED_DIRS = frozenset(
         "docs",
         "infra",
         "observability",
+        "scripts",
         "server",
         "tools",
     }
@@ -25,9 +27,11 @@ ALLOWED_DIRS = frozenset(
 
 ALLOWED_ROOT_FILES = frozenset(
     {
+        ".env.agent.example",
         ".gitignore",
         ".pre-commit-config.yaml",
         ".python-version",
+        ".worktreeinclude",
         "AGENTS.md",
         "CLAUDE.md",
         "DESIGN.md",
@@ -78,7 +82,7 @@ def main() -> int:
         print(message, file=sys.stderr)
     if found:
         print(
-            "Move throwaway files to .scratch/, or propose a new directory in PROGRESS.md.",
+            "Move throwaway files to .scratch/, or ask for a new directory in a Question ticket.",
             file=sys.stderr,
         )
     return 1 if found else 0

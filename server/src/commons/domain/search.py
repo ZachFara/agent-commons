@@ -3,12 +3,14 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from commons.domain.errors import InvalidInputError
 from commons.domain.reporters import PrivacyDefault
 
 MAX_LIMIT = 20
+CHARS_PER_TOKEN = 4  # a rough rule for English text and code, for size estimates only
 
 
 @dataclass(frozen=True)
@@ -62,7 +64,11 @@ class SearchHit:
     cause: str
     fix: str
     repro: str | None
-    score: float
+    # The three factors of `score`, logged apart so a poor match and a poor entry can be told
+    # apart (decision 0025): query fit, the libraries' versions, and the entry's ranking score.
+    relevance: float
+    version_factor: float
+    outcome_score: float
     proposed_by_model: str
     human_reviewed: bool
     used_outcomes: int
@@ -73,6 +79,29 @@ class SearchHit:
     risks: tuple[str, ...] = ()  # labels from the risk scanner (decision 0029)
     confirmed: bool = False  # provisional, but confirmed by others' observed outcomes (0028)
     imported_from: dict[str, str] | None = None  # moved from a local store (decision 0031)
+
+    @property
+    def score(self) -> float:
+        """What results are ranked by: relevance x version factor x outcome score."""
+        return self.relevance * self.version_factor * self.outcome_score
+
+    def as_json(self) -> dict[str, Any]:
+        """Return what `search` gives the agent for this hit."""
+        return {
+            "entry_id": str(self.entry_id),
+            "symptom": self.symptom,
+            "environment": self.environment,
+            "cause": self.cause,
+            "fix": self.fix,
+            "repro": self.repro,
+            "score": self.score,
+            "provenance": self.provenance(),
+        }
+
+    def approx_tokens(self) -> int:
+        """Return roughly how many tokens the hit's text fields add to an agent's context."""
+        text = (value for value in self.as_json().values() if isinstance(value, str))
+        return round(sum(map(len, text)) / CHARS_PER_TOKEN)
 
     def provenance(self) -> str:
         """One line on where the entry came from and how it has held up."""

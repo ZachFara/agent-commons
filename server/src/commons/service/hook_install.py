@@ -8,10 +8,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# Claude Code reads a matcher with any character beyond letters, digits, _, -, spaces, `,`
+# and `|` as an unanchored regex, so this one is anchored: `Edit` must not match NotebookEdit.
+# `mcp__.*__query-docs` is Context7's docs tool under any server or plugin name (MIT-622).
+POST_TOOL_USE_MATCHER = "^(Bash|Edit|Write|MultiEdit|mcp__.*__query-docs)$"
+
 # (Claude Code event, tool matcher or None for all, `commons hook` event, timeout in seconds)
 HOOK_EVENTS: tuple[tuple[str, str | None, str, int], ...] = (
     ("SessionStart", None, "session-start", 30),
-    ("PostToolUse", "Bash|Edit|Write|MultiEdit", "post-tool-use", 30),
+    ("PostToolUse", POST_TOOL_USE_MATCHER, "post-tool-use", 30),
     ("PostToolUseFailure", "Bash", "post-tool-use-failure", 30),
     ("Stop", None, "stop", 60),
 )

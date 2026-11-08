@@ -53,7 +53,8 @@ Everything needed to measure the agent-facing text again is in the repo: the har
   and no lower fix rate. Ship by setting `SHIPPED` in `agent_text.py`.
 - **Record results:** each run appends to `trials.jsonl` as sessions finish and writes one JSON
   per session to `.scratch/eval/<condition>/`; commit the ledger lines and copy the JSON into
-  `docs/eval/<condition>/`. Transcripts are not committed (size, local paths); those from
+  `docs/eval/<condition>/`. Transcripts and whole patches (`*.patch`) are not committed (size,
+  local paths, secrets); those from
   2026-10-25 are archived on the owner's machine at
   `~/Development/agent-commons-eval-archive/eval-2026-10-25.tar.gz` (1,455 transcripts, logs,
   and the agent interviews).
@@ -61,6 +62,275 @@ Everything needed to measure the agent-facing text again is in the repo: the har
   `claude -p --resume <session_id>` from its recorded working directory, with
   `--setting-sources project --strict-mcp-config` so no hooks or servers run. Ask what led to the
   decision, not for its reasoning: asking a model to quote its own reasoning trips a safeguard.
+
+## GitHub tasks
+
+A GitHub task replays a real issue from a real repository: the agent gets the project at the
+fix's parent, with the fix's tests added, and must make them pass. Tasks are `GitHubTask`
+records (`tools/eval/model.py`) in `tools/eval/github_tasks.py`, each with a comment citing the
+issue, the fix, and the upstream release notes, as `holdout.py` does. Each becomes a `Scenario`
+with a `repo`, so `run`, grading, and the ledger work as for every other scenario.
+
+| Field | What it holds |
+|---|---|
+| `name` | the scenario name |
+| `repo` | https URL of the repository |
+| `base_commit` | full sha of the fix's parent: the tree the agent starts from |
+| `fix_commit` | full sha of the fix; used only by `check`, never shown to the agent |
+| `issue_url`, `fix_url` | the issue, and the pull request or commit that fixed it |
+| `test_paths` | the test files the fix added or changed, laid over the base so the tests fail |
+| `python` | the interpreter version, e.g. `"3.12"` |
+| `pins` | exact dependency versions (`name==version`), installed after `setup` |
+| `setup` | one command, run in the project's `.venv` (e.g. `uv pip install -e .`) |
+| `test_command` | the specific test ids, run from the project (e.g. `uv run --no-sync pytest tests/test_x.py::test_y`) |
+| `upstream` | `library`, `version`, `released` (ISO date), `changelog` URL, and `upstream_change`, a key shared by tasks hit by the same change |
+| `discovery` | what a good proposal names, as for other scenarios |
+| `trigger` | `version_specific` |
+| `license` | the repository's SPDX license identifier |
+
+**Materializing** (`tools/eval/repos.py`): both commits are fetched once, shallow and by sha,
+into a bare cache at `~/.cache/agent-commons-eval/repos/`. The project is `git archive` of the
+base with the fix's versions of `test_paths` laid over it, which is the base-to-fix diff of
+those paths. The cache's `info/attributes` turns off `export-ignore`, which some repositories
+set on their tests. The project has no `.git` and no remote. Then `uv venv --python <python>`,
+`setup`, and `uv pip install <pins>` run in it: in a container for `check` and for grading,
+on this machine for the project a session's agent works in (see below).
+
+**The session** of a repo task, and every command run on its project (setup, the pins'
+install, the tests, and the grading run of the project the agent edited), runs without
+`GH_TOKEN`, `GITHUB_TOKEN`, and `SSH_AUTH_SOCK`. It also runs with `GH_CONFIG_DIR` set to an
+empty directory, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` (Homebrew's system
+gitconfig sets `credential.helper=osxkeychain`), and `GIT_TERMINAL_PROMPT=0`. The session also
+gets `--disallowedTools "Bash(git push*)" "Bash(gh *)" "Bash(uv run git*)" "Bash(uv run gh*)"`.
+The deny list is a best-effort guard, not isolation. `sh -c` or a Python subprocess can still
+run git.
+
+**Not contained: the session itself.** The agent's own commands, and the setup of the project
+it works in (`uv venv`, `setup`, the pins), still run on this machine, as this machine's user,
+with that user's home directory and keychain. The agent's `.venv` has to work on this machine,
+so it can't be built in a Linux container. Only the harness's own test runs below are contained.
+
+**`agent_eval.py check`** materializes each task and also exports the whole fix tree, sets both
+up, and runs `test_command` in each. It prints "fails before, passes after", or reports the task
+as broken when the tests already pass at the base or still fail with the fix. `make eval-check`
+runs it.
+
+**Containers** (`tools/eval/container.py`; the owner chose containers, right away). `check` runs
+every install step and test run of a task in a throwaway container, and so does grading: a
+session's graded run copies the project the agent edited (without its `.venv`), sets the copy
+up, and tests it, all in containers. Each step is its own `docker run --rm`:
+
+- from one image pinned by digest: uv's `python3.12-trixie-slim` (a task on another Python has
+  uv download that interpreter while installing);
+- as this machine's uid and gid (never root: as root it runs as 65534), with `--cap-drop ALL`
+  and `no-new-privileges`;
+- with one mount, the project copy at `/project`: no home directory, no SSH agent or git
+  credentials, no Docker socket, and no environment from this machine but `HOME=/tmp`;
+- capped at `--memory 2g` (no swap beyond it), `--cpus 2`, and `--pids-limit 512`;
+- timed out by `timeout` inside the container (120 seconds for the tests, 600 for each install
+  step), and removed by the harness 30 seconds after that if it is still running;
+- with the network for the install steps, and `--network none` for the test run. So
+  `test_command` must not need the network: use `uv run --no-sync` or `.venv/bin/python`, as a
+  bare `uv run` in a project may try to sync. A task whose tests need it fails `check`.
+
+Containers run one at a time, whatever `--concurrency` a run has. `check --on-host` runs the
+installs and tests on this machine instead, as before, and prints a warning; without it `check`
+never does. `make eval-check` never passes it. Docker is required: the tests in
+`server/tests/test_eval_container.py` start containers, as the database tests need Postgres
+(`make db` runs it in Docker, and CI's runner has Docker).
+
+**A task is accepted only if:**
+
+- the repository is public and under an OSI-approved license;
+- the upstream release it depends on came out after the eval models' training cutoff;
+- the issue was opened, and the fix made, after that release;
+- the fix changes code, not only a version pin;
+- a test fails at the base and passes with the fix (`check` proves it);
+- it needs no services, GPU, or Docker; the checkout is under about 200 MB; the tests run in
+  under 2 minutes;
+- the prompt doesn't reveal the fix (it is the neutral "fix the failing tests" prompt).
+
+Records are reviewed like code: `run` still executes the record's `setup`, and the agent runs
+the repository's code, on this machine. `check` and grading run them in containers.
+
+The fix commit stays in the cache during `run`, because the project's test files come from it.
+An agent that reads `~/.cache/agent-commons-eval/` could find the fix there.
+
+## Arms: Commons, Context7, both, or neither
+
+`uv run python tools/agent_eval.py arms --scenario ... --arm ... --runs N --model ...
+--condition NAME` runs each task under each arm, interleaved task × arm × run × model, every
+session with its own index (and so its own database and transcript). With no `--arm` it runs all
+four:
+
+| Arm | MCP servers | Commons hooks | Agent-facing text |
+|---|---|---|---|
+| `both` | `commons` and `context7` | yes | the shipped variant |
+| `context7` | `context7` | no | none (variant `none`) |
+| `commons` | `commons` | yes | the shipped variant |
+| `none` | none (blind) | no | none (variant `none`) |
+
+`context7` is Context7's remote HTTP server (`https://mcp.context7.com/mcp`). If
+`CONTEXT7_API_KEY` is set, the session sends it as `Authorization: Bearer ${CONTEXT7_API_KEY}`,
+which Claude Code expands from the session's environment, so the key is never written to a
+file. Without it Context7 serves anonymous, rate-limited requests. Sessions in arms without
+Context7 (`commons`, `none`) run with `CONTEXT7_API_KEY` removed from their environment.
+`--allowedTools` lists only
+the arm's servers' tools: `mcp__context7__resolve-library-id` and `mcp__context7__query-docs`
+for Context7 (re-confirm against the first real session's init event), and the commons tools
+for the commons.
+
+**A session runs in its arm or not at all.** Every init event's `mcp_servers` must name exactly
+the arm's servers, all `connected`, and its `tools` must include every `mcp__*` tool the arm
+allows (so a wrong Context7 tool name can't leave the arm silently blind). Otherwise the session
+is errored, so it never reaches the
+ledger and `--resume` runs it again. `--resume` skips only a clean result for the same arm,
+variant, and model. In an arm without the commons, the commons expectations (search, propose,
+proposals, report, used) are not checked.
+
+Each result and ledger line also records, in every arm and in `run` and `search` too:
+
+| Field | What it holds |
+|---|---|
+| `arm` | the arm; lines from before arms count as `commons` |
+| `tokens_in` | input + cache creation + cache read tokens, from the `usage` of each result event (one per turn) |
+| `tokens_out` | output tokens, from the same |
+| `wall_clock_seconds` | the result events' `duration_ms`, in seconds |
+| `retrievals` | per retrieval under the session's task ids: `entry_id`, `rank`, `used`, `observed_outcome` (hook-observed), `reported`; empty without the commons |
+| `patch_excerpt` | the start of the agent's unified diff of non-test files against a pristine copy of the project made before the session, scrubbed of secrets by the server's own scrub (`commons.privacy.secrets`), then cut at 4,000 characters. Lines from before this field kept the whole diff as `patch` |
+| `patch_truncated` | true when the diff is not all of the agent's change: a changed file was over 256 KiB, or the diff over 1 MiB |
+| `patch_hash` | 16 hex digits of sha256 over the whole diff of what was read, taken with whitespace removed and blank lines dropped, so whitespace-only differences share a hash |
+| `repeat` | which of `--runs` repeats of its task, arm and model the session was (1 to N); 0 outside `arms`. Unlike `run`, the same repeat pairs across arms |
+
+Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
+`conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:
+`.venv`, `node_modules`, `__pycache__`, the pytest, mypy, ruff and hypothesis caches, `build/`,
+`dist/`, `*.egg-info`, `*.pyc`, `.coverage*`, and the installers' lock files: `uv.lock` (which
+`uv run` creates), `poetry.lock`, `pdm.lock`, `Pipfile.lock` and `package-lock.json`. `trials` groups by arm too, and `effects` counts only
+`commons`-arm lines.
+
+**The patch reads nothing outside the project.** The ledger is committed to a public repo, so
+the walk that builds the patch never follows a symlink. A symlink (to a file or a directory), a
+hard link, or a path resolving outside the project shows in the diff by its own name only, as
+one line `[symlink: not read]`, `[hard link: not read]` or `[outside the project: not read]`.
+Anything not a regular file (a FIFO, a socket) is left out. The pristine copy copies symlinks
+as symlinks. A file is read up to 256 KiB, cut at its last whole line, and ends in
+`[file cut at 262144 bytes; sha256 <16 hex digits>]`. The digest is of the whole file, hashed a
+chunk at a time up to its size when opened, so a change past the cut still changes that line,
+and with it the diff, `patch_hash` and `patch_truncated`. The diff is kept up to 1 MiB and ends in
+`[patch cut at 1048576 characters]`. The whole diff (up to that cap, not scrubbed) is written to
+`.scratch/eval/<condition>/<condition>-<task>-<index>.patch`, next to the session's transcript,
+which `.gitignore` keeps out of git (a test checks it). The ledger line and the session's JSON
+there hold only `patch_excerpt`. Herding groups by `patch_hash`; a line counts as having a
+patch when its `patch_excerpt` (or an older line's `patch`) isn't empty.
+
+### The experiment store
+
+Without `--store`, every session gets a fresh, empty database of its own. `arms --store NAME`
+builds on an experiment store instead: one database `NAME` on the local Postgres. The harness
+refuses a server that isn't `localhost` or `127.0.0.1` (the rule `scripts/test-db.sh` follows),
+so the store is never the live Commons database. The server is `COMMONS_EVAL_ADMIN_URL`
+(default `postgresql://commons:commons@localhost:5432/commons`).
+
+- **`--seed-wave`**: every session writes into `NAME` itself. The store is created if it
+  doesn't exist, migrated once per batch, and never dropped. A scenario's seeded entries are
+  added once, not once per session.
+- **Without `--seed-wave`** (the measured run): `NAME` must already exist. Each session runs in
+  `CREATE DATABASE <session db> TEMPLATE NAME`, which is dropped after grading. Every session
+  starts from what the seed wave left and the owner approved, and never sees another
+  session's work. Approve the wave's entries against the store first:
+  `COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/NAME uv run commons pending`,
+  then `commons review`.
+
+A store holds many sessions' work under the one `eval-agent` pseudonym. So grading counts a
+session's proposals, reports and retrievals by its own task ids: the tasks its hooks started
+under its Claude session ids, plus every task id it passed to a commons tool.
+
+### Counterfactuals
+
+`uv run python tools/agent_eval.py counterfactuals --condition X --store NAME` writes the
+DESIGN.md §7 pairs of an arms condition to `NAME`'s `counterfactual_runs`. It reads only the
+ledger and runs no session.
+
+- **Pairs**: `both` with `context7`, and `commons` with `none`, for the same task, repeat and
+  model.
+- **The entry**: the first retrieval the session with the commons used (`yes` or `partial`),
+  else its first retrieval. A pair whose session retrieved nothing writes no rows. A pair whose
+  entry isn't in `NAME` is skipped, and the command says so. If two ledger lines share an arm,
+  task, repeat and model, only the last is paired, with a warning.
+- **Rows**: two per pair, `with_entry` true and false. Both share
+  `task_id = uuid5(condition / task / repeat / model / pair)`, so writing a condition again
+  adds nothing (`UNIQUE (task_id, entry_id, with_entry)`).
+- **Fields**: `outcome` is `tests_passed` or `tests_failed`, from the harness's own test run
+  after the session. Tokens and wall clock come from each session's line.
+
+### The compare report
+
+`uv run python tools/agent_eval.py compare --condition X` (`make eval-compare
+EVAL_ARMS_CONDITION=X`) reads the ledger and prints these sections:
+
+- **Per arm and model**: sessions; pass rate with a 95% Wilson interval; tokens per success
+  (all `tokens_in + tokens_out` over passed sessions); median tokens; median wall clock; and,
+  for the Commons arms, how many sessions searched, found, used and proposed.
+- **The primary comparison**: `both` against `context7`, over the tasks both ran. This is the
+  pass-rate difference and the tokens-per-success ratio, each with a 95% paired-bootstrap
+  interval: tasks resampled with replacement, 10,000 resamples, seed 20261107.
+- **The verdict**: continue, kill or inconclusive, from `PASS_MARGIN`, `TOKEN_MARGIN` and
+  `PASS_FLOOR` in `tools/agent_eval.py`. The rule is in the Proposed arms record,
+  `docs/decisions/2026-11-07-MIT-565-github-task-arms.md`.
+- **Secondary comparisons**: `commons` against `none`, and `context7` against `none`.
+- **Herding**: per arm, the failed sessions, and for the Commons arms how many of them used a
+  retrieved entry. Also, the share of failed sessions whose patch is their task's most common
+  wrong patch (same `patch_hash`, at least two failed sessions sharing it; no patch never
+  counts).
+
+`compare` reads one condition only, so seed waves and `github-arms-same-task` never enter the
+`github-arms` verdict.
+
+### The GitHub-task arms run, fold by fold
+
+The Proposed arms record (`docs/decisions/2026-11-07-MIT-565-github-task-arms.md`) fixes the
+run. No task may be measured on entries its own sessions wrote, so the tasks are split once,
+before any seed wave: within each group of siblings (same `upstream_change`), sorted by name,
+tasks alternate between fold A and fold B; a task with no sibling goes to the same-task set.
+Each fold seeds its own store and is measured on the other fold's store:
+
+| Store | Seeded by | Measured on it | Measured condition |
+|---|---|---|---|
+| `commons_eval_store_a` | fold A | fold B | `github-arms` |
+| `commons_eval_store_b` | fold B | fold A | `github-arms` |
+| `commons_eval_store_same` | the same-task set | the same-task set | `github-arms-same-task` |
+
+`<A>`, `<B>` and `<same>` below are the fold lists from the record: `--scenario T` per task in
+`arms`, space-separated in `EVAL_ARMS_TASKS`.
+
+```
+# 1. Seed waves: the commons arm, once per task, into each fold's own store.
+uv run python tools/agent_eval.py arms --store commons_eval_store_a --seed-wave \
+  --arm commons --runs 1 --condition github-arms-seed-a <A>
+uv run python tools/agent_eval.py arms --store commons_eval_store_b --seed-wave \
+  --arm commons --runs 1 --condition github-arms-seed-b <B>
+uv run python tools/agent_eval.py arms --store commons_eval_store_same --seed-wave \
+  --arm commons --runs 1 --condition github-arms-seed-same <same>
+# 2. Review each store's pending entries (commons pending, then commons review), e.g.
+COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/commons_eval_store_a \
+  uv run commons pending
+# 3. Measured runs: each fold on the other fold's store.
+make eval-arms EVAL_STORE=commons_eval_store_b EVAL_ARMS_TASKS="<A>"
+make eval-arms EVAL_STORE=commons_eval_store_a EVAL_ARMS_TASKS="<B>"
+make eval-arms EVAL_STORE=commons_eval_store_same EVAL_ARMS_TASKS="<same>" \
+  EVAL_ARMS_CONDITION=github-arms-same-task
+# 4. The verdict (both folds), then the same-task set, reported apart.
+make eval-compare EVAL_ARMS_CONDITION=github-arms
+make eval-compare EVAL_ARMS_CONDITION=github-arms-same-task
+# Counterfactual pairs: once per measured store; each writes the pairs whose entry it holds.
+uv run python tools/agent_eval.py counterfactuals --condition github-arms --store commons_eval_store_b
+uv run python tools/agent_eval.py counterfactuals --condition github-arms --store commons_eval_store_a
+```
+
+`make eval-arms` runs all four arms, `EVAL_ARMS_RUNS` (3) times, under `EVAL_ARMS_CONDITION`
+(`github-arms`), on the tasks in `EVAL_ARMS_TASKS` and the store `EVAL_STORE`. It refuses to run
+without both. Ask the owner before running it, because it uses the subscription.
 
 ## Trial ledger
 
@@ -337,3 +607,118 @@ The adopted text (`w-a0b4c5d1e0f1g1h0n0s1`) passes the bar on both models: more 
 (Opus 25/27 vs 18/27, Sonnet 18/27 vs 2/27), no proposal on any control, no lower fix rate. Both
 models now search where it matters and not on controls. Sonnet still skips the search on a known
 entry (without duplicating it).
+
+## Scenarios added: no test (MIT-597, 2026-11-07)
+
+Configuration tasks with no failing test and no exception text, after two real misses. The prompt
+is the request itself, and an outcome check judges the result after the session, out of the
+agent's sight. Not yet verified with a real session, so not counted (decision 0023).
+
+- `config-app-overwrites`: a notes app the runner starts (`vaultapp`) writes its plugin settings from memory over `data.json` on every autosave and on exit, so a direct edit is lost; `vaultapp config set` works.
+- `config-default-wins`: a router (`switchyard`) whose unlisted `exporter` default (`cloud`) beats the documented `textfile_dir`; the export prints the cloud's 401, exits 0, and writes no metrics file.
+- `known-config-app-overwrites`: `config-app-overwrites` with the answer already in the commons.
+- `known-config-default-wins`: `config-default-wins` with the answer already in the commons.
+
+## Condition: the skill (MIT-624)
+
+Decision 0034 built a skill (`client/plugin/skills/agent-commons/SKILL.md`) but never measured
+it. A skill's name and description sit in context from the start, while the MCP tools stay
+deferred behind `ToolSearch`. `run --skill` measures it: each session also gets
+`--plugin-dir` pointing at a copy of `client/plugin` in its temp dir, and the `Skill` tool is
+allowed for that one skill. Everything else matches a plain session, including the server text
+(`--variant`, the shipped text by default).
+
+- **Hooks run once.** The copy leaves out the plugin's `hooks/`: they are the hooks
+  `commons join` installs, which the session's settings already carry, so loading both would run
+  each hook twice. The settings' copy also points at this checkout's `commons` and the session's
+  own database; the plugin's runs whatever `commons` is on `PATH`. So `--skill` is the plugin as
+  it would run (skill plus hooks, once each), and no separate "skill without hooks" condition is
+  needed. `--skill --no-hooks` gives the skill with no hooks at all.
+- **Checked at start.** A skill session whose init event (each turn's) does not list
+  `commons:agent-commons` is marked errored: it never reaches the ledger and `--resume` reruns it.
+- **Recorded.** Ledger lines carry `"skill": true` (older lines have no key and count as
+  `false`); `trials` shows such rows as `<variant>+skill`.
+
+Not run yet. Run one session first to confirm the skill loads (the init check has only been
+tested on a recorded init with the skill added by hand):
+
+```
+uv run python tools/agent_eval.py run --skill --scenario control-typo --condition s-smoke
+```
+
+Then the comparison: the shipped text with and without the skill, on the four no-test scenarios
+(MIT-597) and the five genuine controls, 3 runs each, on both models. That is
+9 scenarios x 3 runs x 2 conditions x 2 models = **108 sessions** (about 45 minutes at the
+`eval-confirm` rate). Add `--resume` to rerun after a usage limit.
+
+```
+scenarios=(--scenario config-app-overwrites --scenario config-default-wins
+  --scenario known-config-app-overwrites --scenario known-config-default-wins
+  --scenario control-typo --scenario control-arithmetic --scenario control-clear-error
+  --scenario control-documented-option --scenario control-documented-flag --runs 3)
+for model in sonnet claude-opus-5-5; do
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --condition s-shipped-$model
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --skill --condition s-skill-$model
+done
+```
+
+The bar (decision 0034): the skill beats the shipped text on both models, with no new proposals
+on the controls. `uv run python tools/agent_eval.py report --condition s-shipped-sonnet
+--condition s-skill-sonnet` (and the same for Opus) compares them.
+
+## Drafted variants: config surprises with no error text (MIT-625, 2026-11-08)
+
+Drafts from the review of real sessions where the owner had to ask agents about the commons
+(MIT-595). Those misses were configuration work with no failing test, and 3 of 4 real `propose`
+calls were rejected for an unversioned `tool`. Nothing ships: `baseline` is unchanged (same
+fingerprint), and `join` and the invite still install no skill. Each draft is one change on top
+of the shipped text, selected with `--variant <name>` (`COMMONS_INSTRUCTIONS_VARIANT`):
+
+| Variant | Surface | Change |
+|---|---|---|
+| `search-surprise` | instructions | The search rule widened the way the propose rule was (decision 0034 step 6): a dependency, tool or runtime that fails *or surprises you* (a default, a bare error page, no error text), searched "with the error or what you saw" |
+| `own-mistake` | instructions | "It counts even if you first fixed your own mistake." after the propose rule |
+| `lesson-also-propose` | instructions | "Lesson for AGENTS.md, memory or a README? Consider `propose` too." |
+| `propose-example` | `propose` description | The shipped worked example plus a second one for a tool with no error text (cron reading `%` as a newline), with the tool as a versioned `tool`; the shipped example only shows `pytest 9.0`, which did not stop the rejections |
+| `combined` | both | All four (instructions at 1,496 of the 1,500-character limit, so no room for more) |
+
+The skill (`client/plugin/skills/agent-commons/SKILL.md`) was refreshed in the same change: its
+description now triggers on library, tool and config surprises with or without an error, and its
+body adds worked `propose` calls for a config value (PyYAML reading `NO` as false) and a tool
+(cron reading `%` as a newline). Both examples are documented behavior picked to show the shapes;
+the controls check that they don't teach proposing documented behavior. Ledger lines record
+`"skill": true` but not which skill text, so `--skill` results from before this change are not
+comparable with later ones.
+
+The skill's version-change example is PyJWT 2 returning `jwt.encode()` as str, not bytes,
+instead of the shipped whenever `ignore_dst` case, which is the cause of the hold-out scenario
+`real-whenever-ignore-dst`. The skill's `search` and three `propose` examples, the free text of
+its `report` example (`agent_assessment`), and the example in `propose-example` were checked
+against every measured scenario's cause and `cause_words`; a test fails if one of them names any
+scenario's cause word. They replace the first draft's examples,
+which shared a mechanism and cause words with the two no-test discovery scenarios (an in-memory
+overwrite, and a default that beats a setting) and the hold-out. The shipped server text still
+carries the whenever example, since `baseline` stays byte-identical.
+
+**Suggested conditions**, on the four no-test scenarios (MIT-597) and the five genuine controls,
+3 runs each, on both models. Verify the no-test scenarios with one real session each first (they
+are not yet counted). Start with `combined` against the shipped text: 9 scenarios × 3 runs ×
+2 conditions × 2 models = **108 sessions**. Only if `combined` passes the bar, attribute it with
+the four single drafts (another 216 sessions), so the shipped text gains only the lines that help.
+
+```
+scenarios=(--scenario config-app-overwrites --scenario config-default-wins
+  --scenario known-config-app-overwrites --scenario known-config-default-wins
+  --scenario control-typo --scenario control-arithmetic --scenario control-clear-error
+  --scenario control-documented-option --scenario control-documented-flag --runs 3)
+for model in sonnet claude-opus-5-5; do
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --condition d-baseline-$model
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --variant combined --condition d-combined-$model
+done
+# then, if combined passes: --variant search-surprise / own-mistake / lesson-also-propose / propose-example
+```
+
+Count, per model: good proposals on the two discovery scenarios, search-found-used-reported on the
+two known-entry scenarios (and no duplicate proposal there), searches and proposals on the
+controls, rejected `propose` calls, and fix rate. The bar is decision 0023's. MIT-598 holds the
+go/no-go.

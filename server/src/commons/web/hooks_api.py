@@ -4,6 +4,7 @@ Only derived observations are accepted, in strictly checked shapes: a client can
 content here even if it tried (decision 0016).
 """
 
+import math
 import re
 import time
 import uuid
@@ -22,22 +23,32 @@ from starlette.routing import Route
 from commons.domain.entries import Proposal
 from commons.domain.errors import InvalidInputError, NotPermittedError, RateLimitedError
 from commons.domain.keys import KeyHolder
-from commons.domain.observations import command_tail
+from commons.domain.observations import (
+    MAX_TOKENS,
+    DocLookup,
+    TaskCost,
+    command_tail,
+    split_library_id,
+)
 from commons.domain.outcomes import Usage
+from commons.domain.prompts import PromptVersion
 from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
-from commons.service import contributors, events, hooks, imports
-from commons.service.identity import acting_as
+from commons.service import agent_text, contributors, events, hooks, imports
+from commons.service.identity import acting_as, current_reporter
 from commons.service.keys import check_key
 from commons.store.connection import Connection
+from commons.store.searches import privacy_mode
 
 ConnectionFactory = Callable[[], AbstractContextManager[Connection]]
 Body = dict[str, Any]
 Handler = Callable[[Connection, Body], Body]
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_SHORT_HASH = re.compile(r"[0-9a-f]{12}")
 _REFUSALS = {400: "invalid_input", 401: "unauthorized", 403: "forbidden", 429: "rate_limited"}
 _USAGES: frozenset[Usage | None] = frozenset({"yes", "partial", "no", None})
+_COST_FIELDS = {"tokens_in", "tokens_out", "wall_clock_seconds"}
 
 
 def hook_routes(connection: ConnectionFactory) -> list[Route]:
@@ -163,8 +174,25 @@ def _model(body: Body) -> str | None:
     return model
 
 
+def _hook_prompt(body: Body) -> PromptVersion | None:
+    """Return the client's hook version, named by the server from its hash alone (MIT-609).
+
+    Hooks older than MIT-609 send no hash. Any label or text a client sends is ignored.
+    """
+    short_hash = body.get("prompt_hash")
+    if short_hash is None:
+        return None
+    if not isinstance(short_hash, str) or not _SHORT_HASH.fullmatch(short_hash):
+        msg = "prompt_hash must be 12 lowercase hex characters."
+        raise InvalidInputError(msg)
+    return agent_text.reported_hook_version(short_hash)
+
+
 def _session_start(conn: Connection, body: Body) -> Body:
-    return {"task_id": str(hooks.session_start(conn, _session_id(body), _model(body)))}
+    task_id = hooks.session_start(conn, _session_id(body), _model(body), prompt=_hook_prompt(body))
+    # The client sends a doc lookup's query only in full_trace; this tells it the mode.
+    mode = privacy_mode(conn, current_reporter(conn), task_id)
+    return {"task_id": str(task_id), "privacy_mode": mode}
 
 
 def _tool_use(conn: Connection, body: Body) -> Body:
@@ -173,6 +201,7 @@ def _tool_use(conn: Connection, body: Body) -> Body:
         _session_id(body),
         _test_run(body.get("test_run")),
         _file_change(body.get("file_change")),
+        _doc_lookup(body.get("doc_lookup")),
     )
     return {}
 
@@ -203,6 +232,28 @@ def _file_change(value: object) -> dict[str, object] | None:
         msg = "file_change must be {path_sha256, content_sha256}, both SHA-256 hex digests."
         raise InvalidInputError(msg)
     return dict(value)
+
+
+def _doc_lookup(value: object) -> DocLookup | None:
+    if value is None:
+        return None
+    if not (
+        isinstance(value, dict)
+        and set(value) == {"library_id", "version", "query"}
+        and _is_library(value["library_id"], value["version"])
+        and (value["query"] is None or isinstance(value["query"], str))
+    ):
+        msg = "doc_lookup must be {library_id: /org/project, version: str, query: str or null}."
+        raise InvalidInputError(msg)
+    return DocLookup(value["library_id"], value["version"], value["query"])
+
+
+def _is_library(library_id: object, version: object) -> bool:
+    """Whether library_id and version are what the client splits a Context7 id into."""
+    if not isinstance(library_id, str) or not isinstance(version, str):
+        return False
+    full = f"{library_id}/{version}" if version else library_id
+    return split_library_id(full) == (library_id, version)
 
 
 def _retrievals(conn: Connection, body: Body) -> Body:
@@ -285,7 +336,12 @@ def _stop(conn: Connection, body: Body) -> Body:
         for k, v in used_in.items()
     }
     result = hooks.finish_turn(
-        conn, _session_id(body), _model(body), used, paired=matched_in is not None
+        conn,
+        _session_id(body),
+        _model(body),
+        used,
+        paired=matched_in is not None,
+        cost=_cost(body.get("cost")),  # absent from hooks older than MIT-600
     )
     if result is None:
         return {"task_id": None, "unreported": []}
@@ -296,3 +352,34 @@ def _stop(conn: Connection, body: Body) -> Body:
         "searched": result.searched,
         "nudge": result.nudge,
     }
+
+
+def _cost(value: object) -> dict[UUID, TaskCost]:
+    """Check the task's cost after each retrieval: two token counts and seconds, per id."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or not all(_is_cost(v) for v in value.values()):
+        msg = (
+            "cost must map retrieval ids to {tokens_in, tokens_out, wall_clock_seconds}: "
+            "non-negative integer token counts and non-negative seconds."
+        )
+        raise InvalidInputError(msg)
+    return {
+        UUID(k): TaskCost(v["tokens_in"], v["tokens_out"], float(v["wall_clock_seconds"]))
+        for k, v in value.items()
+    }
+
+
+def _is_cost(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != _COST_FIELDS:
+        return False
+    tokens = (value["tokens_in"], value["tokens_out"])
+    seconds = value["wall_clock_seconds"]
+    return all(
+        isinstance(t, int) and not isinstance(t, bool) and 0 <= t <= MAX_TOKENS for t in tokens
+    ) and (
+        isinstance(seconds, int | float)
+        and not isinstance(seconds, bool)
+        and math.isfinite(seconds)
+        and seconds >= 0
+    )

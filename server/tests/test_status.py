@@ -75,6 +75,30 @@ def test_top_entries_rank_by_success_rate_then_sample_size(
     assert ranked == [("always", 1.0, 2), ("once", 1.0, 1), ("half", 0.5, 2)]
 
 
+def test_top_entries_count_only_known_results(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    known = factories.entry(db, reporter, symptom="known")
+    no_result = factories.entry(db, reporter, symptom="no result")
+    for entry_id, results in [
+        (known, ["tests_passed", "unknown"]),
+        (no_result, ["unknown", "abandoned"]),
+    ]:
+        for result in results:
+            factories.outcome(db, entry_id, reporter, result)
+
+    ours = {str(known), str(no_result)}
+    db.execute(
+        "UPDATE entries SET status = 'retired' WHERE NOT (id::text = ANY(%s))", (list(ours),)
+    )
+    top = call(server, "status", {})["top_entries"]
+    ranked = [
+        (t["symptom"], t["success_rate"], t["used_outcomes"]) for t in top if t["entry_id"] in ours
+    ]
+    # An entry with no known result has no success rate to rank by, nor a zero to divide by.
+    assert ranked == [("known", 1.0, 1)]
+
+
 def test_status_command_prints_a_summary(
     database_url: str,
     tmp_path: Path,
@@ -88,3 +112,28 @@ def test_status_command_prints_a_summary(
     assert out.startswith("entries: ")
     assert "awaiting human review: " in out
     assert "last 30 days: " in out
+
+
+def test_awaiting_review_counts_only_what_the_queue_lists(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unsampled provisional entry is live, not waiting (decision 0028)."""
+    db.execute("UPDATE reporters SET trust_level = 1 WHERE id = %s", (reporter,))
+    monkeypatch.setattr("commons.service.trust.secrets.randbelow", lambda _n: 1)
+    before = call(server, "status", {})
+    proposed = call(
+        server,
+        "propose",
+        {
+            "symptom": f"{uuid.uuid4().hex} status{uuid.uuid4().hex[:6]} failure",
+            "environment": {"language": "python 3.12"},
+            "cause": "Old version.",
+            "fix": "Upgrade it.",
+            "domains": ["python"],
+            "task_id": str(uuid.uuid4()),
+            "model": "claude-opus-5-5",
+        },
+    )
+    assert proposed["status"] == "approved"
+
+    assert delta(before, call(server, "status", {})) == {"approved": 1}

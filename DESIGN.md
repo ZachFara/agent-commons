@@ -48,7 +48,7 @@ entries
 - revision: integer, the current version of the text. Every version is kept in `entry_revisions` (text, source, editor, reason, redaction report); retrievals record the revision they showed.
 - superseded_by: entry id, nullable. A superseded entry never appears in search.
 - aliases: text[]. Wording of duplicates merged into this entry; search matches it like the symptom. duplicate_candidates (up to 3 {entry_id, score, retry}) and duplicate_of are set on propose for the reviewer (decision 0027); `distinct_pairs` remembers pairs a reviewer kept apart.
-- risk_report: jsonb, like redaction_report: what the risk scanner found in symptom, cause, fix and repro (pipe-to-shell, broad deletes, credential reads, disabled security, decoded execution, raw-URL installs, text aimed at the reading agent, hidden characters, which are stripped). Shown in the review queue and, for approved entries, in search provenance (decision 0029).
+- risk_report: jsonb, like redaction_report: what the risk scanner found in symptom, cause, fix and repro (pipe-to-shell, broad deletes, credential reads, disabled security, decoded execution, raw-URL installs, text aimed at the reading agent, hidden characters, which are stripped). Shown in the review queue and, for approved entries, in search provenance (decision 0029). `commons admin rescan` reruns the scanner over pending entries and every entry search can return, retired ones with a fix version included; `lifecycle.restore` rescans the entry it restores.
 - fixed_in: {library, version}, nullable, on retired entries. Such an entry still appears to a caller whose `environment.libraries` has an older version, marked "fixed in".
 - human_reviewed: boolean. False until at least one human review exists.
 - created_by: reporter id.
@@ -57,19 +57,37 @@ entries
 - trace_id: nullable, references traces.
 - task_id: UUID, nullable. The session that proposed it; null for imported entries.
 - search_vector: tsvector, generated from symptom, cause, fix, domains.
+- prompt_version_id: nullable, references prompt_versions. The text the MCP server served when the entry was proposed; null for imports, seeds and older rows.
 
 retrievals
 - entry_id, reporter_id, model_id.
 - task_id: UUID. One task is one agent session or one user request; the client mints it.
 - query: text. What the agent searched for.
 - rank_position: int. Where the entry appeared in results.
-- score_at_retrieval: float. The ranking score at the time, so ranking changes can be evaluated later.
+- score_at_retrieval: float. The ranking score at the time, so ranking changes can be evaluated later; its factors `relevance`, `version_factor` and `outcome_score` are logged beside it, and the score is their product. Rows from before migration 0019 leave the factors null.
+- prompt_version_id: nullable, references prompt_versions. The same version as the search that returned the entry.
 
 searches
 - task_id, reporter_id, model_id, privacy_mode, created_at.
 - query: text, redacted. language, result_limit, hit_count. A hit_count of 0 is a miss: the store had nothing for it.
 - environment, results: jsonb, redacted. Only written in full_trace mode (decision 0024).
 - One row per search call, whether or not anything matched.
+- prompt_version_id: nullable, references prompt_versions. The text the MCP server served when the agent searched.
+
+prompt_versions (decision 2026-11-07-MIT-566-prompt-versions)
+- kind: enum server, hooks. `server` is the text the MCP server serves; `hooks` is the text the installed hook client shows (the SessionStart sentence, the Stop report reminder, and the variant's start line and nudge). The Prompts page lists the two kinds apart; `commons prompts` lists only `server` versions.
+- hash: text, unique, lowercase hex, shown as the first 12. SHA-256 over canonical JSON (sorted keys) of `surfaces`. A row is one of two shapes: 64 hex characters with `surfaces`, or a `hooks` row with only the 12 characters a hosted client sent and NULL `surfaces`.
+- label: text, up to 120 characters. For `server`, the `COMMONS_INSTRUCTIONS_VARIANT` name, with the wording it stands for when it is `baseline` or `previous` (`baseline:w-...`), and `+turn-nudge`, `+record` when those are on. For `hooks`, the variants that show that text (e.g. `original, examples, rule, invite`), or `wording g<n>` for a start line only the wording search uses. The first label to serve a hash keeps it.
+- surfaces: jsonb, {surface: text}, nullable. For `server`: the instructions; each tool's description, input schema (JSON, sorted keys) and `_meta`; registered prompts; the untrusted note and the empty-result note; the record prompt unless it is switched off; and, only when switched on, the turn nudge template and a session feedback marker. For `hooks`: `session_start`, `report_reminder`, and `start_line` and `nudge` when the variant has them. Templates, never formatted text, so ids and counts never make a new version.
+- `build_server` builds the server version once, from the same tool and prompt objects it gives FastMCP; `search` and `propose` upsert it (insert, do nothing on conflict, then select) and point their rows at it.
+- Hook versions: a local hook stores the version it shows, with its surfaces. A hosted client sends only `prompt_hash`, the first 12 hex characters, and the server labels it from the hook texts its own code has released (`RELEASED_HOOK_TEXTS` in `agent_text`, crossed with every variant and wording start line), storing that 64-hex version with its surfaces. A hash it doesn't know is stored as sent, labelled `unrecognized`, with NULL surfaces: the server never stores text a client sent.
+- tasks.hook_prompt_version_id: nullable, references prompt_versions. The hook version SessionStart recorded for the task. A resume that sends a version overwrites it with the newer one; a resume that sends none keeps it. Tasks from older hosted clients, from test keys (decision 0030) and from before migration 0018 have none.
+
+doc_lookups (migration 0020)
+- task_id, reporter_id, model_id (the task's, null until hooks see one), privacy_mode, created_at, excluded.
+- library_id, version: a pointer split from the Context7 id (`/vercel/next.js/v16.2.9` is `/vercel/next.js` and `v16.2.9`; version is `''` when the id has none). No doc text is stored.
+- query: text, redacted. Only written in full_trace mode; a CHECK keeps it null otherwise.
+- One row per Context7 `query-docs` call the hooks saw. Counts read `counted_doc_lookups`. Lookups older than 180 days fold into doc_lookup_months (month, library_id, version, lookups) and are deleted, as searches fold into monthly counts (decision 0033). Whether lookups change anything an agent sees is proposed, not built (`docs/decisions/2026-11-07-MIT-564-context7-fallback.md`).
 
 outcomes
 - retrieval_id.
@@ -77,7 +95,7 @@ outcomes
 - outcome: enum tests_passed, tests_failed, error_resolved, error_persisted, user_accepted, user_rejected, abandoned, unknown.
 - evidence: jsonb. Hook payloads: test command, exit code, diff hash, timestamps.
 - agent_assessment: text, nullable. The agent's own post-hoc grading, kept separately from the observed fields so the two can be compared.
-- tokens_in, tokens_out, wall_clock_seconds: nullable. Cost of the task after retrieval.
+- tokens_in, tokens_out, wall_clock_seconds: nullable. Cost of the task after retrieval, filled by the Stop hook from the transcript: `tokens_in` is input + cache creation + cache read tokens, `tokens_out` is output, and the wall clock runs from the retrieval to the last assistant message. Each Stop overwrites them; one with no usage to read leaves them as they were. The token columns are int4, so sums are clamped at 2^31−1.
 
 reporters
 - pseudonym: text, unique. No email, no real name.
@@ -87,9 +105,9 @@ reporters
 - trust_level: 0-2, recomputed with `commons rank` from the reporter's own record (decision 0028). suspended_at: set by a purge (decision 0029).
 
 corrections (decision 0030)
-- target_table (outcomes, retrievals, searches), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by.
+- target_table (outcomes, retrievals, searches, doc_lookups; migration 0021 adds doc_lookups), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by. Retrievals, searches and doc_lookups take only `excluded`; excluding a task reaches all three.
 - Raw observations are never deleted. A correction writes the new value into the row and records the old one; a standing correction of `used` or `outcome` is not overwritten by later hooks or reports.
-- retrievals, outcomes and searches carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes` and `counted_searches` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start.
+- retrievals, outcomes, searches and doc_lookups carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes`, `counted_searches` and `counted_doc_lookups` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start. The views are `SELECT *`, whose columns are fixed when a view is created, so a migration that adds a column to one of these tables recreates its view (0017 did, for `prompt_version_id`).
 
 api_keys (hosted mode only; decision 0032)
 - reporter_id, prefix (first characters, shown in listings), key_hash (SHA-256, unique).
@@ -129,7 +147,7 @@ ranking_snapshots
 All tools return JSON. Errors are structured, never free text. The calling model is taken from the SessionStart hook's record for the task when one exists, else from the optional `model` argument, else recorded as unknown (decision 0009).
 
 search(query, task_id, environment?, limit=5, model?)
-Returns entries ranked by score: rarity-weighted coverage of the query against the entry (entries under a minimum relevance are left out, so "nothing found" is honest), times the entry's outcome score, times a version factor when the caller's `environment.libraries` shares a library with the entry (decision 0025). Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). Logs a searches row for every call, misses included, and a retrievals row per returned entry (decision 0024). Results are wrapped in a `data` field with a note that contents are untrusted. A `store` field names where the call went: the hosted server's URL, or `local`.
+Returns entries ranked by score: rarity-weighted coverage of the query against the entry (entries under a minimum relevance are left out, so "nothing found" is honest), times the entry's outcome score, times a version factor when the caller's `environment.libraries` shares a library with the entry (decision 0025). Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). The success rate counts only used outcomes with a known result: `unknown` and `abandoned` are left out, as in ranking. Logs a searches row for every call, misses included, and a retrievals row per returned entry (decision 0024). Results are wrapped in a `data` field with a note that contents are untrusted. A `store` field names where the call went: the hosted server's URL, or `local`.
 
 propose(symptom, environment, cause, fix, domains, repro?, task_id, model?)
 Creates a pending entry. The server runs secret scanning and redaction before writing. Returns the entry id, the redaction report so the human can see what was stripped, and the `store` it was written to.
@@ -141,10 +159,10 @@ approve(entry_id) and reject(entry_id, reason)
 Writes a reviews row. When an agent calls them, the review is provisional (source agent): it sets the entry's status but leaves human_reviewed false, and search provenance says "unreviewed". Human reviews come from `commons review` or the dashboard locally, and the admin-key-protected dashboard in hosted mode. MCP reviews are always agent reviews, even with an admin key (decision 0018).
 
 pending()
-Lists entries awaiting review: status pending, or not yet human-reviewed.
+Lists the review queue: entries no human has reviewed, except retired entries, unsampled provisional entries (decision 0028) and entries by suspended reporters (decision 0029).
 
 status()
-Store statistics: entry counts by status, retrievals and outcomes in the last 30 days, top entries by success rate, entries flagged as decaying.
+Store statistics: entry counts by status, retrievals and outcomes in the last 30 days, top entries by success rate (counted as in provenance), entries flagged as decaying.
 
 ## 5. Agent workflow
 
@@ -152,14 +170,17 @@ Search first. The server's instructions tell the agent to call `search` when it 
 
 Propose on discovery. Before finishing, the agent judges by what it knew at the start, not after (fixes look obvious once found): if the cause was a library or runtime behavior its docs don't state, it calls `propose`, even for a one-line fix, after a `search` to avoid duplicating an entry (and `report`s on the entry instead if one exists). The heuristic lives in the server's instructions, the one text the agent sees before tool search loads our tools. It began as "took more than one attempt", which the behavioral eval showed excludes nearly every real discovery; the current wording was chosen by measurement on Sonnet and Opus (decision 0023).
 
+Not every discovery comes with a failing test. The eval (`tools/agent_eval.py`) also has two no-test scenarios: configuration tasks with no failing test and no exception text, where the agent's own check shows its change did not take. In `config-app-overwrites` a running app writes its settings back over a direct edit; in `config-default-wins` an undocumented default beats the documented setting. An outcome check graded after the session replaces the tests, and each has a known-entry variant. `run --skill` adds a condition that loads the plugin's skill (decision 0034) with `--plugin-dir`, leaving out the plugin's hooks because the session already runs them. Drafted wording variants for surprises with no error text are in `agent_text.py` but not shipped; `docs/eval/README.md` lists them and the runs that would decide them.
+
 Post-hoc grading. When the task ends, the agent calls `report` for every entry it retrieved, giving its own assessment of whether the entry helped. This is the self-report. It is stored alongside the observed outcome so the gap between what agents say and what happened becomes a measured quantity, and so reporter reliability can be computed.
 
 Observed outcomes come from hooks, not from the agent:
 
 - PostToolUse on Bash: when the command matches a test runner (pytest, npm test, cargo test, go test, and a configurable list), record command, exit code, and timestamp against the current task_id.
 - PostToolUse on Edit and Write: record a hash of the touched file so `used` can be computed from the diff at task end.
+- PostToolUse on Context7 `query-docs` (`mcp__<server>__query-docs`, under any server or plugin name): store a pointer in doc_lookups, the library id and version from the tool input, and the redacted query only in full_trace. The response is never read and nothing is spooled; a failed call or a malformed id records nothing.
 - Stop: compute `used` by matching entry fix text against the session diff, assemble the evidence, and write the outcome. Prompt the agent to file its assessment if it hasn't.
-- SessionStart: mint task_id, set privacy mode from the reporter's default.
+- SessionStart: mint task_id, set privacy mode from the reporter's default, and record the hook version on the task (`tasks.hook_prompt_version_id`). The hosted body carries `prompt_hash`, the first 12 hex characters of that version, and no hook text. Hosted, `session-start` returns the task's `privacy_mode`; the client keeps it with the session's binding and sends a lookup's query only when it is full_trace (no stored mode counts as entry). The server also drops the query outside full_trace.
 
 Hook details, including what stays on the user's machine, are in decision 0016. Hooks are Claude Code's hook system (settings.json). The installed hooks only call `commons hook <event>`; the logic lives in the server package so it is typed and tested. Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
 
@@ -178,6 +199,7 @@ Rules that apply in every mode:
 - A reporter can consent for their own work only. The server's instructions tell the agent to downgrade full_trace to entry when the session touches code with another author in git blame.
 - Traces are evidence for analysis and are never returned by search or included in exports by default.
 - A search is logged under its task's privacy mode, falling back to the reporter's default (decision 0024). Server logs record which tool ran, for whom, and how it went, never queries or entry text.
+- A doc lookup follows the same rules as a search: logged under the same privacy mode, excluded for test keys and by corrections, folded after 180 days. Unlike a search, its redacted query is kept only in full_trace; entry mode keeps the library and version alone.
 
 ## 7. Ranking and attribution
 
@@ -187,7 +209,7 @@ v1, after a month of data:
 
 - Decay and absorption detection: an entry whose retrievals fall while the matching query volume holds steady is being absorbed into newer models. An entry whose `used` rate stays high but success rate falls is going stale. Both are flagged in `status`, with the model version where the change appeared.
 - Counterfactuals: for a sample of tasks, the client re-runs the task without the entry and writes a counterfactual_runs pair. Effect estimate = success rate with minus without, per entry, reported with the sample size.
-- Cost: tokens and wall clock with versus without, per entry, from the counterfactual pairs.
+- Cost: tokens and wall clock with versus without, per entry, from the counterfactual pairs. These remain the experiment's measure. The per-entry cost on the dashboard is observed instead: tokens after retrieval per success, from `outcomes`.
 - Model attribution: success rate per entry per model version. This is the map of what each model gets wrong.
 
 The agent's self-assessment is never an input to the score. It is a separate column for measuring how wrong self-reports are.
@@ -198,7 +220,14 @@ A `commons export` CLI command produces a dataset containing entries (approved o
 
 A `commons report` command renders the status page: top entries, decaying entries, per-model failure map, self-report accuracy, and cost savings.
 
-An admin dashboard, a small read-only-first web page served by the server, shows incoming proposals, the review queue, recent retrievals and outcomes, and lets an admin file human reviews.
+An admin dashboard, a small read-only-first web page served by the server, shows incoming proposals, the review queue, recent retrievals and outcomes, and lets an admin file human reviews. In the queue, each likely duplicate shows its cause and fix beside the proposal's, so a reviewer can tell a different fix for the same symptom (keep both) from a repeat (merge). An entry's page lists the entries a reviewer kept distinct from it, with their latest scores. It also shows:
+
+- Per entry (Entries list and entry page): size in search results (the text fields of its search hit, characters ÷ 4); tokens per success (`tokens_in + tokens_out` over used outcomes with a known result and recorded tokens, divided by the successes); the median tokens after retrieval when it worked and when it failed. Each figure shows its n.
+- The retrieval funnel on the entry page: retrieved, then not used, use unknown, or used; used splits into worked, failed and no result. The Searches page lists "Found, not used": searches of the last 30 days where hooks saw every returned entry go unused.
+- The proposal funnel on the Overview: the last 30 days' proposals per model, each in one bucket (human-, auto- or agent-approved, rejected with the human's reasons, merged duplicate, flagged duplicate, pending, retired, suspended reporter).
+- Approved entries per model that were proposed 60+ days ago and not retrieved in 60 days, and those retrieved 3+ times but never used.
+- On the Searches page, full result sets (hits reached the limit, so more may have matched) and, for ranks 1, 2, 3 and 4+, the share of retrievals with a known `used` that were used.
+- On the Searches page, Commons misses next to doc lookups from the last 30 days, counted rows only: tasks where a miss was followed by a lookup, that looked up docs without searching, or that hit and still looked up; each miss in a task with lookups; and each library and version looked up, with the share of its tasks Commons hit.
 
 ## 9. Installation
 

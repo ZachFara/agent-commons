@@ -1,18 +1,27 @@
-"""Entry safety (decision 0029): risk reports, rate limits per key, revoke and purge."""
+"""Entry safety (decision 0029): risk reports, rescans, rate limits per key, revoke and purge."""
 
+import json
+import logging
+import re
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import psycopg
 import pytest
 from fastmcp import FastMCP
+from psycopg.types.json import Jsonb
 
 import factories
 from commons.cli.main import main
 from commons.domain.errors import NotFoundError, RateLimitedError
 from commons.domain.lifecycle import FixedIn
-from commons.service import corrections, keys, lifecycle, purges
+from commons.domain.risks import RISK_LABELS
+from commons.domain.search import SearchRequest
+from commons.privacy import risks
+from commons.service import corrections, keys, lifecycle, purges, rescan, search
 from commons.service.identity import acting_as
 from commons.service.rates import limit
 from commons.service.reviews import pending
@@ -50,6 +59,199 @@ def test_proposals_carry_a_risk_report_and_search_labels_risky_entries(
         server, "search", {"query": symptom[0], "task_id": str(uuid.uuid4()), "model": "m"}
     )["data"]
     assert "contains: pipe-to-shell; review before running" in found[0]["provenance"]
+
+
+# Rescanning when the patterns change
+
+PLANTED = "frobnicate-everything"
+CLEAN = {"scanned": True, "findings": []}
+FOUND = {"scanned": True, "findings": [{"field": "fix", "kind": "planted_word", "count": 1}]}
+FIXED_IN = {"library": "jinja2", "version": "3.1.0"}
+
+
+@pytest.fixture
+def new_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pattern added after the entries were written (decision 0029 grows its list)."""
+    plant_pattern(monkeypatch)
+
+
+def plant_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+    planted = risks.RiskPattern("planted_word", re.compile(rf"\b{PLANTED}\b"))
+    monkeypatch.setattr(risks, "RISKS", (*risks.RISKS, planted))
+    monkeypatch.setitem(RISK_LABELS, "planted_word", "plants a test word")
+
+
+@pytest.fixture
+def cli_on_db(db: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the CLI on the test's rolled-back connection."""
+
+    @contextmanager
+    def test_connection() -> Iterator[psycopg.Connection]:
+        yield db
+
+    monkeypatch.setattr("commons.cli.main.connect", test_connection)
+
+
+def risk_state(db: psycopg.Connection, entry_id: uuid.UUID) -> tuple[Any, ...]:
+    row = db.execute(
+        "SELECT status::text, provisional, risk_report, fix FROM entries WHERE id = %s",
+        (entry_id,),
+    ).fetchone()
+    assert row
+    return tuple(row)
+
+
+def rescan_entries(db: psycopg.Connection, reporter: uuid.UUID, word: str) -> list[uuid.UUID]:
+    """A human-approved, a provisional and a pending entry whose fix the new pattern matches,
+    one whose hidden characters were stripped on write, an old one that still has them, and a
+    retired one with a fix version (search still shows it, decision 0026) the pattern matches.
+
+    The human-approved one is provisional too: a human review leaves `provisional` set. The
+    retired one is provisional and unreviewed, yet a rescan never reopens it.
+    """
+    fix = f"Run `{PLANTED}` before the build."
+    clean = Jsonb(CLEAN)
+    hidden = [{"field": "fix", "kind": "invisible_unicode", "count": 2}]
+    stripped = {"scanned": True, "findings": hidden}
+    return [
+        factories.entry(
+            db,
+            reporter,
+            symptom=f"{word} hangs",
+            fix=fix,
+            provisional=True,
+            human_reviewed=True,
+            risk_report=clean,
+        ),
+        factories.entry(db, reporter, fix=fix, provisional=True, risk_report=clean),
+        factories.entry(db, reporter, fix=fix, status="pending", risk_report=clean),
+        factories.entry(db, reporter, risk_report=Jsonb(stripped)),
+        factories.entry(db, reporter, fix="Upgrade\u200b Jinja2.", risk_report=clean),
+        factories.entry(
+            db,
+            reporter,
+            symptom=f"{word} renders blank",
+            fix=fix,
+            status="retired",
+            fixed_in=Jsonb(FIXED_IN),
+            provisional=True,
+            risk_report=clean,
+        ),
+    ]
+
+
+@pytest.mark.usefixtures("new_pattern", "cli_on_db")
+def test_rescan_without_apply_only_prints_what_would_change(
+    db: psycopg.Connection, reporter: uuid.UUID, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ours = rescan_entries(db, reporter, f"dryrescan{uuid.uuid4().hex[:6]}")
+    reviewed, provisional, waiting, unchanged, hidden, retired = ours
+    before = {entry_id: risk_state(db, entry_id) for entry_id in ours}
+
+    assert main(["admin", "rescan"]) == 0
+
+    out = capsys.readouterr().out
+    assert {entry_id: risk_state(db, entry_id) for entry_id in ours} == before
+    assert f"{reviewed}  approved  none -> planted_word in fix\n" in out
+    assert f"{provisional}  approved  none -> planted_word in fix  would reopen\n" in out
+    assert f"{waiting}  pending   none -> planted_word in fix\n" in out
+    assert f"{hidden}  approved  none -> invisible_unicode in fix\n" in out
+    assert f"{retired}  retired   none -> planted_word in fix\n" in out
+    assert str(unchanged) not in out
+    assert "nothing written (use --apply)" in out
+
+
+@pytest.mark.usefixtures("new_pattern", "cli_on_db")
+def test_rescan_apply_labels_old_entries_and_reopens_unreviewed_ones_once(
+    db: psycopg.Connection,
+    reporter: uuid.UUID,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    word = f"rescanned{uuid.uuid4().hex[:6]}"
+    ours = rescan_entries(db, reporter, word)
+    reviewed, provisional, waiting, unchanged, hidden, retired = ours
+    stripped = risk_state(db, unchanged)
+    caplog.set_level(logging.INFO, logger="commons")
+
+    assert main(["admin", "rescan", "--apply"]) == 0
+
+    out = capsys.readouterr().out
+    assert f"{provisional}  approved  none -> planted_word in fix  reopened\n" in out
+    assert f"{reviewed}  approved  none -> planted_word in fix\n" in out
+    assert risk_state(db, reviewed)[:3] == ("approved", True, FOUND)
+    assert risk_state(db, provisional)[:3] == ("pending", False, FOUND)
+    assert provisional in {row.entry_id for row in pending(db)}
+
+    def reopens(entry_id: uuid.UUID) -> list[tuple[Any, ...]]:
+        return db.execute(
+            "SELECT reason, source::text FROM reviews WHERE entry_id = %s AND decision = 'reopen'",
+            (entry_id,),
+        ).fetchall()
+
+    assert reopens(provisional) == [("new risk finding on rescan (0029)", "auto")]
+    assert reopens(reviewed) == []
+    assert risk_state(db, waiting)[:3] == ("pending", False, FOUND)
+    assert f"{retired}  retired   none -> planted_word in fix\n" in out
+    assert risk_state(db, retired)[:3] == ("retired", True, FOUND)
+    assert reopens(retired) == []
+    assert risk_state(db, unchanged) == stripped
+    hidden_findings = [{"field": "fix", "kind": "invisible_unicode", "count": 1}]
+    assert risk_state(db, hidden)[2:] == (
+        {"scanned": True, "findings": hidden_findings},
+        "Upgrade\u200b Jinja2.",  # reported, never stripped
+    )
+    logged = [json.loads(r.getMessage()) for r in caplog.records if r.name == "commons.events"]
+    (action,) = [line for line in logged if line["event"] == "admin_action"]
+    assert (action["action"], action["ok"], action["severity"]) == ("rescan", True, "NOTICE")
+
+    assert main(["search", word]) == 0
+    assert "contains: plants a test word; review before running" in capsys.readouterr().out
+    older = SearchRequest(word, uuid.UUID(int=0), {"libraries": {"jinja2": "3.0.3"}}, 5)
+    (shown,) = [hit for hit in search.preview(db, older) if hit.entry_id == retired]
+    assert "contains: plants a test word; review before running" in shown.provenance()
+
+    after = {entry_id: risk_state(db, entry_id) for entry_id in ours}
+    assert main(["admin", "rescan", "--apply"]) == 0
+    assert capsys.readouterr().out == "0 entr(ies) rescanned, 0 reopened\n"
+    assert {entry_id: risk_state(db, entry_id) for entry_id in ours} == after
+
+
+def labelled(db: psycopg.Connection, word: str, entry_id: uuid.UUID) -> bool:
+    """Whether search shows the entry with the planted pattern's label."""
+    request = SearchRequest(word, uuid.UUID(int=0), None, 5)
+    (shown,) = [hit for hit in search.preview(db, request) if hit.entry_id == entry_id]
+    return "contains: plants a test word; review before running" in shown.provenance()
+
+
+def test_restoring_an_entry_rescans_it_and_reopens_it_only_by_the_rescans_rule(
+    db: psycopg.Connection, reporter: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entry out of search when the patterns changed comes back labelled (0029)."""
+    word = f"restored{uuid.uuid4().hex[:6]}"
+    fix = f"Run `{PLANTED}` before the build."
+    clean = Jsonb(CLEAN)
+    reviewed = factories.entry(
+        db, reporter, symptom=f"{word} hangs", fix=fix, human_reviewed=True, risk_report=clean
+    )
+    provisional = factories.entry(db, reporter, fix=fix, provisional=True, risk_report=clean)
+    for entry_id in (reviewed, provisional):
+        lifecycle.retire(db, entry_id, "no longer happens")
+    plant_pattern(monkeypatch)
+    assert {reviewed, provisional}.isdisjoint(c.entry_id for c in rescan.rescan(db, apply=True))
+
+    for entry_id in (reviewed, provisional):
+        lifecycle.restore(db, entry_id, "still happens")
+
+    assert risk_state(db, reviewed)[:3] == ("approved", False, FOUND)
+    assert labelled(db, word, reviewed)
+    assert risk_state(db, provisional)[:3] == ("pending", False, FOUND)
+    assert provisional in {row.entry_id for row in pending(db)}
+    reopens = db.execute(
+        "SELECT entry_id, reason FROM reviews WHERE entry_id = ANY(%s) AND decision = 'reopen'",
+        ([reviewed, provisional],),
+    ).fetchall()
+    assert reopens == [(provisional, rescan.REOPEN_REASON)]
 
 
 # Rate limits
@@ -219,3 +421,26 @@ def test_a_purged_reporters_fixed_entries_leave_search_too(
 
     purges.restore(db, "victor")
     assert [r["entry_id"] for r in call(server, "search", older)["data"]] == [str(fixed)]
+
+
+def test_restoring_a_purge_rescans_the_entries_it_brings_back(
+    db: psycopg.Connection, reporter: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A purged entry was out of search for the rescan; restoring labels it at once (0029)."""
+    del reporter
+    keys.issue_key(db, "walter", "agent")
+    walter = find_reporter(db, "walter")
+    assert walter
+    word = f"purgerescan{uuid.uuid4().hex[:6]}"
+    fix = f"Run `{PLANTED}` before the build."
+    entry_id = factories.entry(
+        db, walter, symptom=f"{word} hangs", fix=fix, risk_report=Jsonb(CLEAN)
+    )
+    purges.purge(db, "walter", "spam")
+    plant_pattern(monkeypatch)
+    assert entry_id not in {changed.entry_id for changed in rescan.rescan(db, apply=True)}
+
+    purges.restore(db, "walter")
+
+    assert risk_state(db, entry_id)[:3] == ("approved", False, FOUND)
+    assert labelled(db, word, entry_id)

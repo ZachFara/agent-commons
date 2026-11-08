@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import Any, TextIO
 
 from commons.domain.errors import NotInitializedError
-from commons.domain.observations import ToolUse, exit_code_from_error
+from commons.domain.observations import ToolUse, doc_lookup, exit_code_from_error
 from commons.service import agent_text, hook_client
 from commons.service.hook_client import HookBackend, LocalBackend, RemoteBackend, remote_client
 from commons.service.hooks import StopResult
@@ -37,12 +37,11 @@ def _session_start(payload: Payload) -> HookOutput:
     if payload.get("source") not in KEEPS_MCP_SERVER or bound_store(session_id) is None:
         bind_store(session_id, _current_server())
     backend = backend_for(session_id)
-    task_id = hook_client.on_session_start(backend, session_id, model)
-    context = (
-        f"Agent Commons task_id for this session: {task_id}. "
-        "Pass it as task_id to every commons tool call."
-    )
-    start_line = agent_text.variant().start_line
+    shown = agent_text.variant()
+    version = agent_text.hook_version(shown)  # recorded on the task (MIT-609)
+    task_id = hook_client.on_session_start(backend, session_id, model, version)
+    context = agent_text.SESSION_START.format(task_id=task_id)
+    start_line = shown.start_line
     if start_line:
         context = f"{context} {start_line}"
     if feedback := backend.feedback():  # off unless the store turns it on (decision 0035)
@@ -106,6 +105,7 @@ def _tool_use(payload: Payload, *, failed: bool) -> ToolUse:
         old_text=None if is_bash or failed else _old_text(tool_input),
         exit_code=_exit_code(payload, failed=failed) if is_bash else None,
         output=_output(payload) if is_bash and not failed else None,
+        doc_lookup=None if failed else doc_lookup(name, tool_input),
     )
 
 
@@ -158,11 +158,7 @@ def _stop_reason(result: StopResult) -> str | None:
     """Return what to ask before the agent finishes: unreported entries, then a nudge."""
     if result.unreported:
         ids = ", ".join(str(entry_id) for entry_id in result.unreported)
-        return (
-            f"Before finishing, call the commons `report` tool with task_id {result.task_id} for "
-            f"each entry you retrieved this session but haven't reported on: {ids}. Say honestly "
-            "whether it helped."
-        )
+        return agent_text.REPORT_REMINDER.format(task_id=result.task_id, ids=ids)
     if result.nudge:  # the store's per-turn nudge (decision 0034), off unless it turns it on
         return result.nudge
     nudge = agent_text.variant().nudge  # the eval's per-session variant

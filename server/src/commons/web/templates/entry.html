@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import status, pct, meter, line, outcome %}
+{% from "_macros.html" import status, pct, meter, line, outcome, tokens, per_success %}
 {% block title %}Entry{% endblock %}
 {% block content %}
 <header class="page"><div><div class="muted"><a href="/entries">Entries</a> / <span class="mono">{{ e.id | string | truncate(8, true, "") }}</span></div>
@@ -10,6 +10,13 @@
   <div class="card kpi"><div class="label">Retrievals, 30 days</div><div class="value">{{ e.retrieval_count_30d if e.retrieval_count_30d is not none else "–" }}</div></div>
   <div class="card kpi"><div class="label">Used when retrieved</div><div class="value">{{ pct(e.used_rate) }}</div></div>
   <div class="card kpi"><div class="label">Worked when used</div><div class="value">{{ pct(e.success_rate) }}</div></div>
+</div>
+{% set c = e.cost %}
+<div class="grid kpis" title="Tokens after the retrieval, from the Stop hook; input includes cache reads. Over used outcomes with a known result.">
+  <div class="card kpi"><div class="label">Size in search results</div><div class="value">≈ {{ tokens(e.hit_tokens) }} tokens</div><div class="note">its text fields, characters ÷ 4</div></div>
+  <div class="card kpi"><div class="label">Tokens per success</div><div class="value">{{ per_success(c) }}</div><div class="note">n = {{ c.costed if c else 0 }} used outcomes with tokens, {{ c.successes if c else 0 }} worked</div></div>
+  <div class="card kpi"><div class="label">Median tokens after, worked</div><div class="value">{{ tokens(c.median_success if c else none) }}</div><div class="note">n = {{ c.successes if c else 0 }}</div></div>
+  <div class="card kpi"><div class="label">Median tokens after, failed</div><div class="value">{{ tokens(c.median_failure if c else none) }}</div><div class="note">n = {{ c.failures if c else 0 }}</div></div>
 </div>
 <div class="grid two">
   <section class="card"><h2>Entry</h2><dl class="facts">
@@ -48,6 +55,9 @@
       <span class="badge soft">r{{ r.revision }}</span><span>{{ r.edited_by or "proposed" }}</span>
       <span class="muted">{{ r.created_at.strftime("%b %d %H:%M") }}</span>
       {% if r.reason %}<div style="width: 100%" class="muted">{{ r.reason }}</div>{% endif %}</li>{% endfor %}</ul></section>
+    {% if distinct %}<section class="card"><h2>Kept distinct from</h2><ul class="timeline">{% for d in distinct %}<li>
+      <a href="/entries/{{ d.id }}" style="overflow-wrap: anywhere">{{ d.symptom | truncate(100) }}</a>
+      {{ status(d.status, d.human_reviewed) }}<span class="muted">score {{ "%.2f" | format(d.score) if d.score is not none else "–" }}</span></li>{% endfor %}</ul></section>{% endif %}
     <section class="card"><h2>Reviews</h2>{% if reviews %}<ul class="timeline">{% for r in reviews %}<li>
       <span class="badge {{ 'good' if r.decision in ('approve', 'restore') else 'bad' }}">{{ r.decision }}</span>
       <span>{{ r.reviewer }}</span><span class="badge soft">{{ r.source }}</span>
@@ -56,10 +66,26 @@
       {% else %}<div class="empty">Not reviewed yet.</div>{% endif %}</section>
   </div>
 </div>
+{% set f = funnel %}
+<section class="card" style="margin-top: 16px"><h2>What came of each retrieval <span class="hint">all time, excluded rows left out</span></h2>
+  {% if f.retrieved %}<ul class="toplist">
+  {% for key, label, parent, note in [
+      ("retrieved", "Retrieved", none, ""),
+      ("not_used", "Not used", "retrieved", "hooks saw it go unused: probably the wrong retrieval"),
+      ("used_unknown", "Use unknown", "retrieved", "no hooks observed it, or no outcome yet"),
+      ("used", "Used, yes or partial", "retrieved", ""),
+      ("worked", "Worked", "used", ""),
+      ("failed", "Failed", "used", "tests failed, error persisted, or user rejected"),
+      ("no_result", "No result", "used", "outcome unknown or abandoned")] %}
+    <li data-stage="{{ key }}"><span class="name" style="padding-left: {{ 0 if parent is none else (18 if parent == 'retrieved' else 36) }}px">{{ label }}{% if note %} <span class="muted">{{ note }}</span>{% endif %}</span>
+      <span class="stats"><b>{{ f[key] }}</b>{% if parent and f[parent] %} · {{ pct(f[key] / f[parent]) }} of {{ "retrieved" if parent == "retrieved" else "used" }}{% endif %}</span></li>{% endfor %}
+  </ul>{% else %}<div class="empty">Never retrieved yet.</div>{% endif %}</section>
 <section class="card" style="margin-top: 16px"><h2>Retrievals <span class="hint">latest 50</span></h2>
-  {% if retrievals %}<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th class="num">Rank</th><th>Used</th><th>Outcome</th><th>Agent's assessment</th><th></th></tr></thead><tbody>
+  {% if retrievals %}<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th class="num">Rank</th><th class="num" title="How well the query matched the entry when it was retrieved; blank before this was logged">Relevance</th><th>Prompt</th><th>Used</th><th>Outcome</th><th>Agent's assessment</th><th></th></tr></thead><tbody>
   {% for r in retrievals %}<tr class="{{ 'excluded' if r.excluded }}"><td class="muted" style="white-space: nowrap">{{ r.created_at.strftime("%b %d %H:%M") }}{% if r.excluded %}<div><span class="badge soft">excluded</span></div>{% endif %}</td>
     <td>{{ r.reporter }}<div class="muted">{{ r.model }}</div></td><td class="num">{{ r.rank_position }}</td>
+    <td class="num">{{ "%.2f" | format(r.relevance) if r.relevance is not none else "" }}</td>
+    <td>{% if r.prompt_hash %}<a class="mono" href="/prompts" title="{{ r.prompt_label }}">{{ r.prompt_hash }}</a>{% else %}<span class="muted">–</span>{% endif %}</td>
     <td>{{ r.used or "–" }}</td><td>{{ outcome(r.outcome, r.source) }}</td>
     <td><div class="clip" style="max-width: 360px" title="{{ r.agent_assessment or '' }}">{{ r.agent_assessment or "" }}</div></td>
     <td><details class="correct"><summary>Correct</summary>

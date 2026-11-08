@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from commons.domain.entries import EntryStatus, Proposal, validate_proposal
+from commons.domain.prompts import PromptVersion
 from commons.privacy.redaction import redact_proposal
 from commons.privacy.risks import scan_proposal
 from commons.service.duplicates import flag_duplicates
@@ -10,6 +11,7 @@ from commons.service.rates import limit
 from commons.service.trust import after_propose
 from commons.store.connection import Connection
 from commons.store.entries import insert_entry, set_risk_report
+from commons.store.prompt_versions import prompt_version_id
 
 
 @dataclass(frozen=True)
@@ -21,10 +23,17 @@ class ProposeResult:
     redaction_report: dict[str, object]
 
 
-def propose(conn: Connection, proposal: Proposal, model: str | None) -> ProposeResult:
+def propose(
+    conn: Connection,
+    proposal: Proposal,
+    model: str | None,
+    *,
+    prompt: PromptVersion | None = None,
+) -> ProposeResult:
     """Validate, redact, and store a pending entry from this machine's reporter.
 
-    Validation runs before redaction so its messages describe what the agent sent.
+    Validation runs before redaction so its messages describe what the agent sent. `prompt`
+    is the text the MCP server served; the entry points at it (decision MIT-566).
     """
     validate_proposal(proposal)
     redacted, redaction_report = redact_proposal(proposal)
@@ -39,6 +48,7 @@ def propose(conn: Connection, proposal: Proposal, model: str | None) -> ProposeR
             redaction_report,
             created_by=reporter,
             created_by_model=model_row,
+            prompt_version_id=prompt_version_id(conn, prompt),
         )
         set_risk_report(conn, entry_id, risk_report)
         # Flagged for the reviewer only: the reply to the agent is unchanged (decision 0027).

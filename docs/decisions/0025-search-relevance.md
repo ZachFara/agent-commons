@@ -74,3 +74,20 @@ Implementation notes (T47, 2026-10-31):
 - Versions: the leading major.minor is compared, where PEP 440 and npm semver agree. A shared
   library on a different major multiplies the score by 0.5; the same major.minor by 1.2.
   Hiding entries `fixed_in` an older version waits for 0026's `fixed_in`.
+
+Implementation notes (MIT-602, MIT-612, 2026-11-07 to 2026-11-08):
+- Step 1, real queries: `commons admin relevance-candidates [--days N]` (`service/relevance.py`,
+  default 30 days) prints one JSON line per counted search, oldest first: `search_id`,
+  `searched_at`, `model`, the stored (redacted) `query`, `relevant` (the suggested entry ids,
+  mirroring how `judged.json` lists a query under the entry it is relevant to) and `results`.
+  Each result has `entry_id`, `rank`, `relevance`, `used`, `outcome`, `assessment` and a
+  `label`: `relevant` when hooks saw it used (yes or partial), `possibly_irrelevant` when
+  unused, null when use is unknown. Misses print with `results: []`.
+- It reads `counted_searches`, `counted_retrievals` and `counted_outcomes`, so excluded and
+  test-key rows are left out, and it writes nothing. The labels are suggestions: a human
+  checks them before any query joins `judged.json`.
+- Retrievals log the score's factors (`relevance`, `version_factor`, `outcome_score`,
+  migration 0019), so a candidate's `relevance` is null only on rows from before that.
+- A retrieval has no search id. Searches and their retrievals are matched on task, reporter,
+  query and `created_at`, which they share because they are written in one transaction
+  (`store/insights.py` `_RETRIEVALS_OF_SEARCH`).

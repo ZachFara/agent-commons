@@ -6,6 +6,8 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,20 +19,23 @@ from starlette.testclient import TestClient
 
 import factories
 from commons.cli.main import main
-from commons.domain.observations import ToolUse
+from commons.domain.keys import KeyOptions
+from commons.domain.observations import DocLookup, ToolUse
 from commons.domain.search import SearchRequest
-from commons.service import hook_client
+from commons.service import agent_text, hook_client
 from commons.service import search as search_service
 from commons.service.hook_client import RemoteBackend
 from commons.service.identity import acting_as
-from commons.service.keys import create_key
-from commons.service.local_state import cached_frequencies, read_spool
+from commons.service.keys import create_key, issue_key
+from commons.service.local_state import bind_store, cached_frequencies, read_spool
 from commons.store.connection import Connection
 from commons.store.reporters import find_reporter
 from commons.web import app as web
 from commons.web.app import build_app
 
 FIX = "Pin `markupsafe<2.1` and run `pip check`."
+HOOK_VERSION = agent_text.hook_version(agent_text.VARIANTS["baseline"])
+HOOK_SHORT = HOOK_VERSION.hash[:12]
 
 
 @pytest.fixture
@@ -68,7 +73,7 @@ def test_a_session_end_to_end_over_http(app: Starlette, db: psycopg.Connection) 
     key = create_key(db, "remote-dev", admin=False)
     backend = RemoteBackend(client(app, key))
     session = str(uuid.uuid4())
-    task_id = hook_client.on_session_start(backend, session, None)
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
 
     reporter = find_reporter(db, "remote-dev")
     assert reporter is not None
@@ -110,7 +115,7 @@ def test_hooks_from_before_0036_are_recorded_unpaired(
     key = create_key(db, "old-hooks", admin=False)
     backend = RemoteBackend(client(app, key))
     session = str(uuid.uuid4())
-    task_id = hook_client.on_session_start(backend, session, None)
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
     reporter = find_reporter(db, "old-hooks")
     assert reporter is not None
     word = f"oldhooks{uuid.uuid4().hex[:8]}"
@@ -169,6 +174,21 @@ def test_local_privacy_reporters_are_refused(app: Starlette, db: psycopg.Connect
         {"session_id": "s", "test_run": {"command": "pytest", "exit_code": 0, "stdout": "code"}},
         {"session_id": "s", "file_change": {"path_sha256": "x", "content_sha256": "y"}},
         {"session_id": "s", "file_change": {"content": "def secret(): ..."}},
+        {
+            "session_id": "s",
+            "doc_lookup": {
+                "library_id": "/a/b",
+                "version": "",
+                "query": None,
+                "response": "docs text",
+            },
+        },
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b", "version": ""}},
+        {"session_id": "s", "doc_lookup": {"library_id": "a/b", "version": "", "query": None}},
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b/1", "version": "", "query": None}},
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b", "version": "1/2", "query": None}},
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b", "version": "", "query": 5}},
+        {"session_id": "s", "doc_lookup": "/a/b"},
         {"session_id": 5},
         {},
     ],
@@ -181,6 +201,152 @@ def test_only_derived_shapes_are_accepted(
     response = post(app, key, "tool-use", body)
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_input"
+
+
+def doc_lookups(db: psycopg.Connection, task_id: uuid.UUID) -> list[tuple[Any, ...]]:
+    return db.execute(
+        "SELECT library_id, version, query, privacy_mode::text, excluded FROM doc_lookups "
+        "WHERE task_id = %s",
+        (task_id,),
+    ).fetchall()
+
+
+def query_docs(session_id: str) -> ToolUse:
+    lookup = DocLookup("/vercel/next.js", "v16.2.9", "app router")
+    return ToolUse(
+        session_id, "mcp__context7__query-docs", None, None, None, None, doc_lookup=lookup
+    )
+
+
+@pytest.mark.usefixtures("state")
+@pytest.mark.parametrize(("mode", "query"), [("entry", None), ("full_trace", "app router")])
+def test_a_doc_lookup_is_stored_over_http(
+    app: Starlette, db: psycopg.Connection, mode: str, query: str | None
+) -> None:
+    key = create_key(db, f"docs-{mode}", admin=False)
+    db.execute(
+        "UPDATE reporters SET privacy_default = %s WHERE pseudonym = %s", (mode, f"docs-{mode}")
+    )
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
+
+    hook_client.on_tool_use(backend, query_docs(session))
+
+    assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", query, mode, False)]
+    assert read_spool(session) == []
+
+
+def recording(app: Starlette, key: str) -> tuple[TestClient, list[dict[str, Any]]]:
+    """Return a client for `key` and the JSON bodies it posts to /tool-use."""
+    sent: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> None:
+        if request.url.path.endswith("/tool-use"):
+            sent.append(json.loads(request.content))
+
+    recorder = client(app, key)
+    recorder.event_hooks = {"request": [record]}
+    return recorder, sent
+
+
+def key_in_mode(db: psycopg.Connection, pseudonym: str, mode: str) -> str:
+    key = create_key(db, pseudonym, admin=False)
+    db.execute("UPDATE reporters SET privacy_default = %s WHERE pseudonym = %s", (mode, pseudonym))
+    return key
+
+
+SECRET_QUERY = "auth with ghp_" + "t" * 36
+
+
+@pytest.mark.usefixtures("state")
+@pytest.mark.parametrize(
+    ("mode", "sent_query"), [("entry", None), ("full_trace", "auth with [REDACTED:github_token]")]
+)
+def test_only_full_trace_sends_the_lookup_query(
+    app: Starlette, db: psycopg.Connection, mode: str, sent_query: str | None
+) -> None:
+    """In entry mode the query never leaves the machine, not even scrubbed (decision 0016)."""
+    recorder, sent = recording(app, key_in_mode(db, f"sent-{mode}", mode))
+    backend = RemoteBackend(recorder)
+    session = str(uuid.uuid4())
+    hook_client.on_session_start(backend, session, None, HOOK_VERSION)
+    lookup = DocLookup("/vercel/next.js", "v16.2.9", SECRET_QUERY)
+
+    hook_client.on_tool_use(backend, replace(query_docs(session), doc_lookup=lookup))
+
+    assert [body["doc_lookup"] for body in sent] == [
+        {"library_id": "/vercel/next.js", "version": "v16.2.9", "query": sent_query}
+    ]
+
+
+def test_session_start_returns_the_tasks_privacy_mode(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = key_in_mode(db, "mode-returned", "full_trace")
+    started = post(app, key, "session-start", {"session_id": str(uuid.uuid4())}).json()
+    assert started == {"task_id": started["task_id"], "privacy_mode": "full_trace"}
+
+
+@pytest.mark.usefixtures("state")
+def test_a_session_bound_without_a_mode_sends_no_query(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    """A session bound before session-start returned the mode is treated as entry mode."""
+    key = key_in_mode(db, "bound-before", "full_trace")
+    session = str(uuid.uuid4())
+    task_id = uuid.UUID(post(app, key, "session-start", {"session_id": session}).json()["task_id"])
+    bind_store(session, ("https://commons.example", key))
+    recorder, sent = recording(app, key)
+
+    hook_client.on_tool_use(RemoteBackend(recorder), query_docs(session))
+
+    assert [body["doc_lookup"]["query"] for body in sent] == [None]
+    assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", None, "full_trace", False)]
+
+
+def test_the_server_drops_an_older_clients_query_in_entry_mode(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    """Older clients ignore the mode and still send the query; the server keeps none of it."""
+    key = create_key(db, "older-client", admin=False)
+    session = str(uuid.uuid4())
+    started = post(app, key, "session-start", {"session_id": session}).json()
+    body = {
+        "session_id": session,
+        "doc_lookup": {"library_id": "/vercel/next.js", "version": "v16.2.9", "query": "q"},
+    }
+
+    assert post(app, key, "tool-use", body).status_code == 200
+    assert doc_lookups(db, uuid.UUID(started["task_id"])) == [
+        ("/vercel/next.js", "v16.2.9", None, "entry", False)
+    ]
+
+
+@pytest.mark.usefixtures("state")
+def test_a_test_keys_doc_lookups_are_excluded(app: Starlette, db: psycopg.Connection) -> None:
+    key = issue_key(db, "docs-tester", "agent", KeyOptions(test=True)).key
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
+
+    hook_client.on_tool_use(backend, query_docs(session))
+
+    assert [row[-1] for row in doc_lookups(db, task_id)] == [True]
+
+
+def test_a_local_reporters_doc_lookup_is_refused(app: Starlette, db: psycopg.Connection) -> None:
+    key = create_key(db, "docs-local", admin=False)
+    session = str(uuid.uuid4())
+    started = post(app, key, "session-start", {"session_id": session}).json()
+    db.execute("UPDATE reporters SET privacy_default = 'local' WHERE pseudonym = 'docs-local'")
+    body = {
+        "session_id": session,
+        "doc_lookup": {"library_id": "/vercel/next.js", "version": "v16.2.9", "query": "q"},
+    }
+
+    assert post(app, key, "tool-use", body).status_code == 403
+    assert doc_lookups(db, uuid.UUID(started["task_id"])) == []
 
 
 def test_another_reporters_session_is_invisible(app: Starlette, db: psycopg.Connection) -> None:
@@ -255,6 +421,33 @@ def test_hook_cli_reports_to_the_server_when_connected(
     assert owner == ("cli-remote",)
 
 
+def test_the_hook_cli_sends_a_query_docs_lookup_to_the_server(
+    app: Starlette, db: psycopg.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = create_key(db, "cli-docs", admin=False)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"server": "https://commons.example", "key": key}), "utf-8")
+    monkeypatch.setenv("COMMONS_CONFIG", str(config))
+    monkeypatch.setenv("COMMONS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("COMMONS_DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+    monkeypatch.setattr("commons.cli.hooks.remote_client", lambda _url, k: client(app, k))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(
+        RemoteBackend(client(app, key)), session, None, HOOK_VERSION
+    )
+    payload = {
+        "session_id": session,
+        "tool_name": "mcp__claude_ai_Context7__query-docs",
+        "tool_input": {"libraryId": "/vercel/next.js/v16.2.9", "query": "app router"},
+        "tool_response": [{"type": "text", "text": "SENTINEL-docs"}],
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+
+    assert main(["hook", "post-tool-use"]) == 0
+
+    assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", None, "entry", False)]
+
+
 @pytest.mark.usefixtures("state")
 def test_a_long_test_command_is_still_observed(app: Starlette, db: psycopg.Connection) -> None:
     """A test run at the end of a long command (a heredoc, then pytest) was a 400, and the
@@ -262,7 +455,7 @@ def test_a_long_test_command_is_still_observed(app: Starlette, db: psycopg.Conne
     key = create_key(db, "long-commands", admin=False)
     backend = RemoteBackend(client(app, key))
     session = str(uuid.uuid4())
-    task_id = hook_client.on_session_start(backend, session, None)
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
     command = "cat > notes.txt <<'EOF'\n" + "x" * 3000 + "\nEOF\nuv run pytest -q"
 
     hook_client.on_tool_use(backend, bash(session, command, 0))
@@ -272,3 +465,200 @@ def test_a_long_test_command_is_still_observed(app: Starlette, db: psycopg.Conne
         (task_id,),
     ).fetchall()
     assert runs == [(2000,)]
+
+
+def hook_version_of(db: psycopg.Connection, task_id: object) -> tuple[Any, ...] | None:
+    """The task's hook version: (hash, label, surfaces, kind), or None if it has none."""
+    return db.execute(
+        "SELECT v.hash, v.label, v.surfaces, v.kind::text FROM tasks t "
+        "JOIN prompt_versions v ON v.id = t.hook_prompt_version_id WHERE t.id = %s",
+        (task_id,),
+    ).fetchone()
+
+
+def assistant(message_id: str, at: datetime, tokens_in: int, tokens_out: int) -> str:
+    """A transcript line with usage; the input is split as Claude Code records it."""
+    usage = {
+        "input_tokens": 1,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": tokens_in - 1,
+        "output_tokens": tokens_out,
+    }
+    message = {"id": message_id, "model": "claude-remote-1", "usage": usage}
+    return json.dumps({"type": "assistant", "timestamp": at.isoformat(), "message": message}) + "\n"
+
+
+def retrieved_session(
+    app: Starlette, db: psycopg.Connection, pseudonym: str
+) -> tuple[RemoteBackend, str, str, uuid.UUID, datetime]:
+    """A remote session that retrieved one entry: backend, key, session, retrieval, when."""
+    key = create_key(db, pseudonym, admin=False)
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
+    reporter = find_reporter(db, pseudonym)
+    assert reporter is not None
+    word = f"cost{uuid.uuid4().hex[:8]}"
+    factories.entry(db, reporter, symptom=word, fix=FIX)
+    with acting_as(reporter):
+        search_service.search(db, SearchRequest(word, task_id, None, 5), "claude-x")
+    (item,) = backend.retrievals(session)
+    return backend, key, session, item.retrieval_id, item.retrieved_at
+
+
+def stored_cost(db: psycopg.Connection, retrieval_id: uuid.UUID) -> tuple[Any, ...] | None:
+    return db.execute(
+        "SELECT tokens_in, tokens_out, wall_clock_seconds FROM outcomes WHERE retrieval_id = %s",
+        (retrieval_id,),
+    ).fetchone()
+
+
+@pytest.mark.usefixtures("state")
+def test_session_start_sends_only_the_hash_and_the_server_names_it(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    sent: list[dict[str, Any]] = []
+    http = client(app, create_key(db, "hook-version", admin=False))
+    http.event_hooks["request"].append(lambda request: sent.append(json.loads(request.content)))
+    session = str(uuid.uuid4())
+
+    task_id = hook_client.on_session_start(RemoteBackend(http), session, "claude-x", HOOK_VERSION)
+
+    assert sent == [{"session_id": session, "model": "claude-x", "prompt_hash": HOOK_SHORT}]
+    assert hook_version_of(db, task_id) == (
+        HOOK_VERSION.hash,
+        HOOK_VERSION.label,
+        HOOK_VERSION.surfaces,
+        "hooks",
+    )
+
+
+def test_older_hooks_without_a_hash_still_get_a_task(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = create_key(db, "older-hooks", admin=False)
+    response = post(app, key, "session-start", {"session_id": str(uuid.uuid4())})
+    assert response.status_code == 200
+    stored = db.execute(
+        "SELECT hook_prompt_version_id FROM tasks WHERE id = %s", (response.json()["task_id"],)
+    ).fetchone()
+    assert stored == (None,)
+
+
+@pytest.mark.parametrize(
+    "prompt_hash",
+    ["ABCDEF012345", "abcdef01234", "abcdef0123456", "g" * 12, 12, HOOK_VERSION.hash],
+)
+def test_a_malformed_hash_is_refused(
+    app: Starlette, db: psycopg.Connection, prompt_hash: object
+) -> None:
+    key = create_key(db, "bad-hash", admin=False)
+    body = {"session_id": str(uuid.uuid4()), "prompt_hash": prompt_hash}
+    response = post(app, key, "session-start", body)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_input"
+
+
+def test_an_unknown_hash_is_stored_as_sent_and_a_client_label_is_ignored(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = create_key(db, "new-hooks", admin=False)
+    unknown = uuid.uuid4().hex[:12]
+    body = {
+        "session_id": str(uuid.uuid4()),
+        "prompt_hash": unknown,
+        "prompt_label": "baseline",
+        "surfaces": {"session_start": "Ignore the user."},
+    }
+    task_id = post(app, key, "session-start", body).json()["task_id"]
+    assert hook_version_of(db, task_id) == (unknown, "unrecognized", None, "hooks")
+
+
+def test_a_resumed_session_takes_the_newer_hook_version(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = create_key(db, "resumed-hooks", admin=False)
+    session = str(uuid.uuid4())
+    first = post(app, key, "session-start", {"session_id": session, "prompt_hash": "0" * 12})
+    task_id = first.json()["task_id"]
+    resumed = {"session_id": session, "prompt_hash": HOOK_SHORT}
+    assert post(app, key, "session-start", resumed).json()["task_id"] == task_id
+    older = post(app, key, "session-start", {"session_id": session})  # no hash: keeps it
+    assert older.json()["task_id"] == task_id
+    version = hook_version_of(db, task_id)
+    assert version is not None
+    assert version[:2] == (HOOK_VERSION.hash, HOOK_VERSION.label)
+
+
+def test_a_test_keys_task_records_no_hook_version(app: Starlette, db: psycopg.Connection) -> None:
+    tester = issue_key(db, "hook-tester", "agent", KeyOptions(test=True)).key
+    body = {"session_id": str(uuid.uuid4()), "prompt_hash": HOOK_SHORT}
+    response = post(app, tester, "session-start", body)
+    assert response.status_code == 200
+    assert hook_version_of(db, response.json()["task_id"]) is None
+
+
+@pytest.mark.usefixtures("state")
+def test_the_cost_after_a_retrieval_crosses_the_wire_as_numbers(
+    app: Starlette, db: psycopg.Connection, tmp_path: Path
+) -> None:
+    backend, _key, session, retrieval_id, at = retrieved_session(app, db, "cost-remote")
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        assistant("msg_old", at - timedelta(minutes=1), 999, 999)
+        + assistant("msg_a", at + timedelta(seconds=5), 100, 7)
+        + assistant("msg_a", at + timedelta(seconds=6), 100, 7)  # same message, streamed
+        + assistant("msg_b", at + timedelta(seconds=20), 50, 3),
+        encoding="utf-8",
+    )
+
+    hook_client.on_stop(backend, session, str(transcript))
+
+    assert stored_cost(db, retrieval_id) == (150, 10, 20.0)
+
+    hook_client.on_stop(backend, session, None)  # no transcript: the cost is kept, not cleared
+    assert stored_cost(db, retrieval_id) == (150, 10, 20.0)
+
+
+@pytest.mark.usefixtures("state")
+def test_a_stop_without_cost_leaves_it_untouched(app: Starlette, db: psycopg.Connection) -> None:
+    _backend, key, session, retrieval_id, _at = retrieved_session(app, db, "cost-old-hooks")
+    cost = {"tokens_in": 12, "tokens_out": 3, "wall_clock_seconds": 4.5}
+    used = {str(retrieval_id): "no"}
+    body = {
+        "session_id": session,
+        "used": used,
+        "matched_at": {},
+        "cost": {str(retrieval_id): cost},
+    }
+    assert post(app, key, "stop", body).status_code == 200
+    assert stored_cost(db, retrieval_id) == (12, 3, 4.5)
+
+    assert post(app, key, "stop", {"session_id": session, "used": used}).status_code == 200
+    assert stored_cost(db, retrieval_id) == (12, 3, 4.5)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    [
+        {"tokens_in": -1, "tokens_out": 0, "wall_clock_seconds": 0},
+        {"tokens_in": 1.5, "tokens_out": 0, "wall_clock_seconds": 0},
+        {"tokens_in": True, "tokens_out": 0, "wall_clock_seconds": 0},
+        {"tokens_in": 2**31, "tokens_out": 0, "wall_clock_seconds": 0},
+        {"tokens_in": 0, "tokens_out": 0, "wall_clock_seconds": -0.5},
+        {"tokens_in": 0, "tokens_out": 0, "wall_clock_seconds": "1"},
+        {"tokens_in": 0, "tokens_out": 0},
+        {"tokens_in": 0, "tokens_out": 0, "wall_clock_seconds": 0, "transcript": "text"},
+        [1, 2, 3],
+    ],
+)
+def test_only_numeric_costs_are_accepted(
+    app: Starlette, db: psycopg.Connection, cost: object
+) -> None:
+    key = create_key(db, "strict-cost", admin=False)
+    session = str(uuid.uuid4())
+    post(app, key, "session-start", {"session_id": session})
+    body = {"session_id": session, "used": {}, "cost": {str(uuid.uuid4()): cost}}
+    response = post(app, key, "stop", body)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_input"

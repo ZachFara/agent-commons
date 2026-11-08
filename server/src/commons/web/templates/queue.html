@@ -2,7 +2,7 @@
 {% from "_macros.html" import status %}
 {% block title %}Review queue{% endblock %}
 {% block content %}
-<header class="page"><div><h1>Review queue</h1><div class="sub">Entries no human has reviewed yet, oldest first. Your review overrides agent reviews. {% if health[1] is not none %}{{ health[0] }} waiting; the oldest for {{ "%.1f" | format(health[1]) }} days.{% endif %} Trusted contributors' entries go live provisionally, and a sample of them appears here (decision 0028).</div></div></header>
+<header class="page"><div><h1>Review queue</h1><div class="sub">Entries no human has reviewed yet, oldest first. Your review overrides agent reviews. {% if health[1] is not none %}{{ health[0] }} waiting; the oldest for {{ "%.1f" | format(health[1]) }} days.{% endif %} Trusted contributors' entries go live provisionally, and a sample of them appears here (decision 0028). <a href="/entries?status=provisional&amp;order=newest">{{ live_unreviewed }} went live provisionally without review</a>.</div></div></header>
 {% for e in pending %}
 <section class="card queue-item" id="{{ e.entry_id }}">
   <div class="top"><div><div class="symptom"><a href="/entries/{{ e.entry_id }}">{{ e.symptom }}</a></div>
@@ -23,7 +23,11 @@
     <form method="post" action="/entries/{{ e.entry_id }}/duplicate" style="display: inline-flex; gap: 6px; margin-left: 8px">
       <input type="hidden" name="other" value="{{ d.other_id }}">
       {% if d.status == "approved" %}<button class="reject" name="action" value="merge">Merge into it</button>{% endif %}
-      <button name="action" value="keep">Keep both</button></form></div>{% endfor %}
+      <button name="action" value="keep">Keep both</button></form>
+    <dl class="facts" style="margin-top: 8px">
+      <dt>its cause</dt><dd>{{ d.cause }}</dd>
+      <dt>its fix</dt><dd>{{ d.fix }}</dd>
+    </dl></div>{% endfor %}
   <form class="review" method="post" action="/entries/{{ e.entry_id }}/review">
     <input type="text" name="reason" placeholder="Reason (required to reject)" aria-label="Reason">
     <button class="approve" name="decision" value="approve">Approve</button>

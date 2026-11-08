@@ -101,3 +101,8 @@ scenario were filed:
 - `/commons:record` and the skill were not measured: the eval has no condition for them yet,
   so both stay off.
 
+Update (2026-11-08): `/commons:record` is now on by default, locally and on the hosted server,
+by the owner's decision (Question MIT-598, item 1). It still records nothing unless invoked, and
+then only asks the agent to review the session and `propose` or `report` what qualifies; no
+transcript is kept. `COMMONS_RECORD_PROMPT=off` turns it off. Its text is unchanged and still
+unmeasured.

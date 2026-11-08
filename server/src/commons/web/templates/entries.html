@@ -1,12 +1,13 @@
 {% extends "base.html" %}
-{% from "_macros.html" import status, pct, meter %}
+{% from "_macros.html" import status, pct, meter, tokens, per_success %}
 {% block title %}Entries{% endblock %}
 {% block content %}
 <header class="page"><div><h1>Entries</h1><div class="sub">{{ entries | length }} shown{% if query or status_filter %}, filtered{% endif %}.</div></div>
   <form class="filters" method="get" action="/entries">
     <input type="search" name="q" value="{{ query or '' }}" placeholder="Search entries or a domain" aria-label="Search">
     <select name="status" aria-label="Status"><option value="">Any status</option>
-      {% for s in ["approved", "pending", "rejected", "retired"] %}<option value="{{ s }}" {{ "selected" if s == status_filter }}>{{ s }}</option>{% endfor %}</select>
+      {% for s in ["approved", "pending", "rejected", "retired"] %}<option value="{{ s }}" {{ "selected" if s == status_filter }}>{{ s }}</option>{% endfor %}
+      <option value="provisional" {{ "selected" if status_filter == "provisional" }}>live without review</option></select>
     <select name="order" aria-label="Order">{% for value, label in [("score", "Best score"), ("used", "Most retrieved"), ("newest", "Newest")] %}<option value="{{ value }}" {{ "selected" if value == order }}>{{ label }}</option>{% endfor %}</select>
     <button class="primary">Apply</button>
   </form></header>
@@ -15,14 +16,26 @@
   {% for s in stale %}<tr><td><a href="/entries/{{ s.id }}">{{ s.symptom | truncate(90) }}</a></td><td class="num">{{ s.retrievals }}</td>
     <td>{{ s.last_success.strftime("%b %d") if s.last_success else "never" }}</td><td class="num">{% if s.used %}{{ s.worked }}/{{ s.used }}{% else %}–{% endif %}</td></tr>{% endfor %}
   </tbody></table></div></section>{% endif %}
+{% if failing %}<section class="card" style="margin-bottom: 16px"><h2>Highest failure rates <span class="hint">approved entries; hook-observed used outcomes with a known result in {{ failing_days }} days, the author's own left out; a human-approved entry with 3 or more failures from 2 or more reporters, and more failures than successes, goes back to the queue at the next rank</span></h2><div class="table-wrap"><table>
+  <thead><tr><th>Entry</th><th class="num">Failed</th><th class="num">Worked</th><th class="num">Failure rate</th><th>Last failure</th><th>Reopen threshold</th></tr></thead><tbody>
+  {% for f in failing %}<tr><td><a href="/entries/{{ f.id }}">{{ f.symptom | truncate(90) }}</a></td><td class="num">{{ f.failures }}</td><td class="num">{{ f.successes }}</td>
+    <td class="num">{{ pct(f.failure_rate) }}</td><td>{{ f.last_failure.strftime("%b %d") }}</td>
+    <td>{% if f.to_reopen is none %}<span class="badge soft" title="No human approved it; the provisional rule (decision 0028) applies">unreviewed</span>{% elif f.to_reopen == 0 %}<span class="badge bad">reopens at the next rank</span>{% elif f.to_reopen == 1 %}<span class="badge bad">1 more failure reopens it</span>{% else %}<span class="muted">{{ f.to_reopen }} more failures</span>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div></section>{% endif %}
 <section class="card">{% if entries %}<div class="table-wrap"><table>
-  <thead><tr><th>Symptom</th><th>Status</th><th class="num">Score</th><th class="num">Retrievals 30d</th><th class="num">Used</th><th class="num">Success</th><th>Proposed</th></tr></thead><tbody>
-  {% for e in entries %}<tr>
+  <thead><tr><th>Symptom</th><th>Status</th><th class="num">Score</th><th class="num">Retrievals 30d</th><th class="num">Used</th><th class="num">Success</th>
+    <th class="num" title="Size of the entry in search results: its text fields, characters ÷ 4">≈ Tokens</th>
+    <th class="num" title="Tokens after retrieval (input includes cache reads) over used outcomes with a known result, per success">Tokens / success</th>
+    <th class="num" title="Median tokens after retrieval, when it worked and when it failed">Median worked · failed</th><th>Proposed</th></tr></thead><tbody>
+  {% for e in entries %}{% set c = e.cost %}<tr>
     <td><div class="clip"><a href="/entries/{{ e.id }}">{{ e.symptom }}</a></div><div class="muted">{{ e.domains | join(" · ") }}</div></td>
     <td>{{ status(e.status, e.human_reviewed) }}</td>
     <td class="num">{{ meter(e.score) }}</td>
     <td class="num">{{ e.retrieval_count_30d if e.retrieval_count_30d is not none else "–" }}</td>
     <td class="num">{{ pct(e.used_rate) }}</td><td class="num">{{ pct(e.success_rate) }}</td>
+    <td class="num">≈ {{ tokens(e.hit_tokens) }}</td>
+    <td class="num">{{ per_success(c) }}<div class="muted">n = {{ c.costed if c else 0 }}</div></td>
+    <td class="num">{{ tokens(c.median_success if c else none) }} · {{ tokens(c.median_failure if c else none) }}<div class="muted">n = {{ c.successes if c else 0 }} · {{ c.failures if c else 0 }}</div></td>
     <td class="muted" style="white-space: nowrap">{{ e.created_at.strftime("%b %d") }} · {{ e.proposed_by }}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">No entries match.</div>{% endif %}</section>
 {% endblock %}

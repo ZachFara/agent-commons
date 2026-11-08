@@ -9,8 +9,14 @@ Libraries are vendored under a site directory (offline, deterministic) with inve
 model memory can't shortcut them.
 """
 
+import json
+from dataclasses import replace
+from pathlib import Path
+
+from tools.eval.github_tasks import GITHUB
 from tools.eval.holdout import HOLDOUT
 from tools.eval.model import Discovery, Expect, Scenario, Seed
+from tools.eval.runner import run_python
 
 PY_CONFTEST = """import sys
 from pathlib import Path
@@ -640,6 +646,519 @@ CONTROL_DOCUMENTED_FLAG = Scenario(
     expect=Expect(search=False, propose=False, report=False),
 )
 
+# ------------------------------------------------------------------------------------ no test
+# Added for MIT-597 (decision 0023: scenarios are only ever added). Configuration work with no
+# failing test and no exception text, after two real misses: an app that overwrote an external
+# edit to its settings file while it ran, and a metrics collector whose default sent metrics to
+# a cloud endpoint that answered 401. The task is a request, not "fix the tests"; `outcome`
+# judges the result after the session, out of the agent's sight.
+
+VAULTAPP_README = """# vaultapp 1.4
+
+A local, plain-text notes app. It opens a folder of Markdown notes and keeps its own files in
+`.vaultapp/` inside that folder.
+
+    python3 -m vaultapp serve       # open the notes in the current folder
+    python3 -m vaultapp status      # is the app open on this folder?
+
+## Plugins
+
+Each plugin has its own folder under `.vaultapp/plugins/`, with a manifest and a JSON file of
+its settings.
+
+Change a plugin's settings in the app's settings window, or from a shell:
+
+    python3 -m vaultapp config get <plugin> <key>
+    python3 -m vaultapp config set <plugin> <key> <value>
+
+Values are JSON (`15`, `true`, `"text"`); anything else is taken as a string.
+"""
+
+# The surprise: settings are read once at start, then written back from memory on every
+# autosave and on exit, so a direct edit to data.json lasts only until the next save.
+VAULTAPP_APP = r'''"""The running app: reads each plugin's settings once, then keeps it running."""
+
+import json
+import os
+import signal
+import time
+from pathlib import Path
+
+POLL_SECONDS = 0.1
+
+
+def plugins_dir(vault):
+    return Path(vault) / ".vaultapp" / "plugins"
+
+
+def plugin_ids(vault):
+    return sorted(p.name for p in plugins_dir(vault).iterdir() if (p / "data.json").is_file())
+
+
+def load_settings(vault, plugin):
+    return json.loads((plugins_dir(vault) / plugin / "data.json").read_text())
+
+
+def write_json(path, value, indent=None):
+    partial = path.with_name(path.name + ".partial")
+    partial.write_text(json.dumps(value, indent=indent) + "\n")
+    os.replace(str(partial), str(path))
+
+
+def save_settings(vault, plugin, settings):
+    write_json(plugins_dir(vault) / plugin / "data.json", settings, indent=2)
+
+
+class App:
+    def __init__(self, vault):
+        self.vault = Path(vault).resolve()
+        self.settings = {p: load_settings(self.vault, p) for p in plugin_ids(self.vault)}
+
+    def answer(self, request):
+        settings = self.settings.get(request["plugin"])
+        if settings is None:
+            return {"error": "no plugin named " + request["plugin"]}
+        if request["op"] == "set":
+            settings[request["key"]] = request["value"]
+            save_settings(self.vault, request["plugin"], settings)
+        return {"value": settings.get(request["key"])}
+
+    def answer_requests(self):
+        for request in sorted((self.vault / ".vaultapp" / "requests").glob("*.json")):
+            write_json(request.with_suffix(".answer"), self.answer(json.loads(request.read_text())))
+            request.unlink()
+
+    def save_all(self):
+        for plugin, settings in self.settings.items():
+            save_settings(self.vault, plugin, settings)
+
+
+def _stop(_signum, _frame):
+    raise SystemExit(0)
+
+
+def serve(vault, autosave_seconds):
+    app = App(vault)
+    state = app.vault / ".vaultapp"
+    (state / "requests").mkdir(exist_ok=True)
+    pid_file = state / "app.pid"
+    pid_file.write_text(str(os.getpid()))
+    signal.signal(signal.SIGTERM, _stop)
+    print("vaultapp: vault open at " + str(app.vault), flush=True)
+    saved = time.monotonic()
+    try:
+        while pid_file.exists():
+            app.answer_requests()
+            if time.monotonic() - saved >= autosave_seconds:
+                app.save_all()
+                saved = time.monotonic()
+            time.sleep(POLL_SECONDS)
+    finally:
+        if state.exists():
+            app.save_all()
+            if pid_file.exists():
+                pid_file.unlink()
+'''
+
+VAULTAPP_CLI = r'''"""vaultapp's command line."""
+
+import argparse
+import json
+import os
+import time
+import uuid
+from pathlib import Path
+
+from vaultapp import __version__
+from vaultapp.app import load_settings, plugin_ids, save_settings, serve, write_json
+
+ANSWER_SECONDS = 5.0
+
+
+def running_pid(vault):
+    """The pid of the app open on this vault, or None."""
+    try:
+        pid = int((Path(vault) / ".vaultapp" / "app.pid").read_text())
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return None
+    return pid
+
+
+def ask_app(vault, request):
+    inbox = Path(vault) / ".vaultapp" / "requests"
+    name = uuid.uuid4().hex
+    write_json(inbox / (name + ".json"), request)
+    answer = inbox / (name + ".answer")
+    deadline = time.monotonic() + ANSWER_SECONDS
+    while time.monotonic() < deadline:
+        if answer.exists():
+            reply = json.loads(answer.read_text())
+            answer.unlink()
+            return reply
+        time.sleep(0.05)
+    return {"error": "the app did not answer"}
+
+
+def config(vault, request):
+    if running_pid(vault) is not None:
+        return ask_app(vault, request)
+    if request["plugin"] not in plugin_ids(vault):
+        return {"error": "no plugin named " + request["plugin"]}
+    settings = load_settings(vault, request["plugin"])
+    if request["op"] == "set":
+        settings[request["key"]] = request["value"]
+        save_settings(vault, request["plugin"], settings)
+    return {"value": settings.get(request["key"])}
+
+
+def parse_value(text):
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def status(vault):
+    pid = running_pid(vault)
+    state = "open (pid %d)" % pid if pid else "not open"
+    return "vaultapp %s: %s; plugins: %s" % (__version__, state, ", ".join(plugin_ids(vault)))
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="vaultapp", description="vaultapp " + __version__)
+    parser.add_argument("--vault", default=".", help="the vault folder (default: here)")
+    commands = parser.add_subparsers(dest="command")
+    serve_parser = commands.add_parser("serve", help="open the vault and keep it open")
+    serve_parser.add_argument("--autosave", type=float, default=10.0, help="seconds between saves")
+    commands.add_parser("status", help="is the app open on this vault?")
+    config_parser = commands.add_parser("config", help="get or set a plugin setting")
+    config_parser.add_argument("op", choices=["get", "set"])
+    config_parser.add_argument("plugin")
+    config_parser.add_argument("key")
+    config_parser.add_argument("value", nargs="?")
+    args = parser.parse_args(argv)
+    if args.command == "serve":
+        serve(args.vault, args.autosave)
+        return 0
+    if args.command == "status":
+        print(status(args.vault))
+        return 0
+    if args.command != "config":
+        parser.print_help()
+        return 2
+    if args.op == "set" and args.value is None:
+        parser.error("config set needs a value")
+    value = None if args.value is None else parse_value(args.value)
+    request = {"op": args.op, "plugin": args.plugin, "key": args.key, "value": value}
+    reply = config(args.vault, request)
+    if "error" in reply:
+        print("vaultapp: " + reply["error"])
+        return 1
+    print(json.dumps(reply["value"]))
+    return 0
+'''
+
+VAULTAPP_LIBRARIES = {
+    "vaultapp/README.md": VAULTAPP_README,
+    "vaultapp/__init__.py": (
+        '"""vaultapp 1.4: a local notes app. See README.md."""\n\n__version__ = "1.4.2"\n'
+    ),
+    "vaultapp/__main__.py": (
+        "import sys\n\nfrom vaultapp.cli import main\n\nsys.exit(main(sys.argv[1:]))\n"
+    ),
+    "vaultapp/app.py": VAULTAPP_APP,
+    "vaultapp/cli.py": VAULTAPP_CLI,
+}
+
+BACKUP_SETTINGS = ".vaultapp/plugins/autobackup/data.json"
+
+
+def backs_up_every_15_minutes(project: Path, _site: Path) -> bool:
+    """With the app stopped, the backup plugin's saved interval is 15 minutes."""
+    try:
+        settings = json.loads((project / BACKUP_SETTINGS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(settings, dict) and str(settings.get("interval_minutes")) == "15"
+
+
+CONFIG_APP_OVERWRITES = Scenario(
+    name="config-app-overwrites",
+    trigger="no_test",
+    libraries=VAULTAPP_LIBRARIES,
+    files={
+        ".vaultapp/plugins/autobackup/manifest.json": (
+            '{"id": "autobackup", "name": "Auto Backup", "version": "0.9.1"}\n'
+        ),
+        BACKUP_SETTINGS: '{\n  "interval_minutes": 60,\n  "folder": "backups",\n  "keep": 10\n}\n',
+        "notes/Welcome.md": "# Welcome\n\nThis vault holds my notes. Backups go to `backups/`.\n",
+        "notes/Reading list.md": "# Reading list\n\n- The Pragmatic Programmer\n- SICP\n",
+    },
+    app="python3 -m vaultapp serve --autosave 10",
+    task=(
+        "I have this folder open as a vault in vaultapp (it's running now and I'd like to keep "
+        "it open). Change the Auto Backup plugin to back up every 15 minutes instead of every "
+        "60, and check that the change took effect."
+    ),
+    outcome=backs_up_every_15_minutes,
+    discovery=Discovery(
+        symptom_words=("data.json", "revert", "overwr", "lost", "back to"),
+        cause_words=("memory", "overwr", "autosave", "on exit", "while the app", "running"),
+        library="vaultapp",
+    ),
+    expect=Expect(search=True, propose=True, report=False),
+)
+
+SWITCHYARD_README = """# switchyard 2.3
+
+A self-hosted router for LLM APIs. It reads `switchyard.conf` (INI) from the working directory.
+
+    python3 -m switchyard routes            # list the configured routes
+    python3 -m switchyard metrics export    # export request metrics now
+
+## [metrics]
+
+| key | default | meaning |
+|---|---|---|
+| `enabled` | `true` | collect request metrics |
+| `textfile_dir` | unset | write metrics in Prometheus text format to `<dir>/switchyard.prom`, \
+for node_exporter's textfile collector |
+| `interval` | `60` | seconds between exports while the router runs |
+"""
+
+# The surprise: `exporter` defaults to the cloud and the README never names it, so setting the
+# documented `textfile_dir` changes nothing; the export "succeeds" with a 401 from the cloud.
+SWITCHYARD_CONFIG = r'''"""Settings: built-in defaults, overlaid by ./switchyard.conf."""
+
+import configparser
+
+CONFIG_FILE = "switchyard.conf"
+
+DEFAULTS = {
+    "server": {"listen": "127.0.0.1:8400"},
+    "metrics": {
+        "enabled": "true",
+        "exporter": "cloud",  # 2.3: Switchyard Cloud is the default exporter
+        "textfile_dir": "",
+        "interval": "60",
+    },
+    "cloud": {"endpoint": "https://ingest.switchyard.cloud/v1/metrics", "token": ""},
+}
+
+
+def load(path=CONFIG_FILE):
+    config = configparser.ConfigParser()
+    config.read_dict(DEFAULTS)
+    config.read(path)
+    return config
+'''
+
+SWITCHYARD_METRICS = r'''"""Request metrics and the exporters that send them."""
+
+from pathlib import Path
+
+REQUEST_LOG = "logs/requests.log"
+
+
+def request_counts():
+    """(route, status) -> requests, from the router's request log."""
+    counts = {}
+    log = Path(REQUEST_LOG)
+    for line in log.read_text().splitlines() if log.exists() else []:
+        fields = line.split()
+        if len(fields) >= 3:
+            counts[(fields[1], fields[2])] = counts.get((fields[1], fields[2]), 0) + 1
+    return counts
+
+
+def prometheus_text(counts):
+    lines = [
+        "# HELP switchyard_requests_total Requests routed, by route and status.",
+        "# TYPE switchyard_requests_total counter",
+    ]
+    for (route, status), count in sorted(counts.items()):
+        labels = 'route="%s",status="%s"' % (route, status)
+        lines.append("switchyard_requests_total{%s} %d" % (labels, count))
+    return "\n".join(lines) + "\n"
+
+
+def export_textfile(directory, counts):
+    path = Path(directory or ".") / "switchyard.prom"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(prometheus_text(counts))
+    return "wrote %d series to %s" % (len(counts), path)
+
+
+def export_cloud(cloud, counts):
+    """Send the series to Switchyard Cloud, which refuses requests without an API token."""
+    status = "202 Accepted" if cloud.get("token") else "401 Unauthorized (will retry)"
+    return "sent %d series to %s: HTTP %s" % (len(counts), cloud["endpoint"], status)
+
+
+def export(config):
+    metrics = config["metrics"]
+    if not metrics.getboolean("enabled"):
+        return "metrics: disabled"
+    counts = request_counts()
+    exporter = metrics.get("exporter")
+    if exporter == "textfile":
+        return "metrics: " + export_textfile(metrics.get("textfile_dir"), counts)
+    if exporter == "cloud":
+        return "metrics: " + export_cloud(config["cloud"], counts)
+    return "metrics: unknown exporter %r" % exporter
+'''
+
+SWITCHYARD_CLI = r'''"""switchyard's command line."""
+
+import argparse
+
+from switchyard import __version__
+from switchyard.config import load
+from switchyard.metrics import export
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="switchyard", description="switchyard " + __version__)
+    commands = parser.add_subparsers(dest="command")
+    commands.add_parser("routes", help="list the configured routes")
+    metrics_parser = commands.add_parser("metrics", help="request metrics")
+    metrics_parser.add_argument("action", choices=["export"])
+    args = parser.parse_args(argv)
+    config = load()
+    if args.command == "routes":
+        for name, target in config.items("routes") if config.has_section("routes") else []:
+            print(name + " -> " + target)
+        return 0
+    if args.command == "metrics":
+        print(export(config))
+        return 0
+    parser.print_help()
+    return 2
+'''
+
+SWITCHYARD_LIBRARIES = {
+    "switchyard/README.md": SWITCHYARD_README,
+    "switchyard/__init__.py": (
+        '"""switchyard 2.3: a self-hosted router for LLM APIs. See README.md."""\n\n'
+        '__version__ = "2.3.1"\n'
+    ),
+    "switchyard/__main__.py": (
+        "import sys\n\nfrom switchyard.cli import main\n\nsys.exit(main(sys.argv[1:]))\n"
+    ),
+    "switchyard/config.py": SWITCHYARD_CONFIG,
+    "switchyard/metrics.py": SWITCHYARD_METRICS,
+    "switchyard/cli.py": SWITCHYARD_CLI,
+}
+
+TEXTFILE_DIR = "monitoring/textfile"
+
+
+def metrics_reach_the_textfile_dir(project: Path, site: Path) -> bool:
+    """Export afresh from the project's config; the metrics must land in monitoring/textfile/."""
+    textfile = project / TEXTFILE_DIR
+    for old in textfile.glob("*.prom"):
+        old.unlink()
+    run_python(project, site, "-m", "switchyard", "metrics", "export")
+    return any(
+        "switchyard_requests_total" in path.read_text(encoding="utf-8")
+        for path in textfile.glob("*.prom")
+    )
+
+
+CONFIG_DEFAULT_WINS = Scenario(
+    name="config-default-wins",
+    trigger="no_test",
+    libraries=SWITCHYARD_LIBRARIES,
+    files={
+        "switchyard.conf": (
+            "# Router for the team's self-hosted models.\n"
+            "[server]\n"
+            "listen = 127.0.0.1:8400\n\n"
+            "[routes]\n"
+            "local-llama = http://127.0.0.1:11434/v1\n\n"
+            "[metrics]\n"
+            "enabled = true\n"
+        ),
+        "logs/requests.log": (
+            "2026-11-02T09:14:03Z local-llama 200 812ms\n"
+            "2026-11-02T09:14:41Z local-llama 200 655ms\n"
+            "2026-11-02T09:15:10Z local-llama 502 30001ms\n"
+            "2026-11-02T09:16:22Z local-llama 200 701ms\n"
+        ),
+        "monitoring/README.md": (
+            "# Monitoring on this host\n\n"
+            "node_exporter runs with `--collector.textfile.directory=monitoring/textfile` and\n"
+            "scrapes every `*.prom` file there into Prometheus.\n"
+        ),
+        f"{TEXTFILE_DIR}/.gitkeep": "",
+    },
+    task=(
+        "Our monitoring picks up Prometheus text files from `monitoring/textfile/` (see "
+        "`monitoring/README.md`). Configure switchyard to export its request metrics there, "
+        "then run `python3 -m switchyard metrics export` and check that they arrive."
+    ),
+    outcome=metrics_reach_the_textfile_dir,
+    discovery=Discovery(
+        symptom_words=("textfile", "401", "Unauthorized", "cloud", ".prom"),
+        cause_words=("exporter", "default"),
+        library="switchyard",
+    ),
+    expect=Expect(search=True, propose=True, report=False),
+)
+
+# Known-entry variants, as `known-silent-rename` is to `version-silent-rename`.
+KNOWN_APP_OVERWRITES = replace(
+    CONFIG_APP_OVERWRITES,
+    name="known-config-app-overwrites",
+    seeds=[
+        Seed(
+            symptom=(
+                "vaultapp 1.4 plugin setting edited in data.json goes back to its old value "
+                "while the app is open"
+            ),
+            cause=(
+                "vaultapp keeps plugin settings in memory and writes them over data.json on "
+                "every autosave and on exit, so edits made to the file while it runs are lost."
+            ),
+            fix=(
+                "Change plugin settings through the running app with `vaultapp config set`, "
+                "which updates the copy the app holds and saves it. Don't edit data.json while "
+                "the app is open."
+            ),
+            libraries={"vaultapp": "1.4.2"},
+        )
+    ],
+    discovery=None,
+    expect=Expect(search=True, propose=False, report=True, used="yes"),
+)
+
+KNOWN_DEFAULT_WINS = replace(
+    CONFIG_DEFAULT_WINS,
+    name="known-config-default-wins",
+    seeds=[
+        Seed(
+            symptom=(
+                "switchyard 2.3 ignores metrics textfile_dir: export goes to switchyard cloud, "
+                "HTTP 401 Unauthorized, no .prom file written"
+            ),
+            cause=(
+                'switchyard 2.3 defaults `[metrics] exporter` to "cloud"; `textfile_dir` is '
+                "read only when `exporter = textfile`."
+            ),
+            fix=(
+                "Add `exporter = textfile` to the metrics section of switchyard.conf; the "
+                "textfile directory setting is read only by that exporter."
+            ),
+            libraries={"switchyard": "2.3.1"},
+        )
+    ],
+    discovery=None,
+    expect=Expect(search=True, propose=False, report=True, used="yes"),
+)
+
+NO_TEST = [CONFIG_APP_OVERWRITES, CONFIG_DEFAULT_WINS, KNOWN_APP_OVERWRITES, KNOWN_DEFAULT_WINS]
+
 DISCOVERY = [
     DOCS_RETRY,
     DOCS_TIMEZONE,
@@ -682,4 +1201,9 @@ MULTI_TURN = [
     # the second surprise is a changed default the docs still describe the old way
     _two_turns("multi-turn-retry-then-timezone", DOCS_RETRY, DOCS_TIMEZONE),
 ]
-SCENARIOS = {**DEVELOPMENT, **HOLDOUT, **{s.name: s for s in MULTI_TURN}}
+SCENARIOS = {
+    **DEVELOPMENT,
+    **HOLDOUT,
+    **GITHUB,
+    **{s.name: s for s in (*NO_TEST, *MULTI_TURN)},
+}

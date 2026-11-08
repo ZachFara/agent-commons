@@ -56,3 +56,7 @@ Implementation notes (T51, 2026-10-31):
 - Queue health: the queue page shows its length and oldest age. The nightly workflow runs
   `commons queue-check --max-age 3d`, whose failure emails the owner (GitHub's alerting for
   scheduled runs) instead of a separate digest.
+
+Implementation notes (MIT-594, 2026-11-07):
+- Entries that went live provisionally without review are listed under Entries with the
+  "live without review" filter, linked from the queue page with their count.
