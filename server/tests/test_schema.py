@@ -90,6 +90,9 @@ TABLES = {
         "query",
         "rank_position",
         "score_at_retrieval",
+        "relevance",
+        "version_factor",
+        "outcome_score",
         "excluded",
         "revision",
     },
@@ -208,6 +211,15 @@ def test_every_table_has_exactly_the_designed_columns(db: psycopg.Connection) ->
             (table,),
         ).fetchall()
         assert {name for (name,) in rows} == columns | COMMON, table
+
+
+def test_counted_retrievals_exposes_every_retrievals_column(db: psycopg.Connection) -> None:
+    """counted_* are SELECT * views, whose columns freeze when the view is (re)created."""
+    rows = db.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+        ("counted_retrievals",),
+    ).fetchall()
+    assert {name for (name,) in rows} == TABLES["retrievals"] | COMMON
 
 
 def test_enum_labels_match_design(db: psycopg.Connection) -> None:
