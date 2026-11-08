@@ -206,8 +206,8 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
 
 
 def _with_record_prompt(server: FastMCP) -> FastMCP:
-    """Offer `/commons:record` when COMMONS_RECORD_PROMPT=on (decision 0034; off by default)."""
-    if os.environ.get("COMMONS_RECORD_PROMPT", "off").strip().lower() == "on":
+    """Offer `/commons:record` unless COMMONS_RECORD_PROMPT=off (decision 0034; on by default)."""
+    if os.environ.get("COMMONS_RECORD_PROMPT", "on").strip().lower() != "off":
         server.prompt(name="record", description="Review this session and record what to share.")(
             _record
         )
