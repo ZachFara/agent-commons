@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import pct %}
 {% block title %}Searches{% endblock %}
 {% block content %}
 <header class="page"><div><h1>Searches</h1><div class="sub">What agents looked for, starting with what the store didn't have. Queries are redacted. Last 30 days unless noted.</div></div></header>
@@ -7,6 +8,8 @@
     <div class="note">by {{ totals.reporters }} reporter{{ "" if totals.reporters == 1 else "s" }}</div></div>
   <div class="card kpi"><div class="label">Found nothing</div><div class="value">{{ totals.misses }}</div>
     <div class="note">{% if totals.searches %}{{ "%.0f" | format(totals.misses / totals.searches * 100) }}% of searches{% else %}no searches yet{% endif %}</div></div>
+  <div class="card kpi"><div class="label">Full result sets</div><div class="value">{{ totals.full }}</div>
+    <div class="note">{% if totals.searches %}{{ totals.full }} of {{ totals.searches }} hit their limit ({{ "%.0f" | format(totals.full / totals.searches * 100) }}%); more may have matched{% else %}no searches yet{% endif %}</div></div>
 </div>
 <section class="card"><h2>Searched, not found <span class="hint">candidates for new entries</span></h2>
   {% if missed %}<div class="table-wrap"><table>
@@ -15,6 +18,12 @@
     <td class="num">{{ m.times }}</td><td class="num">{{ m.reporters }}</td>
     <td style="white-space: nowrap">{{ m.last_seen.strftime("%b %d %H:%M") }}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">Every search found something, or nobody has searched yet.</div>{% endif %}</section>
+<section class="card" style="margin-top: 16px"><h2>Use by rank <span class="hint">retrievals whose use is known, by position in the results</span></h2>
+  {% if by_rank | sum(attribute="retrievals") %}<div class="table-wrap"><table>
+  <thead><tr><th>Rank</th><th class="num">Retrievals</th><th class="num">Used</th><th class="num">Share used</th></tr></thead><tbody>
+  {% for r in by_rank %}<tr><td>{{ r.rank }}{{ "+" if loop.last }}</td><td class="num">{{ r.retrievals }}</td>
+    <td class="num">{{ r.used }}</td><td class="num">{{ pct(r.used_rate) }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">No retrievals with a known use yet.</div>{% endif %}</section>
 <section class="card" style="margin-top: 16px"><h2>Recent searches <span class="hint">newest first, all time</span></h2>
   {% if recent %}<div class="table-wrap"><table>
   <thead><tr><th>When</th><th>Reporter</th><th>Model</th><th>Query</th><th class="num">Results</th><th>Privacy</th><th></th></tr></thead><tbody>
