@@ -46,7 +46,7 @@ from commons.store.counterfactuals import CounterfactualRun, known_entries, reco
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
-from tools.eval import container, repos, runner  # noqa: E402
+from tools.eval import container, holdout, repos, runner  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
 
 if TYPE_CHECKING:
@@ -515,6 +515,8 @@ def report(args: argparse.Namespace) -> int:
         print(HEADER)
         for name, group in sorted(by_scenario.items()):
             print(f"{name:<26} {_scenario_line(group)}")
+        for name in sorted(by_scenario.keys() & holdout.RETIRED.keys()):
+            print(f"{name} is retired, not measured: {holdout.RETIRED[name]}")
     return 0
 
 
