@@ -53,3 +53,22 @@ Implementation notes (T48, 2026-10-31):
 - Retire and restore are new `review_decision` values recorded as human reviews; superseding
   is a retirement with `superseded_by` set. The review tools still accept only approve/reject.
 - Risk scanning of edits arrives with 0029 (T50), on the same path as proposals.
+
+Amendment (owner, 2026-11-08): human-approved entries that keep failing are reopened.
+- Decision 0028 sent back only provisional entries whose outcomes mostly failed. Now a
+  human-approved entry goes back to the review queue too, when its counted outcomes in the last
+  90 days hold 3 or more failures and more failures than successes.
+- The outcomes counted are those ranking weighs (decision 0017): used yes or partial, with a
+  known result (not unknown or abandoned), split on the success outcomes. Excluded rows, and so
+  test-key rows (0030), drop out through the `counted_*` views. Only outcomes since the entry's
+  latest reopen count, so evidence that reopened it once can't reopen it again after a human
+  approves it.
+- It reuses 0028's reopen: a `reopen` review with source `auto` and reason "kept failing when
+  used, after human approval (0026)". The entry becomes pending, leaves search, and waits in
+  the queue as unreviewed. A human approve puts it back in search.
+- The rule runs nightly with `commons rank`, after 0028's provisional rule, not when an outcome
+  is reported. A reopened entry is pending, so a second run changes nothing.
+- The Entries page lists approved entries by failure rate over the same counts, with how many
+  more failures would reopen each human-approved one.
+- This rule is about failures only. Whether an entry approved with unreviewed findings should
+  be reopened is an open question, not decided here.
