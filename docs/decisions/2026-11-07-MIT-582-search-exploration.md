@@ -76,10 +76,20 @@ after the eval below.
 5. Tests pass a seeded random generator, so every order they check is reproducible.
    Production uses an unseeded one.
 6. Two gates before shipping.
-   - Relevance under the draw. On the judged set, compute expected precision@5 and recall@5
-     under the draw: N seeded runs (suggested N = 100), averaged, so the numbers are the same
-     every time. Each may fall by no more than a margin Zach sets from the mean ranking's
-     (suggested 0.02). The judged set has no outcomes, so this is the worst case.
+   - Relevance under the draw, on the judged set. Each number is scored over N seeded runs
+     (suggested N = 100) and averaged, so it is the same every time. The judged set has no
+     outcomes, so this is the worst case.
+     - hit@1: the share of answerable queries whose relevant entry is at rank 1. This is the
+       measure of the cost named in point 2, since each judged query has one relevant entry.
+       `tools/search_eval.py` gains it. A fall is expected here. hit@1 under the draw may fall
+       by no more than a margin Zach sets from the mean ranking's (suggested 0.02).
+     - precision@5 and recall@5 (`tools/search_eval.py`, `TOP = 5`). These measure which
+       entries come back in the top 5, not their order. The draw moves them only on queries
+       with more than 5 hits above the cutoff. They are kept as a no-fall check, because on
+       those queries the draw can push the relevant entry out of the top 5, which hit@1 alone
+       would count the same as a drop to rank 2.
+     - The judged set must include queries with more than 5 hits above the cutoff, or the
+       no-fall check measures nothing. Today such queries are rare or absent.
    - The agent eval. Exploration changes result order, which is what the agent sees. So it is one
      decision 0023 condition, `exploration`, run on Sonnet and Opus against the baseline at the
      baseline's run count. Today's scenarios seed entries with no outcomes
@@ -93,9 +103,9 @@ after the eval below.
      from the posterior while exploration is on. The snapshot bullet gains Σw and Σw·s.
    - In 0025, step 3's "then apply the outcome score (decision 0017) as today" becomes "apply
      the draw". Step 5's rule (no step ships if precision@5 or recall@5 falls) still applies to
-     the mean ranking. Under the draw it becomes the margin in point 6: a draw over entries
-     without outcomes always costs some relevance, so "no fall at all" would rule exploration
-     out by definition. The margin bounds that cost instead.
+     the mean ranking, and to the draw's expected precision@5 and recall@5. Under the draw,
+     point 6 adds hit@1 with a margin. Order is where the draw costs relevance, and step 5's
+     measures do not see order.
 
 Consequences: the trigger is checked from numbers the Searches page already shows. If it never
 fires, nothing is built. If it fires, the change is small: one draw per hit, two snapshot
@@ -105,9 +115,9 @@ mean ranking cover this. Exploration can lower the relevance of what agents see 
 lack evidence: an entry with no outcomes draws from a flat prior, so a less relevant hit
 sometimes outranks a more relevant one, and a new entry often rises above a proven one. That is
 the cost of letting entries earn evidence. It is largest now, while most entries have no
-outcomes, and shrinks as evidence builds; the margin in point 6 bounds it. Revisit the switch if
-the share used at ranks 2-4+ falls after shipping, or if full result sets drop below the
-threshold.
+outcomes, and shrinks as evidence builds. The hit@1 margin in point 6 bounds how often the
+relevant entry loses rank 1, on the judged set. Revisit the switch if the share used at ranks
+2-4+ falls after shipping, or if full result sets drop below the threshold.
 
 Options considered:
 - Not now: keep the mean ranking; today's choice until the trigger fires.
