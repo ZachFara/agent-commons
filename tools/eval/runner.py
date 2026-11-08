@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import psycopg
 from psycopg import sql
@@ -100,8 +100,19 @@ GENERATED = (
     "build",
     "dist",
 )
-# Files a tool writes as it runs (`uv run` creates uv.lock), never the agent's fix.
-GENERATED_FILES = ("uv.lock", ".coverage", ".coverage.*", "*.pyc", "*.egg-info")
+# Files a tool writes as it runs (`uv run` creates uv.lock; other installers their own locks),
+# never the agent's fix.
+GENERATED_FILES = (
+    "uv.lock",
+    "poetry.lock",
+    "pdm.lock",
+    "Pipfile.lock",
+    "package-lock.json",
+    ".coverage",
+    ".coverage.*",
+    "*.pyc",
+    "*.egg-info",
+)
 TEST_DIRS = frozenset({"tests", "test", "__tests__"})
 # A patch reads nothing outside its project: what it doesn't read, it names with a marker.
 SYMLINK = "[symlink: not read]"
@@ -110,7 +121,10 @@ OUTSIDE = "[outside the project: not read]"
 FILE_CAP = 256 * 1024  # bytes of one file a patch reads
 PATCH_CAP = 1024 * 1024  # characters of one patch kept, in the results directory
 EXCERPT_CAP = 4000  # characters of a patch's scrubbed excerpt, in the committed ledger
-FILE_CUT = f"[file cut at {FILE_CAP} bytes]"
+# A cut file's last line: this, then 16 hex digits of sha256 over all of the file, and "]".
+# So a change past the cut still changes the diff, its hash, and `truncated`.
+FILE_CUT = f"[file cut at {FILE_CAP} bytes; sha256 "
+HASH_CHUNK = 64 * 1024  # bytes read at a time while hashing the rest of a cut file
 PATCH_CUT = f"[patch cut at {PATCH_CAP} characters]"
 EXCERPT_CUT = f"[excerpt cut at {EXCERPT_CAP} characters]"
 # The only hosts an experiment store may live on: scripts/test-db.sh's rule.
@@ -603,9 +617,29 @@ def _read_regular(path: Path) -> str | None:
         if status.st_nlink > 1:
             return HARD_LINK
         data = file.read(FILE_CAP + 1)
-    if len(data) <= FILE_CAP:
-        return data.decode("utf-8", errors="replace")
-    return _whole_lines(data[:FILE_CAP].decode("utf-8", errors="replace")) + FILE_CUT
+        if len(data) <= FILE_CAP:
+            return data.decode("utf-8", errors="replace")
+        digest = _hash_rest(file, data, status.st_size)
+    return _whole_lines(data[:FILE_CAP].decode("utf-8", errors="replace")) + f"{FILE_CUT}{digest}]"
+
+
+def _hash_rest(file: BinaryIO, start: bytes, size: int) -> str:
+    """Return 16 hex digits of sha256 over `start` and the rest of `file`, up to `size` bytes.
+
+    Read a chunk at a time, and no further than the size the file had when opened, so memory
+    and time stay bounded even if something keeps writing to it.
+    """
+    digest = hashlib.sha256(start)
+    remaining = size - len(start)
+    while remaining > 0 and (chunk := file.read(min(HASH_CHUNK, remaining))):
+        digest.update(chunk)
+        remaining -= len(chunk)
+    return digest.hexdigest()[:16]
+
+
+def _was_cut(text: str) -> bool:
+    """Whether a file's text was cut at FILE_CAP: its last line is the cut marker."""
+    return text[text.rfind("\n") + 1 :].startswith(FILE_CUT)
 
 
 def _whole_lines(text: str) -> str:
@@ -635,7 +669,8 @@ def project_patch(pristine: Path, project: Path) -> Patch:
 
     The hash is of the same diff taken with every line's whitespace removed and blank lines
     dropped, so patches that differ only in whitespace share it. It covers the whole diff of
-    what was read, even past PATCH_CAP.
+    what was read, even past PATCH_CAP. A file cut at FILE_CAP ends in a marker carrying the
+    whole file's digest, so a change past the cut still shows: the marker line changes.
     """
     before, after = source_files(pristine), source_files(project)
     paths = sorted(before.keys() | after.keys())
@@ -643,7 +678,7 @@ def project_patch(pristine: Path, project: Path) -> Patch:
     normalized = _diff(before, after, paths, _without_whitespace)
     cut_file = any(
         before.get(path) != after.get(path)
-        and any(side.get(path, "").endswith(FILE_CUT) for side in (before, after))
+        and any(_was_cut(side.get(path, "")) for side in (before, after))
         for path in paths
     )
     return Patch(

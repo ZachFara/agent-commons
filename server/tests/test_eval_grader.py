@@ -224,6 +224,10 @@ def test_files_tools_generate_while_running_are_left_out_of_the_patch(tmp_path: 
     clean = runner.project_patch(pristine, pristine)
     generated = {
         "uv.lock": "version = 1\n",  # `uv run` creates it
+        "poetry.lock": "[[package]]\n",  # other installers write their own locks
+        "pdm.lock": "[metadata]\n",
+        "Pipfile.lock": "{}\n",
+        "package-lock.json": "{}\n",
         ".coverage": "data",
         ".coverage.host.123": "data",
         ".hypothesis/examples/x": "data",
@@ -296,12 +300,36 @@ def test_a_large_generated_file_is_cut_at_its_cap_and_the_patch_marked(
 
     graded = graded_recording(tmp_path, database_url, monkeypatch, plant=plant)
     assert graded.patch_truncated
-    assert graded.patch.endswith(f"\n+{runner.FILE_CUT}")
+    last = graded.patch.splitlines()[-1]
+    assert last.startswith(f"+{runner.FILE_CUT}")
+    assert last.endswith("]")
     assert graded.patch.count("\n+" + LINE.strip()) == LINES_AT_CAP  # whole lines, to the cap
     line = json.loads(ledger_line(graded, tmp_path, monkeypatch))
     assert line["patch_truncated"] is True
     assert line["patch_excerpt"].endswith(runner.EXCERPT_CUT)
     assert len(line["patch_excerpt"]) <= runner.EXCERPT_CAP + len(runner.EXCERPT_CUT)
+
+
+def test_a_change_past_a_files_cap_still_shows_in_the_patch_its_hash_and_truncated(
+    tmp_path: Path,
+) -> None:
+    big = LINE * (LINES_AT_CAP + 16)  # 1 KiB over the cap, never more
+    later = LINE * (LINES_AT_CAP + 15) + "z" * 63 + "\n"  # the same, but for its last line
+
+    def patch_with(data: str, where: Path) -> runner.Patch:
+        pristine, project = project_pair(where, {"app.py": FIXED})
+        runner.write_files(pristine, {"data.csv": big})
+        runner.write_files(project, {"data.csv": data})
+        return runner.project_patch(pristine, project)
+
+    unchanged, changed = patch_with(big, tmp_path / "a"), patch_with(later, tmp_path / "b")
+    assert not unchanged.truncated
+    assert "data.csv" not in unchanged.text
+    assert changed.truncated
+    assert changed.hash != unchanged.hash
+    assert f"-{runner.FILE_CUT}" in changed.text  # the marker's digest changed, nothing else
+    assert f"+{runner.FILE_CUT}" in changed.text
+    assert "z" * 63 not in changed.text  # past the cut: hashed, never read into the patch
 
 
 def test_a_patch_over_its_cap_is_cut_but_its_hash_covers_the_whole_diff(tmp_path: Path) -> None:

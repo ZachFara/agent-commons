@@ -174,7 +174,8 @@ Each result and ledger line also records, in every arm and in `run` and `search`
 Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
 `conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:
 `.venv`, `node_modules`, `__pycache__`, the pytest, mypy, ruff and hypothesis caches, `build/`,
-`dist/`, `*.egg-info`, `*.pyc`, `.coverage*`, and `uv.lock` (which `uv run` creates). `trials` groups by arm too, and `effects` counts only
+`dist/`, `*.egg-info`, `*.pyc`, `.coverage*`, and the installers' lock files: `uv.lock` (which
+`uv run` creates), `poetry.lock`, `pdm.lock`, `Pipfile.lock` and `package-lock.json`. `trials` groups by arm too, and `effects` counts only
 `commons`-arm lines.
 
 **The patch reads nothing outside the project.** The ledger is committed to a public repo, so
@@ -183,7 +184,9 @@ hard link, or a path resolving outside the project shows in the diff by its own 
 one line `[symlink: not read]`, `[hard link: not read]` or `[outside the project: not read]`.
 Anything not a regular file (a FIFO, a socket) is left out. The pristine copy copies symlinks
 as symlinks. A file is read up to 256 KiB, cut at its last whole line, and ends in
-`[file cut at 262144 bytes]`. The diff is kept up to 1 MiB and ends in
+`[file cut at 262144 bytes; sha256 <16 hex digits>]`. The digest is of the whole file, hashed a
+chunk at a time up to its size when opened, so a change past the cut still changes that line,
+and with it the diff, `patch_hash` and `patch_truncated`. The diff is kept up to 1 MiB and ends in
 `[patch cut at 1048576 characters]`. The whole diff (up to that cap, not scrubbed) is written to
 `.scratch/eval/<condition>/<condition>-<task>-<index>.patch`, next to the session's transcript,
 which `.gitignore` keeps out of git (a test checks it). The ledger line and the session's JSON
