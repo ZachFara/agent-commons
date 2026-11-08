@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from commons.domain.errors import NotPermittedError
+from commons.domain.observations import TaskCost
 from commons.domain.outcomes import ObservedRun, merge_observation
 from commons.domain.usage import ArtifactFrequencies, UseObservation, count_artifacts
 from commons.service.agent_text import TURN_NUDGE
@@ -17,7 +18,7 @@ from commons.service.ranking import rank, ranking_is_stale
 from commons.store.connection import Connection
 from commons.store.entries import approved_fixes
 from commons.store.models import model_id
-from commons.store.outcomes import locked_outcome, save_outcome, set_used
+from commons.store.outcomes import locked_outcome, save_outcome, set_cost, set_used
 from commons.store.task_events import (
     TaskRetrieval,
     acted_in_turn,
@@ -98,12 +99,14 @@ def finish_turn(
     used: dict[UUID, UseObservation],
     *,
     paired: bool = True,
+    cost: dict[UUID, TaskCost] | None = None,
 ) -> StopResult | None:
     """Record the observed model, `used` per retrieval, and observed outcomes (decision 0016).
 
     With `paired` (decision 0036), a test run counts for a retrieval only if it came after
     the work that matched the fix. Hooks from before 0036 don't say when that was, so their
-    turns are recorded unpaired, as before.
+    turns are recorded unpaired, as before. `cost` is what the task cost after each
+    retrieval; a retrieval it leaves out keeps the cost it had (hooks that don't send it).
     """
     with conn.transaction():
         task_id = task_for_session(conn, session_id, current_reporter(conn))
@@ -116,6 +119,8 @@ def finish_turn(
         for item in retrieved:
             seen = used.get(item.retrieval_id, UseObservation(None))
             _record_observation(conn, item, runs, seen, paired=paired)
+            if cost and (spent := cost.get(item.retrieval_id)) is not None:
+                set_cost(conn, item.retrieval_id, spent)
         nudge = _turn_nudge(conn, task_id, runs)
     return StopResult(
         task_id,
