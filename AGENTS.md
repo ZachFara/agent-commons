@@ -182,3 +182,9 @@ Things past sessions found that the next one needs. The orchestrator's docs code
 from the Learned sections of merged PRs.
 
 - `make check` needs local Postgres running (`make db`).
+- In a linked worktree, git sets `GIT_DIR` (and related variables) for its hooks, and they override `git -C`. Any code or test that runs git against another repo from inside a hook must drop them (`tools/agent_hooks/state.py` `git_environment()`).
+- Agent worktrees refuse compound git commands (`&&`, `;`, `$(...)` around git), bare `git stash` (the stash is shared across sessions) and sourcing `. ./.env.agent`. Run one git command per call, use `git restore --staged` or a named stash, and pass env variables inline.
+- The repository allows squash merges only. Feature branches are protected, so they are updated through a PR, never by deleting and re-creating them.
+- Linear turns any issue ID in agent-written text into a mention. Write Commons IDs in code spans so nothing appears on Zach's tickets.
+- Custom agent types in `.claude/agents/` load at session start only. In a session where they were added later, use the built-in `Plan` (read only) and `general-purpose` (with `isolation: worktree`) agents pointed at the role files.
+- Parallel feature branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.

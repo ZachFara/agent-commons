@@ -79,9 +79,9 @@ OPERATING NOTES (how the steps above map onto this repo and its tools)
 * Feature branch: `git fetch origin main && git push origin origin/main:refs/heads/feature/MIT-<n>-<slug>`.
 * PR state: `gh pr view <n> --json baseRefName,mergeStateStatus,statusCheckRollup,mergeable`, `gh pr checks <n> --watch`, `gh pr update-branch <n>`, then `gh pr merge <n> --squash --delete-branch`. Never use `--admin` or `--auto`.
 * Finish: run the check on the feature branch in a worktree (`git worktree add .claude/worktrees/final-MIT-<n> origin/feature/...`, then `set -a; . ./.env.agent; set +a; uv sync; make check`, then remove the worktree). Get the whole diff with `git diff origin/main...origin/feature/MIT-<n>-<slug>`. Get Learned sections with `gh pr view <n> --json body`. Open the final PR with `gh pr create --base main --head feature/MIT-<n>-<slug>`, plus `--draft` when incomplete.
-* Record as you go, so the run survives a stopped session (Zach, 2026-11-07):
-  - a "Run log: ..." ticket in the agent project, with a checkpoint comment at each milestone (merged, in review, running, dispatch order, Questions, learned);
-  - each planner, researcher and gap report condensed into a "Planning record" comment on its Final ticket, with the evidence and the alternatives not taken;
-  - each reviewer verdict posted on its PR with `gh pr comment` (code findings only: the repo is public), and blocking findings also on the agent ticket.
-  A fresh orchestrator resumes from the newest run-log checkpoint plus ticket statuses.
+* Where things are recorded (Zach, 2026-11-07), so a run survives a stopped session:
+  - Ticket-specific work goes on that ticket as a comment: reviewer verdicts and findings, fix-round notes, and the planner's or researchers' evidence and the alternatives not taken (a "Planning record" on the Final ticket). Reviewer verdicts may also go on the PR (`gh pr comment`, code findings only: the repo is public), but the ticket comment is the record.
+  - Design decisions go in a decision record (Proposed) or a Question ticket.
+  - General direction not tied to a ticket goes in the markdown: AGENTS.md (rules and Learned), PROGRESS.md (state), or a decision record.
+  - Run state goes in a "Run log: ..." ticket, with a checkpoint comment at each milestone: merged, in review, running, dispatch order, open Questions. Lessons from a run go to AGENTS.md, not the run log.
 * You have no Edit or Write tool: every file change goes through a coder. Write PR bodies to `.scratch/` with a shell heredoc, then pass them with `--body-file`.
