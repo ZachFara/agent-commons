@@ -24,9 +24,10 @@ from commons.domain.errors import InvalidInputError, NotPermittedError, RateLimi
 from commons.domain.keys import KeyHolder
 from commons.domain.observations import DocLookup, command_tail, split_library_id
 from commons.domain.outcomes import Usage
+from commons.domain.prompts import PromptVersion
 from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
-from commons.service import contributors, events, hooks, imports
+from commons.service import agent_text, contributors, events, hooks, imports
 from commons.service.identity import acting_as, current_reporter
 from commons.service.keys import check_key
 from commons.store.connection import Connection
@@ -37,6 +38,7 @@ Body = dict[str, Any]
 Handler = Callable[[Connection, Body], Body]
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_SHORT_HASH = re.compile(r"[0-9a-f]{12}")
 _REFUSALS = {400: "invalid_input", 401: "unauthorized", 403: "forbidden", 429: "rate_limited"}
 _USAGES: frozenset[Usage | None] = frozenset({"yes", "partial", "no", None})
 
@@ -164,8 +166,22 @@ def _model(body: Body) -> str | None:
     return model
 
 
+def _hook_prompt(body: Body) -> PromptVersion | None:
+    """Return the client's hook version, named by the server from its hash alone (MIT-609).
+
+    Hooks older than MIT-609 send no hash. Any label or text a client sends is ignored.
+    """
+    short_hash = body.get("prompt_hash")
+    if short_hash is None:
+        return None
+    if not isinstance(short_hash, str) or not _SHORT_HASH.fullmatch(short_hash):
+        msg = "prompt_hash must be 12 lowercase hex characters."
+        raise InvalidInputError(msg)
+    return agent_text.reported_hook_version(short_hash)
+
+
 def _session_start(conn: Connection, body: Body) -> Body:
-    task_id = hooks.session_start(conn, _session_id(body), _model(body))
+    task_id = hooks.session_start(conn, _session_id(body), _model(body), prompt=_hook_prompt(body))
     # The client sends a doc lookup's query only in full_trace; this tells it the mode.
     mode = privacy_mode(conn, current_reporter(conn), task_id)
     return {"task_id": str(task_id), "privacy_mode": mode}

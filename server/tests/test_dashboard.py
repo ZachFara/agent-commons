@@ -2,6 +2,8 @@ import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx2
 import psycopg
@@ -10,14 +12,21 @@ from fastmcp import FastMCP
 from starlette.testclient import TestClient
 
 import factories
+from commons.domain import prompts
 from commons.domain.corrections import Correction
-from commons.service import corrections, trust
+from commons.domain.entries import Proposal
+from commons.service import agent_text, corrections, trust
+from commons.service.keys import issue_key
 from commons.service.ranking import rank
+from commons.service.seeds import SEED_MODEL, SEED_REPORTER
 from commons.store import insights
 from commons.store import trust as trust_store
 from commons.store.connection import Connection
 from commons.store.models import model_id
+from commons.store.prompt_versions import prompt_version_id
+from commons.store.reporters import upsert_reporter
 from commons.store.rows import returned_id
+from commons.store.seeds import insert_seed_entry
 from commons.store.tasks import start_task
 from commons.web import app as web
 from mcp_client import call
@@ -416,3 +425,205 @@ def test_entries_that_went_live_without_review_are_findable_outside_the_queue(
     rows = {r.split('href="/entries/', 1)[1][:36]: r for r in mine.split("<tr>")[2:]}
     assert "unreviewed" in rows[str(live)]
     assert "unreviewed" not in rows[str(reviewed)]
+
+
+# Prompts (decision MIT-566)
+
+HOOK = {"outcome_source": "hook"}
+FIGURES = (
+    "tasks",
+    "straddled",
+    "searches",
+    "misses",
+    "retrievals",
+    "reported_rate",
+    "used_rate",
+    "used_n",
+    "observed_success_rate",
+    "observed_n",
+    "proposals",
+    "approved",
+)
+
+
+def hosted_client(db: psycopg.Connection) -> TestClient:
+    @contextmanager
+    def test_connection() -> Iterator[Connection]:
+        yield db
+
+    return TestClient(web.build_app(test_connection, hosted=True), base_url=BASE)
+
+
+def by_version(db: psycopg.Connection) -> dict[uuid.UUID | None, dict[str, Any]]:
+    return {row["id"]: row for row in insights.prompt_versions(db)}
+
+
+def test_prompts_page_breaks_outcomes_down_by_version(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    start = datetime.now(UTC) - timedelta(hours=1)
+
+    def at(minutes: int) -> datetime:
+        return start + timedelta(minutes=minutes)
+
+    old = factories.prompt_version(db, f"old-{uuid.uuid4().hex[:6]}", "<script>alert(1)</script>")
+    new = factories.prompt_version(db, f"new-{uuid.uuid4().hex[:6]}")
+    straddler, plain, proposer, dropped = (uuid.uuid4() for _ in range(4))
+    # A task that began under `old` and went on after a change counts once, under `old`, with
+    # all of its rows: the agent kept reading the text it started with.
+    entry_id = factories.entry(
+        db, reporter, task_id=straddler, prompt_version_id=old, created_at=at(0)
+    )
+    factories.search(db, reporter, straddler, prompt_version_id=old, created_at=at(1))
+    worked: dict[str, object] = {
+        "used": "yes",
+        "outcome": "tests_passed",
+        "evidence": HOOK,
+        "agent_assessment": "Worked.",
+    }
+    factories.retrieval(
+        db, entry_id, reporter, straddler, worked, prompt_version_id=old, created_at=at(1)
+    )
+    later = {"prompt_version_id": new, "created_at": at(2)}
+    factories.search(db, reporter, straddler, hit_count=0, **later)
+    factories.retrieval(db, entry_id, reporter, straddler, {"used": "partial"}, **later)
+    factories.entry(
+        db, reporter, status="pending", task_id=straddler, prompt_version_id=new, created_at=at(2)
+    )
+    # A proposal with no task counts under its own stamp.
+    factories.entry(db, reporter, status="pending", prompt_version_id=new, created_at=at(5))
+    factories.search(db, reporter, plain, prompt_version_id=new, created_at=at(3))
+    factories.retrieval(
+        db, entry_id, reporter, plain, {"used": "no"}, prompt_version_id=new, created_at=at(3)
+    )
+    factories.retrieval(db, entry_id, reporter, plain, prompt_version_id=new, created_at=at(4))
+    factories.entry(
+        db, reporter, status="pending", task_id=proposer, prompt_version_id=new, created_at=at(5)
+    )
+    # Excluded rows drop out of every figure.
+    gone = {"prompt_version_id": new, "created_at": at(6), "excluded": True}
+    factories.search(db, reporter, dropped, hit_count=0, **gone)
+    factories.retrieval(db, entry_id, reporter, dropped, worked, **gone)
+
+    rows = by_version(db)
+    assert [rows[old][k] for k in FIGURES] == [1, 1, 2, 1, 2, 0.5, 1.0, 2, 1.0, 1, 2, 1]
+    assert [rows[new][k] for k in FIGURES] == [2, 0, 1, 0, 2, 0.0, 0.0, 1, None, 0, 2, 0]
+    assert (rows[old]["first_seen"], rows[old]["last_seen"]) == (at(0), at(1))
+    assert (rows[new]["first_seen"], rows[new]["last_seen"]) == (at(2), at(5))
+
+    page = client.get("/prompts").text
+    assert 'href="/prompts" class="active"' in page
+    for version in (old, new):
+        assert rows[version]["short_hash"] in page
+        assert rows[version]["label"] in page
+    assert '100% <span class="muted">n=1</span>' in page
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
+    assert "<script>" not in page.split("<body>", 1)[1]
+    entry_page = client.get(f"/entries/{entry_id}").text
+    assert rows[old]["short_hash"] in entry_page
+    assert rows[new]["short_hash"] in entry_page
+
+
+def test_rows_from_before_versioning_share_one_line(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    before = by_version(db).get(None, {"searches": 0, "proposals": 0, "tasks": 0})
+    task_id = uuid.uuid4()
+    factories.search(db, reporter, task_id)
+    factories.entry(db, reporter, task_id=task_id)
+
+    after = by_version(db)[None]
+    assert after["searches"] == before["searches"] + 1
+    assert after["proposals"] == before["proposals"] + 1
+    assert after["tasks"] == before["tasks"] + 1
+    assert after["short_hash"] is None
+    assert client.get("/prompts").text.count("before versioning") == 1
+
+
+def test_seeded_and_imported_entries_leave_every_prompt_version_row_alone(
+    db: psycopg.Connection,
+) -> None:
+    before = by_version(db)
+    seed = insert_seed_entry(
+        db,
+        uuid.uuid4(),
+        Proposal(
+            symptom="ModuleNotFoundError: prompts-seed",
+            environment={"language": "python 3.12"},
+            cause="A seed.",
+            fix="Install it.",
+            domains=("test",),
+            repro=None,
+            task_id=uuid.UUID(int=0),
+        ),
+        upsert_reporter(db, SEED_REPORTER, "entry"),
+        model_id(db, SEED_MODEL),
+    )
+    assert seed
+    key = issue_key(db, f"importer-{uuid.uuid4().hex[:6]}", "agent").key
+    imported = hosted_client(db).post(
+        "/api/hooks/import",
+        json={
+            "entry": {
+                "symptom": "RuntimeError: prompts-import lost its event loop",
+                "environment": {"language": "python 3.12"},
+                "cause": "The loop closed first.",
+                "fix": "Keep the loop open.",
+                "domains": ["test"],
+            },
+            "imported_from": {
+                "local_entry_id": str(uuid.uuid4()),
+                "model": "claude-opus-5-5",
+                "created_at": "2026-01-02T03:04:05+00:00",
+            },
+        },
+        headers={"authorization": f"Bearer {key}"},
+    )
+    assert imported.status_code == 200
+    # The import's fresh task_id is on the entry only: no tasks row exists for it.
+    row = db.execute(
+        "SELECT e.task_id, EXISTS (SELECT 1 FROM tasks t WHERE t.id = e.task_id) FROM entries e "
+        "WHERE e.id = %s",
+        (imported.json()["entry_id"],),
+    ).fetchone()
+    assert row
+    assert row[0] is not None
+    assert not row[1]
+    # Later than anything else in the store, so last_seen would move if they counted.
+    db.execute(
+        "UPDATE entries SET created_at = now() + interval '1 day' "
+        "WHERE symptom LIKE '%%prompts-seed' OR symptom LIKE '%%prompts-import%%'"
+    )
+
+    assert by_version(db) == before
+
+
+def test_hook_versions_are_listed_apart_with_tasks_and_reporters(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    other = upsert_reporter(db, f"hooks-{uuid.uuid4().hex[:6]}", "entry")
+    marker = uuid.uuid4().hex[:8]
+    released = prompts.prompt_version(
+        f"hooks-{marker}", {"session_start": f"<b>{marker}</b>"}, kind="hooks"
+    )
+    unknown = agent_text.reported_hook_version(uuid.uuid4().hex[:12])
+    released_id, unknown_id = (prompt_version_id(db, v) for v in (released, unknown))
+    for who, version_id in ((reporter, released_id), (other, released_id), (reporter, unknown_id)):
+        start_task(db, f"s-{uuid.uuid4()}", who, None, version_id)
+    start_task(db, f"s-{uuid.uuid4()}", reporter, None, released_id)
+
+    rows = {row["id"]: row for row in insights.hook_prompt_versions(db)}
+    assert (rows[released_id]["tasks"], rows[released_id]["reporters"]) == (3, 2)
+    assert (rows[unknown_id]["tasks"], rows[unknown_id]["reporters"]) == (1, 1)
+    assert rows[unknown_id]["label"] == "unrecognized"
+    assert released_id not in by_version(db)
+    assert unknown_id not in by_version(db)
+
+    page = client.get("/prompts").text
+    hooks_section = page.split("Hook versions", 1)[1]
+    for version in (released, unknown):
+        assert version.hash[:12] in hooks_section
+    assert f"&lt;b&gt;{marker}&lt;/b&gt;" in hooks_section
+    activity = client.get("/activity").text
+    assert released.hash[:12] in activity
+    assert f'{unknown.hash}</a> <span class="muted">unrecognized</span>' in activity

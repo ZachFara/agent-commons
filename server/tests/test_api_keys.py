@@ -97,7 +97,7 @@ def test_review_keys_reach_review_pages_only(app: Starlette, db: psycopg.Connect
     key = new_key(db, "scope-review", "review")
     assert page(app, key, "/queue")[0] == 200
     assert page(app, key, "/entries")[0] == 200
-    for path in ("/", "/people", "/searches", "/activity"):
+    for path in ("/", "/people", "/searches", "/prompts", "/activity"):
         status, text = page(app, key, path)
         assert (status, "admin scope" in text) == (403, True), path
     assert mcp(app, key)[0] == 403

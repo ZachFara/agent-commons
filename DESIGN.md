@@ -57,6 +57,7 @@ entries
 - trace_id: nullable, references traces.
 - task_id: UUID, nullable. The session that proposed it; null for imported entries.
 - search_vector: tsvector, generated from symptom, cause, fix, domains.
+- prompt_version_id: nullable, references prompt_versions. The text the MCP server served when the entry was proposed; null for imports, seeds and older rows.
 
 retrievals
 - entry_id, reporter_id, model_id.
@@ -64,12 +65,23 @@ retrievals
 - query: text. What the agent searched for.
 - rank_position: int. Where the entry appeared in results.
 - score_at_retrieval: float. The ranking score at the time, so ranking changes can be evaluated later.
+- prompt_version_id: nullable, references prompt_versions. The same version as the search that returned the entry.
 
 searches
 - task_id, reporter_id, model_id, privacy_mode, created_at.
 - query: text, redacted. language, result_limit, hit_count. A hit_count of 0 is a miss: the store had nothing for it.
 - environment, results: jsonb, redacted. Only written in full_trace mode (decision 0024).
 - One row per search call, whether or not anything matched.
+- prompt_version_id: nullable, references prompt_versions. The text the MCP server served when the agent searched.
+
+prompt_versions (decision 2026-11-07-MIT-566-prompt-versions)
+- kind: enum server, hooks. `server` is the text the MCP server serves; `hooks` is the text the installed hook client shows (the SessionStart sentence, the Stop report reminder, and the variant's start line and nudge). The Prompts page lists the two kinds apart; `commons prompts` lists only `server` versions.
+- hash: text, unique, lowercase hex, shown as the first 12. SHA-256 over canonical JSON (sorted keys) of `surfaces`. A row is one of two shapes: 64 hex characters with `surfaces`, or a `hooks` row with only the 12 characters a hosted client sent and NULL `surfaces`.
+- label: text, up to 120 characters. For `server`, the `COMMONS_INSTRUCTIONS_VARIANT` name, with the wording it stands for when it is `baseline` or `previous` (`baseline:w-...`), and `+turn-nudge`, `+record` when those are on. For `hooks`, the variants that show that text (e.g. `original, examples, rule, invite`), or `wording g<n>` for a start line only the wording search uses. The first label to serve a hash keeps it.
+- surfaces: jsonb, {surface: text}, nullable. For `server`: the instructions; each tool's description, input schema (JSON, sorted keys) and `_meta`; registered prompts; the untrusted note and the empty-result note; and, only when switched on, the record prompt, the turn nudge template and a session feedback marker. For `hooks`: `session_start`, `report_reminder`, and `start_line` and `nudge` when the variant has them. Templates, never formatted text, so ids and counts never make a new version.
+- `build_server` builds the server version once, from the same tool and prompt objects it gives FastMCP; `search` and `propose` upsert it (insert, do nothing on conflict, then select) and point their rows at it.
+- Hook versions: a local hook stores the version it shows, with its surfaces. A hosted client sends only `prompt_hash`, the first 12 hex characters, and the server labels it from the hook texts its own code has released (`RELEASED_HOOK_TEXTS` in `agent_text`, crossed with every variant and wording start line), storing that 64-hex version with its surfaces. A hash it doesn't know is stored as sent, labelled `unrecognized`, with NULL surfaces: the server never stores text a client sent.
+- tasks.hook_prompt_version_id: nullable, references prompt_versions. The hook version SessionStart recorded for the task. A resume that sends a version overwrites it with the newer one; a resume that sends none keeps it. Tasks from older hosted clients, from test keys (decision 0030) and from before migration 0018 have none.
 
 doc_lookups (migration 0020)
 - task_id, reporter_id, model_id (the task's, null until hooks see one), privacy_mode, created_at, excluded.
@@ -95,7 +107,7 @@ reporters
 corrections (decision 0030)
 - target_table (outcomes, retrievals, searches, doc_lookups; migration 0021 adds doc_lookups), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by. Retrievals, searches and doc_lookups take only `excluded`; excluding a task reaches all three.
 - Raw observations are never deleted. A correction writes the new value into the row and records the old one; a standing correction of `used` or `outcome` is not overwritten by later hooks or reports.
-- retrievals, outcomes, searches and doc_lookups carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes`, `counted_searches` and `counted_doc_lookups` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start.
+- retrievals, outcomes, searches and doc_lookups carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes`, `counted_searches` and `counted_doc_lookups` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start. The views are `SELECT *`, whose columns are fixed when a view is created, so a migration that adds a column to one of these tables recreates its view (0017 did, for `prompt_version_id`).
 
 api_keys (hosted mode only; decision 0032)
 - reporter_id, prefix (first characters, shown in listings), key_hash (SHA-256, unique).
@@ -166,7 +178,7 @@ Observed outcomes come from hooks, not from the agent:
 - PostToolUse on Edit and Write: record a hash of the touched file so `used` can be computed from the diff at task end.
 - PostToolUse on Context7 `query-docs` (`mcp__<server>__query-docs`, under any server or plugin name): store a pointer in doc_lookups, the library id and version from the tool input, and the redacted query only in full_trace. The response is never read and nothing is spooled; a failed call or a malformed id records nothing.
 - Stop: compute `used` by matching entry fix text against the session diff, assemble the evidence, and write the outcome. Prompt the agent to file its assessment if it hasn't.
-- SessionStart: mint task_id, set privacy mode from the reporter's default. Hosted, `session-start` returns the task's `privacy_mode`; the client keeps it with the session's binding and sends a lookup's query only when it is full_trace (no stored mode counts as entry). The server also drops the query outside full_trace.
+- SessionStart: mint task_id, set privacy mode from the reporter's default, and record the hook version on the task (`tasks.hook_prompt_version_id`). The hosted body carries `prompt_hash`, the first 12 hex characters of that version, and no hook text. Hosted, `session-start` returns the task's `privacy_mode`; the client keeps it with the session's binding and sends a lookup's query only when it is full_trace (no stored mode counts as entry). The server also drops the query outside full_trace.
 
 Hook details, including what stays on the user's machine, are in decision 0016. Hooks are Claude Code's hook system (settings.json). The installed hooks only call `commons hook <event>`; the logic lives in the server package so it is typed and tested. Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
 
