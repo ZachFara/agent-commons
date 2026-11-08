@@ -152,12 +152,14 @@ def agent_ticket(state_dir: Path) -> None:
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Path:
-    """A minimal git repository on disk; git's own commands read it."""
+def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A minimal git repository on disk; git's own commands read it, and no other config."""
     root = tmp_path / "repo"
     for directory in ("objects", "refs/heads", "refs/tags"):
         (root / ".git" / directory).mkdir(parents=True)
     (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "no-global-gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     return root
 
 
@@ -199,14 +201,17 @@ ALLOWED_BASH = [
     'git commit -m "fix: handle -n and --force in names"',
     "git commit -am 'feat: x'",
     "git -C ../other commit -m 'chore: y'",
-    "gh pr create --base main --title 'MIT-601: search' --body \"Uses `rank()`\"",
+    "gh pr create --base main --title 'MIT-601: search' --body 'Uses rank()'",
     "gh pr view 12 --json baseRefName",
     "gh api repos/ZachFara/agent-commons/pulls/12",
     "gh api -X GET repos/ZachFara/agent-commons/pulls -f state=open",
+    "gh api -XGET repos/ZachFara/agent-commons/pulls -f state=open",
+    "git config --get alias.ci",
+    "git config --unset alias.ci",
     "gh api graphql -f query='{ viewer { login } }'",
     "uv run pytest server/tests/test_smoke.py 2>&1 | tail -5",
     "git commit -F - <<'EOF'\ndocs: never git push --force to main\nEOF",
-    "gh pr create --base feature/MIT-12-x --body \"$(cat <<'EOF'\n## Learned\nSKIP= no\nEOF\n)\"",
+    "gh pr create --base feature/MIT-12-x -t x --body \"$(cat <<'EOF'\n## Learned\nSKIP=\nEOF\n)\"",
 ]
 
 DENIED_BASH = [
@@ -242,6 +247,21 @@ DENIED_BASH = [
     "gh api --method=DELETE repos/ZachFara/agent-commons/rulesets/1",
     "gh api repos/ZachFara/agent-commons -f visibility=private",
     "gh api graphql -f query='mutation { deleteBranchProtectionRule(input: {}) { x } }'",
+    "gh api -XPOST repos/ZachFara/agent-commons/issues",
+    "gh api -XDELETE repos/ZachFara/agent-commons/rulesets/1",
+    "gh api -X=PATCH repos/ZachFara/agent-commons",
+    "gh api graphql -F query=@.scratch/q.graphql",
+    "gh api graphql -f query=@.scratch/q.graphql",
+    "gh api graphql --input .scratch/q.json",
+    "gh api graphql --input=.scratch/q.json",
+    "git -c alias.ci=commit ci -m x",
+    "git -c alias.p='!git push --force' p",
+    "git -c Alias.st=status st",
+    "git --config-env alias.p=CMD p",
+    "git --config-env=alias.p=CMD p",
+    "git config alias.p '!git push --force'",
+    "git config --global alias.ci commit",
+    "git config set alias.ci commit",
     "gh repo edit --default-branch dev",
     "gh secret set TOKEN",
     "gh variable delete GCP_OPERATIONS",
@@ -273,7 +293,9 @@ def test_bash_guard_denies_with_a_reason(
 
 
 @pytest.mark.usefixtures("agent_ticket")
-@pytest.mark.parametrize("command", ["git push", "git push -u origin HEAD", "git push origin"])
+@pytest.mark.parametrize(
+    "command", ["git push", "git push -u origin HEAD", "git push origin", "git push origin @"]
+)
 def test_bash_guard_denies_a_bare_push_from_main(
     command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -330,8 +352,8 @@ ID_COMMANDS = [
     "gh pr create --base feature/search --title '{id}: queue badge' --body x",
     "gh pr create --base feature/search -t x -b 'closes {id}'",
     "gh pr create --base feature/search --title x --body \"$(cat <<'EOF'\nSee {id}\nEOF\n)\"",
-    "gh pr create --base main --head feature/{id}-queue-badge --title x",
-    "gh pr create --base main -H feat/{id} --title x",
+    "gh pr create --base main --head feature/{id}-queue-badge --title x --body y",
+    "gh pr create --base main -H feat/{id} -t x -b y",
     "gh pr edit 12 --title '{id}: queue badge'",
     "gh pr edit 12 -b 'about {id}'",
     "gh pr merge 12 --squash --subject '{id}: x (#12)'",
@@ -342,6 +364,8 @@ ID_COMMANDS = [
     "git checkout -qB feat/{id} origin/main",
     "git branch feat/{id}",
     "git branch -m feat/x feat/{id}",
+    "git worktree add -b feat/{id} ../wt origin/main",
+    "git worktree add -B feat/{id} ../wt",
     "git push -u origin feat/{id}",
     "git push --set-upstream origin feat/{id}",
     "git push origin origin/main:refs/heads/feature/{id}-queue-badge",
@@ -373,7 +397,6 @@ def test_bash_guard_denies_issue_ids_agents_dont_own(
         ("git switch -c feat/mit-601-x", "git switch -c feat/mit-575-x"),
         ("git commit -m 'Mit-601'", "git commit -m 'Mit-575'"),
         ("git commit -m 'feature/MIT-601-x'", "git commit -m 'feature/MIT-575-x'"),
-        ("git commit -m 'in P-MIT-29'", "git commit -m 'in MIT-29'"),
         ("git switch -c fix/submit-2-forms", "git switch -c fix/x_MIT-575"),
     ],
 )
@@ -384,32 +407,158 @@ def test_bash_guard_finds_ids_in_any_case_and_inside_words(
     assert bash(denied, repo, monkeypatch) == 2
 
 
+def test_bash_guard_denies_a_project_id_too(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Linear may link the issue inside `P-MIT-29`; the project has a name."""
+    assert bash("git commit -m 'feat: x for P-MIT-29'", repo, monkeypatch) == 2
+    assert "name the project by name" in capsys.readouterr().err
+    assert bash("git commit -m 'feat: x for Commons Agent Project'", repo, monkeypatch) == 0
+
+
 @pytest.mark.usefixtures("gh")
 @pytest.mark.parametrize(
     "command",
     [
-        "gh pr create --base feature/MIT-575-queue-badge --head feat/MIT-580 --title x",
+        # The final PR into main comes from final/<slug>, cut from an older ID-named branch.
+        "git worktree add -b final/queue-badge ../final origin/feature/MIT-575-queue-badge",
+        "git branch final/queue-badge origin/feature/MIT-575-queue-badge",
+        "git push -u origin final/queue-badge",
+        "git push origin 1a2b3c4d:refs/heads/final/queue-badge",
+        "gh pr create --base main --head final/queue-badge --title x --body-file .scratch/x.md",
+        # The base branch isn't linked; reading or switching to a branch writes nothing.
+        "gh pr create --base feature/MIT-575-queue-badge --head feat/MIT-580 --title x --body y",
         "gh pr edit 12 --base feature/MIT-575-queue-badge",
+        "gh pr merge 12 --squash --delete-branch",
         "git switch feature/MIT-575-queue-badge",
         "git fetch origin feature/MIT-575-queue-badge",
         "git branch -D feature/MIT-575-queue-badge",
         "git log --oneline origin/main..origin/feature/MIT-575-queue-badge",
+        "git diff origin/main...origin/feature/MIT-575-queue-badge",
     ],
 )
-def test_bash_guard_allows_existing_branches_and_bases(
+def test_bash_guard_allows_final_branches_and_existing_bases(
     command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Linear doesn't link a PR's base branch; reading or switching to a branch writes nothing."""
+    monkeypatch.setenv("FAKE_PR_BASE", f"feature/{FOREIGN_ID}-queue-badge")
+    (repo / ".scratch").mkdir()
+    (repo / ".scratch" / "x.md").write_text("Adds the queue badge.\n", encoding="utf-8")
+    assert bash(command, repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("gh", "agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push -u origin HEAD",
+        "git push",
+        "git push origin @",
+        "gh pr create --base main --title x --body y",
+    ],
+)
+def test_bash_guard_checks_the_current_branch_when_it_is_pushed_or_the_head(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feature/{FOREIGN_ID}-queue-badge")
+    assert bash(command, repo, monkeypatch) == 2
+    assert FOREIGN_ID in capsys.readouterr().err
+    checkout(repo, f"feat/{AGENT_TICKET}")
     assert bash(command, repo, monkeypatch) == 0
 
 
 @pytest.mark.usefixtures("agent_ticket")
-def test_bash_guard_denies_pushing_the_current_branch_with_an_id(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh pr create --base main --fill",
+        "gh pr create --base main -f",
+        "gh pr create --base main -df",
+        "gh pr create --base main --fill-first",
+        "gh pr create --base main --fill-verbose",
+        "gh pr create --base main --title x --body y --fill",
+        "gh pr create --base main --title x",
+        "gh pr create --base main --body y",
+        "gh pr create --base main --body-file .scratch/x.md",
+        "gh pr create --base main --web",
+    ],
+)
+def test_bash_guard_wants_an_explicit_pr_title_and_body(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    checkout(repo, f"feature/{FOREIGN_ID}-queue-badge")
-    assert bash("git push -u origin HEAD", repo, monkeypatch) == 2
-    assert bash("git push", repo, monkeypatch) == 2
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "explicit --title and --body or --body-file" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf 'body' | gh pr create --base main --title x --body-file -",
+        "gh pr create --base main --title x -F - < .scratch/x.md",
+        "gh pr edit 12 --body-file - < .scratch/x.md",
+        "git commit -F - < .scratch/x.md",
+        'git commit -F - <<< "feat: x"',
+        "cat .scratch/x.md | git commit --file=-",
+    ],
+)
+def test_bash_guard_denies_stdin_messages_without_a_heredoc(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "pass --body-file <path> or a heredoc" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("gh", "agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git commit -m "$(git log -1 --format=%s)"',
+        'git commit -m "feat: $TITLE"',
+        "git commit -m $MSG",
+        "git commit -m $(cat .scratch/x.md)",
+        "git commit -m '${TITLE}'",
+        'gh pr create --base main --title x --body "Uses `rank()`"',
+        'gh pr create --base main --title "$(git log -1 --format=%s)" --body y',
+        'gh pr edit 12 --title "$T"',
+        'gh pr merge 12 --squash --subject "$(cat .scratch/x.md)"',
+        "git commit -F - <<EOF\nfeat: $(date)\nEOF",
+        'gh pr create --base main --title x --body "$(cat <<EOF\nSee $URL\nEOF\n)"',
+    ],
+)
+def test_bash_guard_denies_shell_substitution_in_messages(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("FAKE_PR_BASE", "feature/search")
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "--body-file <path>" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_expands_configured_git_aliases(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / ".git" / "config").write_text(
+        "[alias]\n"
+        "\tci = commit\n"
+        "\tnew = switch -c\n"
+        "\tup = !git push --force origin HEAD\n"
+        "\tci2 = ci\n",
+        encoding="utf-8",
+    )
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(f"git ci -m 'feat: {AGENT_TICKET}'", repo, monkeypatch) == 0
+    assert bash(f"git new feat/{AGENT_TICKET}-x", repo, monkeypatch) == 0
+    assert bash("git status", repo, monkeypatch) == 0
+    assert bash(f"git ci -m 'feat: {FOREIGN_ID}'", repo, monkeypatch) == 2
+    assert bash("git ci -nm 'feat: x'", repo, monkeypatch) == 2
+    assert bash(f"git new feature/{FOREIGN_ID}-x", repo, monkeypatch) == 2
+    capsys.readouterr()
+    for shell_or_nested in ("git up", "git ci2 -m x"):
+        assert bash(shell_or_nested, repo, monkeypatch) == 2
+        assert "is an alias for" in capsys.readouterr().err
 
 
 @pytest.mark.usefixtures("gh", "agent_ticket")

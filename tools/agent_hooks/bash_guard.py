@@ -6,15 +6,22 @@ Denied (exit code 2, reason on stderr):
 - any push to main, any force push, `--mirror` and `--all`.
 - hook bypasses: `--no-verify`, `git commit -n`, `core.hooksPath`, pre-commit's `SKIP=`.
 - `gh api` calls that write (any method but GET, or fields without `-X GET`) and graphql
-  mutations, plus `gh repo edit|delete|rename|archive|unarchive|sync` and `gh secret|variable`
-  writes: they change repository settings.
+  mutations or queries read from a file, plus `gh repo edit|delete|rename|archive|unarchive|
+  sync` and `gh secret|variable` writes: they change repository settings.
 - reading live Commons credentials: Secret Manager, `~/.config/agent-commons`, the Neon key.
-- a Linear issue ID agents don't own (any `MIT-<n>` outside `.agents/owned-issues.txt` and
-  the agent project) in GitHub-visible text: `git commit` messages (`-m`, `-F` files),
-  `gh pr create|edit|merge` titles, bodies and body files, new branch names (`git switch -c`,
-  `git checkout -b`, `git branch`), pushed refspecs and `gh pr create --head`. Linear's GitHub
-  integration links a PR to every issue its title, body or head branch names, and moves that
-  issue as the PR opens and merges. `--base` is allowed: Linear doesn't link the base branch.
+- git aliases the guard can't see through: defining one (`git -c alias.x=...`, `git config
+  alias.x ...`), and running one that is a shell command (`!...`) or another alias. Other
+  configured aliases are expanded and checked like the command they stand for.
+- a Linear issue ID agents don't own (any `MIT-<n>` or `P-MIT-<n>` outside
+  `.agents/owned-issues.txt`) in GitHub-visible text: `git commit` messages (`-m`, `-F`
+  files), `gh pr create|edit|merge` titles, bodies and body files, new branch names (`git
+  switch -c`, `git checkout -b`, `git branch`, `git worktree add -b`), pushed refspecs and the
+  head of `gh pr create` (`--head`, else the current branch). Linear's GitHub integration links
+  a PR to every issue its title, body or head branch names, and moves that issue as the PR
+  opens and merges. `--base` is allowed: Linear doesn't link the base branch.
+- message text the guard can't read: shell substitution (`$(...)`, backticks, `$NAME`) in a
+  title, body or message, an unquoted heredoc that substitutes, stdin (`-F -`) without a
+  heredoc, and `gh pr create --fill` or without an explicit title and body.
 
 Commands are split into simple commands on `;`, `&&`, `||`, `|`, newlines and `$(`; shell
 wrappers (`bash -c`, `eval`, `xargs`, a heredoc fed to a shell) are checked recursively.
@@ -25,12 +32,14 @@ GitHub rulesets on main and feature/ are the backstop.
 Entry script: .claude/hooks/bash_guard.sh. Tests: server/tests/test_agent_hooks.py.
 """
 
+import itertools
 import re
 import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 from tools.agent_hooks import state
 
@@ -55,7 +64,10 @@ WRAPPERS = frozenset({"env", "command", "time", "nohup", "exec", "sudo"})
 SHELLS = frozenset({"sh", "bash", "zsh", "dash"})
 SCRIPT_RUNNERS = SHELLS | {"eval", "source", "."}  # a heredoc fed to one of these is run
 ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
-GIT_GLOBAL_WITH_VALUE = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace"})
+GIT_GLOBAL_WITH_VALUE = frozenset(
+    {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace"}
+)
+GIT_CONFIG_OPTIONS = frozenset({"-c", "--config-env"})
 PUSH_WITH_VALUE = frozenset({"-o", "--push-option", "--repo", "--receive-pack", "--exec"})
 COMMIT_VALUE_LETTERS = "mFCct"  # short options whose value follows (rest of cluster or next)
 COMMIT_ATTACHED_LETTERS = "Su"  # short options whose optional value is the rest of the cluster
@@ -64,14 +76,21 @@ MERGE_WITH_VALUE = frozenset(
     | {"--match-head-commit", "-R", "--repo"}
 )
 API_FIELDS = ("-f", "-F", "--field", "--raw-field", "--input")
-# A Linear issue ID, also inside a longer word (`feature/MIT-575-x`); `P-MIT-29` is a project.
+# A Linear issue ID, also inside a longer word (`feature/MIT-575-x`). `P-MIT-29` is a project
+# reference, denied like an ID: Linear may link the issue inside it.
 ISSUE_ID = re.compile(r"(?<![a-z])(?:p-)?mit-\d+", re.IGNORECASE)
+# Shell substitution in an argument: `$(`, `${`, `$NAME`, `$1`, a `$` cut off by an unquoted
+# `$(` (the tokenizer splits there), or a backtick.
+SUBSTITUTION = re.compile(r"\$(?:[\w({]|$)|`")
+# `"$(cat <<'EOF' ... EOF)"` once split_heredocs has taken out the body (checked on its own).
+CAT_HEREDOC = re.compile(r"\$\(\s*cat\s+<<heredoc\s*\)")
 COMMIT_MESSAGES = frozenset({"-m", "--message"})
 COMMIT_FILES = frozenset({"-F", "--file"})
-# Options of `git switch` / `git checkout` that create a branch, and their short value letters.
+# Subcommands that create a branch through an option, and their short value letters.
 NEW_BRANCH_OPTIONS = {
     "switch": (frozenset({"-c", "-C", "--create", "--force-create", "--orphan"}), "cC"),
     "checkout": (frozenset({"-b", "-B", "--orphan"}), "bB"),
+    "worktree": (frozenset({"-b", "-B"}), "bB"),
 }
 # `git branch` options under which it lists, deletes or configures instead of creating.
 BRANCH_NOT_CREATING = frozenset(
@@ -80,24 +99,39 @@ BRANCH_NOT_CREATING = frozenset(
     | {"-u", "--set-upstream-to", "--unset-upstream", "--edit-description"}
 )
 BRANCH_RENAMING = frozenset({"-m", "-M", "--move", "-c", "-C", "--copy"})
+# git subcommands this guard inspects. git never lets an alias shadow them.
+GIT_INSPECTED = frozenset({"push", "commit", "branch", "config", *NEW_BRANCH_OPTIONS})
 # `gh pr` subcommands that write PR text, with their short options that take a value.
 PR_VALUE_LETTERS = {"create": "aBbFHlmprRTt", "edit": "BbFRt", "merge": "AbFRt"}
-PR_TEXT = frozenset({"-t", "--title", "--subject", "-b", "--body"})
+PR_TITLE = frozenset({"-t", "--title", "--subject"})
+PR_BODY = frozenset({"-b", "--body"})
 PR_FILES = frozenset({"-F", "--body-file"})
 PR_HEAD = frozenset({"-H", "--head"})
+PR_FILL = frozenset({"--fill", "--fill-first", "--fill-verbose"})
 SETTINGS_COMMANDS = {
     "repo": frozenset({"edit", "delete", "rename", "archive", "unarchive", "sync"}),
     "secret": frozenset({"set", "delete", "remove"}),
     "variable": frozenset({"set", "delete", "remove"}),
 }
 
-Check = Callable[[list[str], str], str | None]
+
+class Shell(NamedTuple):
+    """Where a command line runs, and what its heredocs hold."""
+
+    cwd: str
+    heredocs: tuple[str, ...] = ()
+    expands: bool = False  # an unquoted heredoc substitutes `$...` or backticks into its body
 
 
-def split_heredocs(command: str) -> tuple[str, list[str]]:
-    """Return the command with heredoc bodies removed, and the bodies."""
+Check = Callable[[list[str], Shell], str | None]
+
+
+def split_heredocs(command: str) -> tuple[str, list[str], bool]:
+    """Return the command without heredoc bodies, the bodies, and whether one substitutes."""
     text = command.replace("\\\n", " ")
-    return HEREDOC.sub("<<heredoc", text), [match[3] for match in HEREDOC.finditer(text)]
+    matches = list(HEREDOC.finditer(text))
+    expands = any(not match[1] and SUBSTITUTION.search(match[3]) for match in matches)
+    return HEREDOC.sub("<<heredoc", text), [match[3] for match in matches], expands
 
 
 def tokenize(text: str) -> list[str]:
@@ -174,33 +208,64 @@ def option_value(arg: str, letters: str) -> tuple[str, str | None]:
     return (f"-{arg[index]}", arg[index + 1 :] or None) if index else (arg, None)
 
 
+def has_short_flag(
+    args: list[str], flag: str, value_letters: str, attached_letters: str = ""
+) -> bool:
+    """Return whether the short flag `-<flag>` is given, alone or in a cluster (`-am`)."""
+    skip = False
+    for arg in args:
+        if skip or not arg.startswith("-") or arg.startswith("--"):
+            skip = False
+            continue
+        for index, letter in enumerate(arg[1:], start=1):
+            if letter == flag:
+                return True
+            if letter in value_letters + attached_letters:
+                skip = letter in value_letters and index == len(arg) - 1
+                break
+    return False
+
+
 def foreign_ids(texts: Iterable[str]) -> list[str]:
-    """Return the issue IDs in `texts` that agents don't own, decided as linear_guard does."""
+    """Return the issue IDs in `texts` that are not on the owned list linear_guard uses."""
     found = {match.upper() for text in texts for match in ISSUE_ID.findall(text)}
     if not found:
         return []
     owned = state.owned_issues()
-    return sorted(i for i in found if i.lower() not in owned and not state.is_agent_project(i))
+    return sorted(issue for issue in found if issue.lower() not in owned)
 
 
 def check_ids(texts: Iterable[str], where: str) -> str | None:
     """Deny GitHub-visible text that names an issue agents don't own."""
-    if foreign := foreign_ids(texts):
+    if not (foreign := foreign_ids(texts)):
+        return None
+    advice = "write it without the ID (Linear links PR text to that ticket)"
+    if any(issue.startswith("P-") for issue in foreign):
+        advice += "; name the project by name"
+    return f"{where} names {', '.join(foreign)}, which agents don't own: {advice}"
+
+
+def check_message(values: list[str], files: list[str], shell: Shell, where: str) -> str | None:
+    """Deny message text the guard can't read, then text that names an issue agents don't own.
+
+    `values` are inline texts, `files` the files they are read from (`-` is stdin, which only
+    a heredoc may feed). The command line's heredoc bodies are checked with them.
+    """
+    if shell.expands or any(SUBSTITUTION.search(CAT_HEREDOC.sub("", v)) for v in values):
         return (
-            f"{where} names {', '.join(foreign)}, which agents don't own: write it without the"
-            " ID (Linear links PR text to that ticket)"
+            f"{where} uses shell substitution, which the guard can't check: write the text to a"
+            " file and pass it with --body-file <path> (-F <path> for git commit), or use a"
+            " <<'EOF' heredoc"
         )
-    return None
-
-
-def check_text(values: list[str], files: list[str], cwd: str, where: str) -> str | None:
-    """Check message values and the files they are read from (`-` is stdin: see heredocs)."""
-    texts = list(values)
-    for name in files:
-        if name == "-":
-            continue
+    if "-" in files and not shell.heredocs:
+        return (
+            f"{where} is read from stdin, which the guard can't check:"
+            " pass --body-file <path> or a heredoc"
+        )
+    texts = [*values, *shell.heredocs]
+    for name in (name for name in files if name != "-"):
         try:
-            texts.append((Path(cwd) / Path(name).expanduser()).read_text(encoding="utf-8"))
+            texts.append((Path(shell.cwd) / Path(name).expanduser()).read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError) as error:
             return (
                 f"can't read {name} to check {where} for issue IDs ({error});"
@@ -209,16 +274,21 @@ def check_text(values: list[str], files: list[str], cwd: str, where: str) -> str
     return check_ids(texts, where)
 
 
-def current_branch(cwd: str) -> str:
-    """Return the branch checked out in `cwd`, or "" if it can't be read."""
+def git_output(cwd: str, *args: str) -> str:
+    """Return what a git command prints in `cwd`, or "" if it fails."""
     result = subprocess.run(
-        ["git", "-C", cwd, "symbolic-ref", "--short", "-q", "HEAD"],
+        ["git", "-C", cwd, *args],
         capture_output=True,
         text=True,
         check=False,
         env=state.git_environment(),
     )
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def current_branch(cwd: str) -> str:
+    """Return the branch checked out in `cwd`, or "" if it can't be read."""
+    return git_output(cwd, "symbolic-ref", "--short", "-q", "HEAD")
 
 
 def is_force(option: str) -> bool:
@@ -247,7 +317,7 @@ def push_parts(args: list[str]) -> tuple[list[str], list[str]]:
 
 
 def check_push(args: list[str], cwd: str) -> str | None:
-    """Deny force pushes and any push that would update main."""
+    """Deny force pushes, any push that would update main, and branch names with foreign IDs."""
     options, positionals = push_parts(args)
     refspecs = positionals[1:]
     if any(is_force(option) for option in options) or any(s.startswith("+") for s in refspecs):
@@ -255,7 +325,8 @@ def check_push(args: list[str], cwd: str) -> str | None:
     if {"--mirror", "--all"} & set(options):
         return "--mirror and --all push main too; push your own branch by name"
     targets = {spec.rsplit(":", 1)[-1].removeprefix("refs/heads/") for spec in refspecs}
-    branch = current_branch(cwd) if not refspecs or "HEAD" in targets else ""
+    pushes_current = not refspecs or bool({"HEAD", "@"} & targets)
+    branch = current_branch(cwd) if pushes_current else ""
     if "main" in targets or branch == "main":
         return "only Zach changes main; push your own branch and open a PR"
     sides = [side for spec in refspecs for side in spec.split(":")]
@@ -272,50 +343,65 @@ def new_branches(subcommand: str, args: list[str]) -> list[str]:
     return names[-1:] if BRANCH_RENAMING & set(args) else names[:1]
 
 
-def commit_skips_hooks(args: list[str]) -> bool:
-    """Return whether `git commit` arguments include `-n` (the short --no-verify)."""
-    skip = False
-    for arg in args:
-        if skip or not arg.startswith("-") or arg.startswith("--"):
-            skip = False
-            continue
-        for index, letter in enumerate(arg[1:], start=1):
-            if letter == "n":
-                return True
-            if letter in COMMIT_VALUE_LETTERS + COMMIT_ATTACHED_LETTERS:
-                skip = letter in COMMIT_VALUE_LETTERS and index == len(arg) - 1
-                break
-    return False
-
-
-def check_commit(args: list[str], cwd: str) -> str | None:
-    """Deny `git commit -n`, and messages that name an issue agents don't own."""
-    if commit_skips_hooks(args):
-        return "git commit -n skips the checks"
+def check_commit(args: list[str], shell: Shell) -> str | None:
+    """Deny `git commit -n`, and messages the guard can't read or that name a foreign ID."""
     letters = (COMMIT_VALUE_LETTERS, COMMIT_ATTACHED_LETTERS)
+    if has_short_flag(args, "n", *letters):
+        return "git commit -n skips the checks"
     messages = option_values(args, COMMIT_MESSAGES, *letters)
     files = option_values(args, COMMIT_FILES, *letters)
-    return check_text(messages, files, cwd, "the commit message")
+    return check_message(messages, files, shell, "the commit message")
 
 
-def git_subcommand(args: list[str], cwd: str) -> tuple[str, list[str], str]:
-    """Return a git command's subcommand, its arguments, and the directory it runs in."""
+def git_subcommand(args: list[str], cwd: str) -> tuple[list[str], str, list[str], str]:
+    """Return a git command's global options, subcommand, its arguments and its directory."""
     index = 0
     while index < len(args) and args[index].startswith("-"):
         if args[index] == "-C" and index + 1 < len(args):
             cwd = str(Path(cwd) / args[index + 1])
         index += 2 if args[index] in GIT_GLOBAL_WITH_VALUE else 1
-    return (args[index], args[index + 1 :], cwd) if index < len(args) else ("", [], cwd)
+    subcommand, rest = (args[index], args[index + 1 :]) if index < len(args) else ("", [])
+    return args[:index], subcommand, rest, cwd
 
 
-def check_git(args: list[str], cwd: str) -> str | None:
-    """Check a git command: find its subcommand past the global options."""
-    subcommand, rest, cwd = git_subcommand(args, cwd)
+def defines_alias(options: list[str], subcommand: str, args: list[str]) -> bool:
+    """Return whether a git command defines an alias (`-c alias.x=...`, `git config alias.x`)."""
+    values = [
+        value for option, value in itertools.pairwise(options) if option in GIT_CONFIG_OPTIONS
+    ]
+    values += [option.partition("=")[2] for option in options if option.startswith("--config-env=")]
+    keys = [index for index, arg in enumerate(args) if arg.lower().startswith("alias.")]
+    sets_key = subcommand == "config" and bool(keys) and keys[0] < len(args) - 1
+    return sets_key or any(value.lower().startswith("alias.") for value in values)
+
+
+def check_git_subcommand(subcommand: str, args: list[str], shell: Shell) -> str | None:
+    """Check a git subcommand that this guard inspects."""
     if subcommand == "push":
-        return check_push(rest, cwd)
+        return check_push(args, shell.cwd)
     if subcommand == "commit":
-        return check_commit(rest, cwd)
-    return check_ids(new_branches(subcommand, rest), "the new branch name")
+        return check_commit(args, shell)
+    return check_ids(new_branches(subcommand, args), "the new branch name")
+
+
+def check_git(args: list[str], shell: Shell, *, expanded: bool = False) -> str | None:
+    """Check a git command: find its subcommand past the global options, expanding an alias."""
+    options, subcommand, rest, cwd = git_subcommand(args, shell.cwd)
+    if defines_alias(options, subcommand, rest):
+        return (
+            "agents don't define git aliases (the guard can't see what they run);"
+            " run the command itself"
+        )
+    alias = (
+        git_output(cwd, "config", "--get", f"alias.{subcommand}")
+        if subcommand and subcommand not in GIT_INSPECTED
+        else ""
+    )
+    if alias.startswith("!") or (alias and expanded):
+        return f"git {subcommand} is an alias for `{alias}`; run what it stands for directly"
+    if alias:
+        return check_git([*shlex.split(alias), *rest], shell._replace(cwd=cwd), expanded=True)
+    return check_git_subcommand(subcommand, rest, shell._replace(cwd=cwd))
 
 
 def merge_target(args: list[str]) -> list[str]:
@@ -346,29 +432,60 @@ def check_merge(args: list[str], cwd: str) -> str | None:
     return None
 
 
-def check_api(args: list[str]) -> str | None:
-    """Deny gh api calls that write: they can change repository settings."""
+def api_method(args: list[str]) -> str:
+    """Return the HTTP method a `gh api` call names (`-X POST`, `-XPOST`, `--method=POST`)."""
     method = ""
     for index, arg in enumerate(args):
         if arg in {"-X", "--method"} and index + 1 < len(args):
-            method = args[index + 1].upper()
+            method = args[index + 1]
         elif arg.startswith("--method="):
-            method = arg.split("=", 1)[1].upper()
-    fields = any(arg.startswith(API_FIELDS) for arg in args)
+            method = arg.partition("=")[2]
+        elif arg.startswith("-X") and len(arg) > len("-X"):
+            method = arg[len("-X") :].removeprefix("=")
+    return method.upper()
+
+
+def check_api(args: list[str]) -> str | None:
+    """Deny gh api calls that write: they can change repository settings."""
     if args[:1] == ["graphql"]:
+        if any("query=@" in arg or arg.partition("=")[0] == "--input" for arg in args):
+            return "gh api graphql must take its query inline (-f query='...') so it can be checked"
         writes = any("mutation" in arg for arg in args)
     else:
+        method = api_method(args)
+        fields = any(arg.startswith(API_FIELDS) for arg in args)
         writes = method not in {"", "GET"} or (fields and method != "GET")
     return "agents may not change GitHub settings through gh api" if writes else None
 
 
-def check_pr_text(subcommand: str, args: list[str], cwd: str) -> str | None:
-    """Deny PR text, body files and a head branch that name an issue agents don't own."""
-    letters = PR_VALUE_LETTERS[subcommand]
-    if reason := check_ids(option_values(args, PR_HEAD, letters), "the head branch name"):
+def check_pr_create(args: list[str], shell: Shell) -> str | None:
+    """Require an explicit title and body, and a head branch without a foreign ID."""
+    letters = PR_VALUE_LETTERS["create"]
+    filled = bool({arg.partition("=")[0] for arg in args} & PR_FILL)
+    body = option_values(args, PR_BODY, letters) or option_values(args, PR_FILES, letters)
+    if (
+        filled
+        or has_short_flag(args, "f", letters)
+        or not body
+        or not option_values(args, PR_TITLE, letters)
+    ):
+        return (
+            "gh pr create needs an explicit --title and --body or --body-file, never --fill:"
+            " the guard checks only text it can see"
+        )
+    heads = option_values(args, PR_HEAD, letters) or [current_branch(shell.cwd)]
+    return check_ids(heads, "the head branch name")
+
+
+def check_pr_text(subcommand: str, args: list[str], shell: Shell) -> str | None:
+    """Deny PR text, body files and a head branch the guard can't read or that name a foreign ID."""
+    if subcommand == "create" and (reason := check_pr_create(args, shell)):
         return reason
-    texts, files = option_values(args, PR_TEXT, letters), option_values(args, PR_FILES, letters)
-    return check_text(texts, files, cwd, "the pull request text")
+    letters = PR_VALUE_LETTERS[subcommand]
+    texts = option_values(args, PR_TITLE | PR_BODY, letters)
+    return check_message(
+        texts, option_values(args, PR_FILES, letters), shell, "the pull request text"
+    )
 
 
 def is_pr_write(words: list[str]) -> bool:
@@ -376,11 +493,11 @@ def is_pr_write(words: list[str]) -> bool:
     return words[:1] == ["pr"] and len(words) > 1 and words[1] in PR_VALUE_LETTERS
 
 
-def check_gh(args: list[str], cwd: str) -> str | None:
+def check_gh(args: list[str], shell: Shell) -> str | None:
     """Check a gh command."""
     if is_pr_write(args):
-        reason = check_pr_text(args[1], args[2:], cwd)
-        return reason or (check_merge(args[2:], cwd) if args[1] == "merge" else None)
+        reason = check_pr_text(args[1], args[2:], shell)
+        return reason or (check_merge(args[2:], shell.cwd) if args[1] == "merge" else None)
     if args[:1] == ["api"]:
         return check_api(args[1:])
     if len(args) > 1 and args[1] in SETTINGS_COMMANDS.get(args[0], frozenset()):
@@ -388,18 +505,18 @@ def check_gh(args: list[str], cwd: str) -> str | None:
     return None
 
 
-def check_shell(args: list[str], cwd: str) -> str | None:
+def check_shell(args: list[str], shell: Shell) -> str | None:
     """Check the script a shell wrapper runs (`bash -c '...'`)."""
     for index, arg in enumerate(args[:-1]):
         if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
-            return reason_to_deny(args[index + 1], cwd)
+            return reason_to_deny(args[index + 1], shell.cwd)
     return None
 
 
-def check_eval(args: list[str], cwd: str) -> str | None:
+def check_eval(args: list[str], shell: Shell) -> str | None:
     """Check what eval runs, or the command xargs runs."""
     start = next((i for i, arg in enumerate(args) if arg in {"git", "gh", *SHELLS}), len(args))
-    return reason_to_deny(shlex.join(args[start:]), cwd) if start < len(args) else None
+    return reason_to_deny(shlex.join(args[start:]), shell.cwd) if start < len(args) else None
 
 
 PROGRAMS: dict[str, Check] = {
@@ -416,29 +533,21 @@ def scan(patterns: tuple[tuple[re.Pattern[str], str], ...], text: str) -> str | 
     return next((reason for pattern, reason in patterns if pattern.search(text)), None)
 
 
-def writes_text(words: list[str]) -> bool:
-    """Return whether a simple command commits or writes PR text, which a heredoc may hold."""
-    if program(words) == "git":
-        return git_subcommand(words[1:], "")[0] == "commit"
-    return program(words) == "gh" and is_pr_write(words[1:])
-
-
-def check_words(words: list[str], cwd: str) -> str | None:
+def check_words(words: list[str], shell: Shell) -> str | None:
     """Check one simple command against the checks for its program."""
     check = PROGRAMS.get(program(words))
-    return check(words[1:], cwd) if check else None
+    return check(words[1:], shell) if check else None
 
 
 def reason_to_deny(command: str, cwd: str) -> str | None:
     """Return why a Bash command is denied, or None if it is allowed."""
-    text, bodies = split_heredocs(command)
+    text, bodies, expands = split_heredocs(command)
     commands = simple_commands(text)
     reasons = [scan(CREDENTIALS, command), scan(BYPASSES, text)]
     if bodies and any(program(words) in SCRIPT_RUNNERS for words in commands):
         reasons.extend(reason_to_deny(body, cwd) for body in bodies)
-    if bodies and any(writes_text(words) for words in commands):
-        reasons.append(check_ids(bodies, "the heredoc"))
-    reasons.extend(check_words(words, cwd) for words in commands)
+    shell = Shell(cwd, tuple(bodies), expands)
+    reasons.extend(check_words(words, shell) for words in commands)
     return next((reason for reason in reasons if reason), None)
 
 
