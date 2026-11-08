@@ -129,7 +129,7 @@ ranking_snapshots
 All tools return JSON. Errors are structured, never free text. The calling model is taken from the SessionStart hook's record for the task when one exists, else from the optional `model` argument, else recorded as unknown (decision 0009).
 
 search(query, task_id, environment?, limit=5, model?)
-Returns entries ranked by score: rarity-weighted coverage of the query against the entry (entries under a minimum relevance are left out, so "nothing found" is honest), times the entry's outcome score, times a version factor when the caller's `environment.libraries` shares a library with the entry (decision 0025). Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). Logs a searches row for every call, misses included, and a retrievals row per returned entry (decision 0024). Results are wrapped in a `data` field with a note that contents are untrusted. A `store` field names where the call went: the hosted server's URL, or `local`.
+Returns entries ranked by score: rarity-weighted coverage of the query against the entry (entries under a minimum relevance are left out, so "nothing found" is honest), times the entry's outcome score, times a version factor when the caller's `environment.libraries` shares a library with the entry (decision 0025). Each result carries entry id, symptom, environment, cause, fix, repro, score, and a one-line provenance string (model that proposed it, success rate, last confirmed date). The success rate counts only used outcomes with a known result: `unknown` and `abandoned` are left out, as in ranking. Logs a searches row for every call, misses included, and a retrievals row per returned entry (decision 0024). Results are wrapped in a `data` field with a note that contents are untrusted. A `store` field names where the call went: the hosted server's URL, or `local`.
 
 propose(symptom, environment, cause, fix, domains, repro?, task_id, model?)
 Creates a pending entry. The server runs secret scanning and redaction before writing. Returns the entry id, the redaction report so the human can see what was stripped, and the `store` it was written to.
@@ -144,7 +144,7 @@ pending()
 Lists entries awaiting review: status pending, or not yet human-reviewed.
 
 status()
-Store statistics: entry counts by status, retrievals and outcomes in the last 30 days, top entries by success rate, entries flagged as decaying.
+Store statistics: entry counts by status, retrievals and outcomes in the last 30 days, top entries by success rate (counted as in provenance), entries flagged as decaying.
 
 ## 5. Agent workflow
 
@@ -198,7 +198,7 @@ A `commons export` CLI command produces a dataset containing entries (approved o
 
 A `commons report` command renders the status page: top entries, decaying entries, per-model failure map, self-report accuracy, and cost savings.
 
-An admin dashboard, a small read-only-first web page served by the server, shows incoming proposals, the review queue, recent retrievals and outcomes, and lets an admin file human reviews.
+An admin dashboard, a small read-only-first web page served by the server, shows incoming proposals, the review queue, recent retrievals and outcomes, and lets an admin file human reviews. In the queue, each likely duplicate shows its cause and fix beside the proposal's, so a reviewer can tell a different fix for the same symptom (keep both) from a repeat (merge). An entry's page lists the entries a reviewer kept distinct from it, with their latest scores. The Searches page counts full result sets (hits reached the limit, so more may have matched) and, for ranks 1, 2, 3 and 4+, the share of retrievals with a known `used` that were used.
 
 ## 9. Installation
 
