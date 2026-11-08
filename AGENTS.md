@@ -197,3 +197,7 @@ from the Learned sections of merged PRs.
 - Linear turns any issue ID in agent-written text into a mention. Write Commons IDs in code spans so nothing appears on Zach's tickets.
 - Custom agent types in `.claude/agents/` load at session start only. In a session where they were added later, use the built-in `Plan` (read only) and `general-purpose` (with `isolation: worktree`) agents pointed at the role files.
 - Parallel feature branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.
+- Ruff S608 flags SQL built with f-strings or `+` inside `execute(...)`, but not a module-level constant built with `.replace("{name}", FRAGMENT)`. Share SQL fragments that way (`status._TOP_ENTRIES`, `store.reviews.IN_QUEUE`).
+- "Awaiting review" means `store.reviews.IN_QUEUE`, everywhere. New counts of waiting entries use it, not `NOT human_reviewed`.
+- A human review leaves `provisional` set. Filters on provisional entries must also test `NOT human_reviewed`. `factories.entry` defaults `provisional=False`, so a "human-reviewed" test entry must set `provisional=True` too, or the clause goes untested (reviewers caught this twice).
+- In hosted mode `/entries/<id>` needs a review key. Only `/mine` is open to any key (decision 0035).

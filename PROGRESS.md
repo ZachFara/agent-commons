@@ -9,10 +9,15 @@ the end of each feature branch.
 - 2026-11-07, setup (MIT-580, `chore/agent-orchestration`): agent roles, Linear and Bash
   guard hooks, `.env.agent` and scripts for data isolation, rulesets on `main` and
   `feature/**`. Decision record `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
+- 2026-11-07, MIT-575 (`feature/MIT-575-queue-badge`): every "awaiting review" count on the
+  dashboard and in `status` now uses the review queue's own rule, so the numbers match the
+  queue. Entries that went live provisionally without review have a "live without review"
+  filter under Entries, linked from the queue page, and "Your entries" marks them
+  "unreviewed".
 
 ## In flight
 
-- Nothing. Phase 2 starts when Zach says so: `claude --agent commons-orchestrator`.
+- The 2026-11-07 orchestrator run. State is in Linear ("Commons Agent Project"); run log MIT-626.
 
 ## Next
 
@@ -23,6 +28,12 @@ the end of each feature branch.
   2026-10-31 audit's smaller gaps). Their full text, the "Under consideration" notes (a
   shipped SKILL.md, a per-turn Stop nudge, proposing after config work with no tests, an
   external data source) and the session log are in `git show fe1a155:PROGRESS.md`.
+- Follow-ups from MIT-575:
+  - On the hosted dashboard, contributors with only an agent key get a 403 on the
+    `/entries/<id>` links from /mine (decision 0035).
+  - The Entries dropdown filter does not default to newest.
+  - `insights.duplicate_flags` keeps a looser "awaiting" definition (harmless).
+  - Entries confirmed by outcomes still show "unreviewed".
 
 ## Open questions
 

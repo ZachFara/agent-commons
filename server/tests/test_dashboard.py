@@ -1,3 +1,4 @@
+import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -9,12 +10,16 @@ from fastmcp import FastMCP
 from starlette.testclient import TestClient
 
 import factories
+from commons.service import trust
 from commons.service.ranking import rank
+from commons.store import insights
+from commons.store import trust as trust_store
 from commons.store.connection import Connection
 from commons.web import app as web
 from mcp_client import call
 
 BASE = "http://127.0.0.1:8765"
+PROVISIONAL = "/entries?status=provisional&order=newest"
 
 
 @pytest.fixture
@@ -90,7 +95,8 @@ def test_agent_written_text_is_escaped(
     entry_id = factories.entry(
         db, reporter, status="pending", symptom="<script>alert('x')</script>", cause="<b>bold</b>"
     )
-    for path in ("/queue", f"/entries/{entry_id}", "/entries"):
+    factories.entry(db, reporter, symptom="<script>alert('x')</script>", provisional=True)
+    for path in ("/queue", f"/entries/{entry_id}", "/entries", PROVISIONAL, "/mine"):
         html = client.get(path).text
         assert "<script>alert" not in html, path
         assert "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;" in html, path
@@ -209,3 +215,119 @@ def test_after_a_review_you_return_to_the_page_you_were_on(
         headers={"origin": BASE, "referer": "https://evil.example/phish"},
     )
     assert elsewhere.headers["location"].startswith("/queue?")
+
+
+def trusted_proposal(server: FastMCP) -> uuid.UUID:
+    """Propose as a trusted reporter, so the entry goes live provisionally (decision 0028)."""
+    arguments = {
+        "symptom": f"{uuid.uuid4().hex} badge{uuid.uuid4().hex[:6]} failure",
+        "environment": {"language": "python 3.12"},
+        "cause": "Old version.",
+        "fix": "Upgrade it.",
+        "domains": ["python"],
+        "task_id": str(uuid.uuid4()),
+        "model": "claude-opus-5-5",
+    }
+    result = call(server, "propose", arguments)
+    assert result["status"] == "approved"
+    return uuid.UUID(result["entry_id"])
+
+
+def sample(monkeypatch: pytest.MonkeyPatch, *, sampled: bool) -> None:
+    monkeypatch.setattr("commons.service.trust.secrets.randbelow", lambda _n: 0 if sampled else 1)
+
+
+def test_the_badge_counts_what_the_queue_lists(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production showed a badge of 8 over an empty queue: it counted entries the queue hides."""
+    db.execute("UPDATE reporters SET trust_level = 1 WHERE id = %s", (reporter,))
+    before = insights.kpis(db)["awaiting"]
+
+    sample(monkeypatch, sampled=False)
+    trusted_proposal(server)
+    trust_store.confirm(db, trusted_proposal(server))
+    suspended = db.execute(
+        "INSERT INTO reporters (pseudonym, suspended_at) VALUES (%s, now()) RETURNING id",
+        (f"suspended-{uuid.uuid4().hex[:8]}",),
+    ).fetchone()
+    assert suspended
+    factories.entry(db, suspended[0], status="pending")
+
+    assert insights.kpis(db)["awaiting"] - before == 0
+    assert insights.kpis(db)["awaiting"] == trust.queue_health(db)[0]
+
+    sample(monkeypatch, sampled=True)
+    trusted_proposal(server)
+
+    assert insights.kpis(db)["awaiting"] - before == 1
+    assert insights.kpis(db)["awaiting"] == trust.queue_health(db)[0]
+
+
+def test_the_nav_badge_and_the_queue_header_agree(
+    client: TestClient,
+    server: FastMCP,
+    db: psycopg.Connection,
+    reporter: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Other tests commit entries; retire them in this rolled-back transaction.
+    db.execute("UPDATE entries SET status = 'retired'")
+    db.execute("UPDATE reporters SET trust_level = 1 WHERE id = %s", (reporter,))
+    sample(monkeypatch, sampled=False)
+    trusted_proposal(server)
+
+    queue = client.get("/queue").text
+    assert 'class="count hot"' not in queue
+    assert " waiting;" not in queue
+    assert "0 awaiting human review" in client.get("/").text
+
+    sample(monkeypatch, sampled=True)
+    trusted_proposal(server)
+
+    queue = client.get("/queue").text
+    assert '<span class="count hot">1</span>' in queue
+    assert "1 waiting;" in queue
+    assert "1 awaiting human review" in client.get("/").text
+
+
+def provisional_count(queue: str) -> int:
+    found = re.search(r"(\d+) went live provisionally without review", queue)
+    assert found, "the queue page says how many went live without review"
+    return int(found.group(1))
+
+
+def test_entries_that_went_live_without_review_are_findable_outside_the_queue(
+    client: TestClient,
+    server: FastMCP,
+    db: psycopg.Connection,
+    reporter: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Zach couldn't find his agents' entries: a trusted one skips the queue (decision 0028)."""
+    db.execute("UPDATE reporters SET trust_level = 1 WHERE id = %s", (reporter,))
+    before = provisional_count(client.get("/queue").text)
+    sample(monkeypatch, sampled=False)
+    live = trusted_proposal(server)
+    sample(monkeypatch, sampled=True)
+    sampled = trusted_proposal(server)
+    # A human review leaves `provisional` set; only `human_reviewed` takes it off the list.
+    reviewed = factories.entry(
+        db, reporter, symptom="reviewed by a human", provisional=True, human_reviewed=True
+    )
+
+    queue = client.get("/queue").text
+    assert provisional_count(queue) - before == 1
+    assert f'href="{PROVISIONAL.replace("&", "&amp;")}"' in queue
+    assert f'id="{live}"' not in queue
+    assert f'id="{sampled}"' in queue
+
+    entries = client.get(PROVISIONAL).text
+    assert f'href="/entries/{live}"' in entries
+    assert f'href="/entries/{sampled}"' not in entries
+    assert f'href="/entries/{reviewed}"' not in entries
+
+    mine = client.get("/mine").text
+    rows = {r.split('href="/entries/', 1)[1][:36]: r for r in mine.split("<tr>")[2:]}
+    assert "unreviewed" in rows[str(live)]
+    assert "unreviewed" not in rows[str(reviewed)]

@@ -7,6 +7,7 @@ from psycopg.rows import dict_row
 
 from commons.domain.outcomes import SUCCESS_OUTCOMES
 from commons.store.connection import Connection
+from commons.store.reviews import IN_QUEUE
 
 Row = dict[str, Any]
 _SUCCESS = {"success": list(SUCCESS_OUTCOMES)}
@@ -29,7 +30,7 @@ FROM days d ORDER BY d.day
 _KPIS = """
 SELECT
   (SELECT count(*) FROM entries WHERE status = 'approved') AS approved,
-  (SELECT count(*) FROM entries WHERE NOT human_reviewed AND status <> 'retired') AS awaiting,
+  (SELECT count(*) FROM entries e WHERE {in_queue}) AS awaiting,
   (SELECT count(*) FROM counted_retrievals WHERE created_at > now() - interval '30 days')
       AS retrievals_30d,
   (SELECT count(DISTINCT reporter_id) FROM tasks WHERE created_at > now() - interval '30 days')
@@ -42,7 +43,7 @@ SELECT
        AND created_at > now() - interval '30 days') AS observed_outcomes,
   (SELECT avg(reliability) FROM reporters WHERE reliability IS NOT NULL) AS mean_reliability,
   (SELECT count(*) FROM reporters WHERE reliability IS NOT NULL) AS rated_reporters
-"""
+""".replace("{in_queue}", IN_QUEUE)
 
 _OUTCOME_MIX = """
 SELECT outcome::text AS outcome,
@@ -59,6 +60,15 @@ LEFT JOIN LATERAL (
 ) s ON true
 """
 
+_LIVE_UNREVIEWED = (
+    "e.status = 'approved' AND e.provisional AND NOT e.human_reviewed AND NOT e.sampled"
+)
+"""Entries that went live provisionally without review, as a condition on `entries e`.
+
+A trusted contributor's entry is approved at once; only a sampled one waits in the queue
+(`IN_QUEUE`, decision 0028). These are the rest, findable with the `provisional` filter.
+"""
+
 _ENTRIES = (
     """
 SELECT e.id, e.created_at, e.status::text AS status, e.human_reviewed, e.symptom, e.domains,
@@ -69,13 +79,14 @@ JOIN reporters rp ON rp.id = e.created_by
 """
     + _LATEST_SNAPSHOT
     + """
-WHERE (%(status)s::text IS NULL OR e.status::text = %(status)s)
+WHERE (%(status)s::text IS NULL OR e.status::text = %(status)s
+       OR (%(status)s = 'provisional' AND {live_unreviewed}))
   AND (%(query)s::text IS NULL OR e.symptom ILIKE %(like)s OR e.cause ILIKE %(like)s
        OR e.fix ILIKE %(like)s OR %(query)s = ANY(e.domains))
 ORDER BY {order} NULLS LAST, e.created_at DESC
 LIMIT %(limit)s
 """
-)
+).replace("{live_unreviewed}", _LIVE_UNREVIEWED)
 
 _ORDERS = {
     "score": "s.score DESC",
@@ -100,10 +111,19 @@ def outcome_mix(conn: Connection) -> list[Row]:
     return _rows(conn, _OUTCOME_MIX, {})
 
 
+def live_unreviewed(conn: Connection) -> int:
+    """Count the entries that went live provisionally without review."""
+    query = "SELECT count(*) AS n FROM entries e WHERE {live}".replace("{live}", _LIVE_UNREVIEWED)
+    return int(_rows(conn, query, {})[0]["n"])
+
+
 def entries(
     conn: Connection, *, status: str | None, query: str | None, order: str, limit: int = 200
 ) -> list[Row]:
-    """Entries with their latest ranking snapshot, filtered and ordered."""
+    """Entries with their latest ranking snapshot, filtered and ordered.
+
+    `status` is an entry status, or `provisional` for those that went live without review.
+    """
     text = _ENTRIES.replace("{order}", _ORDERS.get(order, _ORDERS["score"]))
     params = {"status": status, "query": query, "like": f"%{query}%", "limit": limit}
     return _rows(conn, text, params)
