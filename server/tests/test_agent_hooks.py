@@ -1156,6 +1156,9 @@ def test_bash_guard_denies_when_it_cant_read_the_current_branch(
         "echo ${x:- #}; git push origin main",
         "echo a\\ #; git push origin main",
         "echo $'a\\' # x'; git push origin main",
+        'echo "$(date +"%F #")"; git push origin main',
+        'echo "$(echo \'a" # b\')"; git push origin main',
+        'echo "${x:-$(echo " #")}"; git push origin main',
         'echo "a # b"; git push origin main',
     ],
 )

@@ -273,6 +273,8 @@ def strip_comments(text: str) -> str:
             index = len(text) if newline < 0 else newline
             continue
         step = 2 if text[index] == "\\" and context != "'" else 1
+        if context in {'"', "${"} and text.startswith("$(", index):
+            return "".join(kept) + text[index:]  # bash re-parses inside "$(": keep the rest
         if step == 1 and context and text.startswith(QUOTE_CLOSERS[context], index):
             stack.pop()
         elif step == 1 and (start := opening(text, index, context)):
