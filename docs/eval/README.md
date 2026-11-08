@@ -63,6 +63,38 @@ Everything needed to measure the agent-facing text again is in the repo: the har
   `--setting-sources project --strict-mcp-config` so no hooks or servers run. Ask what led to the
   decision, not for its reasoning: asking a model to quote its own reasoning trips a safeguard.
 
+## Grading
+
+`runner.grade_proposal` judges each proposal against its scenario's `discovery`. A **good
+proposal** is all three:
+
+- **on topic**: a `symptom_words` entry appears in the symptom;
+- **cause right**: a `cause_words` entry that is not a version word appears in the cause or fix;
+- **pinned**: the library appears with a version in `environment.libraries` (or, for a runtime
+  change, in `environment.language`).
+
+**Grader v2** (2026-11-08, `docs/decisions/2026-11-08-MIT-661-grader-v2.md`) is the current
+grader (`runner.GRADER_VERSION`):
+
+- **Words start at a word's start.** Ignoring case, no letter, digit or underscore may come
+  just before a word, so "utc" is not in "outcomes", "view" not in "reviews", "ops" not in
+  "drops". A word ending in a digit must also end there: "9.2" is not in "9.21", and
+  "polars 2" is in "polars 2.0" but not in "polars 2026". Any other word may run on, so stems
+  and plurals still match: "truncat" in "truncated", "round" in "rounding", "offset" in
+  "offsets". A word starting with punctuation (".prom") needs nothing before it.
+- **Version words never make the cause right.** A cause word that is only a version, maybe after
+  the discovery's `library` or "python" ("9.2", "2.14", "polars 2" for polars, "python 3.14"),
+  stays in the data and is skipped for
+  `cause_right`. Every measured scenario and GitHub task must have another cause word (a test).
+- **Kept text.** Each proposal in a session's JSON keeps its `cause` and `fix`, scrubbed and cut
+  like the patch excerpt, so a later grader can score it again.
+
+Version 1 matched substrings and counted version words. Every new ledger line and session JSON
+records `grader_version`; one without it (everything committed before 2026-11-08) is version 1.
+`report`, `compare`, `trials` and `effects` keep grader versions apart: `report`, `compare` and
+`effects` print a section per version (`compare` a verdict per version), and `trials` a row per
+version, so no figure pools two graders.
+
 ## GitHub tasks
 
 A GitHub task replays a real issue from a real repository: the agent gets the project at the
@@ -201,6 +233,7 @@ Each result and ledger line also records, in every arm and in `run` and `search`
 | `patch_truncated` | true when the diff is not all of the agent's change: a changed file was over 256 KiB, or the diff over 1 MiB |
 | `patch_hash` | 16 hex digits of sha256 over the whole diff of what was read, taken with whitespace removed and blank lines dropped, so whitespace-only differences share a hash |
 | `repeat` | which of `--runs` repeats of its task, arm and model the session was (1 to N); 0 outside `arms`. Unlike `run`, the same repeat pairs across arms |
+| `grader_version` | the grader that judged the session's proposals (`runner.GRADER_VERSION`, see Grading); lines and results without it are version 1, and no report pools two versions |
 
 Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
 `conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:
@@ -758,9 +791,12 @@ scenario, just no longer collected. Report `real-polars-explode-empty` on its ow
 a baseline of its own; a hold-out total from before this change (four first-set scenarios
 including whenever) is not the same set as one after it.
 
-**Known limit of the grader.** `cause_words` are matched as substrings, so generic words in
+**Known limit of the grader (v1).** Grader v1 matched `cause_words` as substrings, so generic words in
 other hold-outs' lists also occur in the shipped text: "removed" (both Python 3.14 scenarios),
 "naive" (in "naive_arithmetic_ok", `real-sqlmodel-utc`), "view" (in "reviews",
 `hard-pandas-cow-subset`) and "utc" (in "outcomes", `hard-sqlmodel-legacy-rows`). None of them
 gives a cause away, but the shipped text as a whole can't be held to the example check until
-those lists change, which would change how those scenarios grade.
+those lists change, which would change how those scenarios grade. Grader v2 (see Grading)
+matches only from a word's start, so "view" and "utc" no longer match inside "reviews" and
+"outcomes" ("naive" still starts "naive_arithmetic_ok"); the
+example checks in the tests still match substrings, which catches more.

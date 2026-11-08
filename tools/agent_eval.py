@@ -350,10 +350,11 @@ def append_ledger(results: list[runner.Result]) -> None:
                 "wall_clock_seconds": result.wall_clock_seconds,
                 "retrievals": [asdict(retrieval) for retrieval in result.retrievals],
                 # Never the whole patch: it stays next to the transcript (`runner.save_result`).
-                "patch_excerpt": runner.patch_excerpt(result.patch),
+                "patch_excerpt": runner.excerpt(result.patch),
                 "patch_truncated": result.patch_truncated,
                 "patch_hash": result.patch_hash,
                 "repeat": result.repeat,
+                "grader_version": result.grader_version,
             }
             ledger.write(json.dumps(line) + "\n")
 
@@ -366,24 +367,26 @@ def by_variant() -> int:
     lines = _ledger_lines()
     # A line marked `invalid` stays in the ledger as a record but is never counted.
     rows = [row for row in lines if not row.get("invalid")]
-    groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    groups: dict[tuple[str, str, str, str, int], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         # The text fingerprint covers the server's text only, so the skill is its own group,
-        # and a line from before arms ran with the commons alone.
+        # and a line from before arms ran with the commons alone. Each grader version is its
+        # own group too, so no `good` figure mixes two graders.
         variant = f"{row['variant']}+skill" if row.get("skill") else row["variant"]
-        groups[(row.get("arm", "commons"), variant, row["text"], row["trigger"])].append(row)
+        arm = row.get("arm", "commons")
+        groups[(arm, variant, row["text"], row["trigger"], grader_version(row))].append(row)
     if skipped := len(lines) - len(rows):
         print(f"({skipped} trials marked invalid are not counted)")
     print(
         f"{'arm':<8} {'variant':<10} {'text':<13} {'trigger':<18} {'n':>3} "
-        f"{'search':>7} {'propose':>8} {'good':>5} {'fixed':>6}"
+        f"{'search':>7} {'propose':>8} {'good':>5} {'fixed':>6} {'grader':>6}"
     )
-    for (arm, variant, text, trigger), group in sorted(groups.items()):
+    for (arm, variant, text, trigger, version), group in sorted(groups.items()):
         good = sum(int(r["good_proposals"]) for r in group)
         print(
             f"{arm:<8} {variant:<10} {text:<13} {trigger:<18} {len(group):>3} "
             f"{_rate(group, 'searched'):>7} {_rate(group, 'proposed'):>8} {good:>5} "
-            f"{_rate(group, 'tests_pass'):>6}"
+            f"{_rate(group, 'tests_pass'):>6} {f'v{version}':>6}"
         )
     for line in passing_tokens(rows):
         print(line)
@@ -398,6 +401,7 @@ def effects(args: argparse.Namespace) -> int:
     """Pool a wording search by option and model: each session counts for every option it showed.
 
     Configs are ranked by their worse model, since the text has to work for every model.
+    Each grader version is pooled and ranked on its own, never with another.
     """
     rows = [
         row
@@ -410,6 +414,14 @@ def effects(args: argparse.Namespace) -> int:
     if not rows:
         print(f"no wording trials for condition {args.condition}")
         return 0
+    for version, graded in by_grader(rows).items():
+        print(f"== {args.condition}: {len(graded)} sessions, grader v{version}")
+        _effects_of(graded)
+    return 0
+
+
+def _effects_of(rows: list[dict[str, Any]]) -> None:
+    """Print the per-option and per-config lines of one grader version's wording trials."""
     models = sorted({str(row.get("model") or "sonnet") for row in rows})
     print("per option (pooled over every config that showed it)")
     for key, size in agent_text.SURFACES.items():
@@ -426,7 +438,6 @@ def effects(args: argparse.Namespace) -> int:
 
     for config in sorted(configs, key=worst, reverse=True):
         print(_effect_line(config, [row for row in rows if row["variant"] == config], models))
-    return 0
 
 
 def option_of(variant: str, key: str) -> int:
@@ -498,26 +509,42 @@ HEADER = (
 )
 
 
+def grader_version(row: Row) -> int:
+    """Return the grader version a result was graded by; a result without one is version 1."""
+    return int(row.get("grader_version") or 1)
+
+
+def by_grader(rows: list[Row]) -> dict[int, list[Row]]:
+    """Split results by grader version, so no figure mixes two graders."""
+    groups: dict[int, list[Row]] = defaultdict(list)
+    for row in rows:
+        groups[grader_version(row)].append(row)
+    return dict(sorted(groups.items()))
+
+
 def report(args: argparse.Namespace) -> int:
-    """Summarize saved results per scenario and condition."""
+    """Summarize saved results per condition, grader version, and scenario."""
     conditions = args.condition or sorted(p.name for p in RESULTS.iterdir() if p.is_dir())
     for condition in conditions:
         rows: list[Row] = [
             json.loads(path.read_text(encoding="utf-8"))
             for path in sorted((RESULTS / condition).glob("*.json"))
         ]
-        if not rows:
-            continue
-        print(f"\n== {condition}: {len(rows)} sessions")
-        by_scenario: dict[str, list[Row]] = defaultdict(list)
-        for row in rows:
-            by_scenario[str(row["scenario"])].append(row)
-        print(HEADER)
-        for name, group in sorted(by_scenario.items()):
-            print(f"{name:<26} {_scenario_line(group)}")
-        for name in sorted(by_scenario.keys() & holdout.RETIRED.keys()):
-            print(f"{name} is retired, not measured: {holdout.RETIRED[name]}")
+        for version, graded in by_grader(rows).items():
+            print(f"\n== {condition}: {len(graded)} sessions, grader v{version}")
+            _report_scenarios(graded)
     return 0
+
+
+def _report_scenarios(rows: list[Row]) -> None:
+    by_scenario: dict[str, list[Row]] = defaultdict(list)
+    for row in rows:
+        by_scenario[str(row["scenario"])].append(row)
+    print(HEADER)
+    for name, group in sorted(by_scenario.items()):
+        print(f"{name:<26} {_scenario_line(group)}")
+    for name in sorted(by_scenario.keys() & holdout.RETIRED.keys()):
+        print(f"{name} is retired, not measured: {holdout.RETIRED[name]}")
 
 
 def _scenario_line(group: list[Row]) -> str:
@@ -811,12 +838,29 @@ def _comparison_lines(label: str, comparison: Comparison | None) -> list[str]:
 
 
 def compare(args: argparse.Namespace) -> int:
-    """Print the arms report of one condition: per arm, the comparisons, verdict, and herding."""
+    """Print the arms report of one condition: per arm, the comparisons, verdict, and herding.
+
+    Each grader version gets a report of its own, verdict included, and none is pooled.
+    """
     rows = condition_rows(args.condition)
     if not rows:
         print(f"no trials for condition {args.condition}")
         return 0
-    print(f"== {args.condition}: {len(rows)} sessions")
+    groups = by_grader(rows)
+    if len(groups) > 1:
+        versions = ", ".join(f"v{version}" for version in groups)
+        print(
+            f"{args.condition} holds results of graders {versions}: each is reported on its "
+            "own, with its own verdict, and never pooled"
+        )
+    for version, graded in groups.items():
+        _compare_one(args.condition, version, graded)
+    return 0
+
+
+def _compare_one(condition: str, version: int, rows: list[Row]) -> None:
+    """Print the arms report of one condition's results of one grader version."""
+    print(f"== {condition}: {len(rows)} sessions, grader v{version}")
     print(
         f"{'arm':<9} {'model':<16} {'n':>4} {'pass (95%)':<18} {'tok/success':>12} "
         f"{'median tok':>11} {'median s':>9}  {'search':>7} {'found':>7} {'used':>7} "
@@ -841,7 +885,6 @@ def compare(args: argparse.Namespace) -> int:
     print("\nherding")
     for line in herding_lines(rows):
         print(line)
-    return 0
 
 
 def herding_lines(rows: list[Row]) -> list[str]:

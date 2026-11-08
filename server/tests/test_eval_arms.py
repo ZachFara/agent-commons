@@ -336,6 +336,32 @@ def test_old_ledger_lines_still_load_in_trials_and_effects(
     assert "w-a0b4c5d1e0f1g1h0n0s1" in pooled  # the old line is a config of its condition
 
 
+def test_trials_and_effects_never_pool_grader_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A line without `grader_version` is v1; a v2 line of the same text is its own group."""
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    regraded = {**OLD_LINE, "grader_version": 2, "variant": "w-a1b0c0d0e0f0g0h0n0s0"}
+    same_text = {**OLD_LINE, "grader_version": 2, "good_proposals": 1}
+    lines = [OLD_LINE, same_text, regraded]
+    ledger.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
+    assert tools.agent_eval.by_variant() == 0
+    rows = [line.split() for line in capsys.readouterr().out.splitlines()[1:]]
+    old = [row for row in rows if row[1] == OLD_LINE["variant"]]
+    # Columns: arm, variant, text, trigger, n, search, propose, good, fixed, grader.
+    assert [(row[4], row[7], row[-1]) for row in old] == [("1", "0", "v1"), ("1", "1", "v2")]
+
+    assert tools.agent_eval.effects(argparse.Namespace(condition="cross-final")) == 0
+    first, second = capsys.readouterr().out.split("== cross-final: 2 sessions, grader v2")
+    assert "== cross-final: 1 sessions, grader v1" in first
+    assert "w-a1b0c0d0e0f0g0h0n0s0" not in first
+    assert "w-a1b0c0d0e0f0g0h0n0s0" in second
+    assert "per option" in first
+    assert "per option" in second
+
+
 def test_herding_reads_a_lines_excerpt_and_an_older_lines_whole_patch_by_hash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -356,5 +382,9 @@ def test_herding_reads_a_lines_excerpt_and_an_older_lines_whole_patch_by_hash(
     assert "patch" not in rows[1]
     assert rows[1]["patch_excerpt"] == "-x\n+ y"
     assert tools.agent_eval.herded(rows) == 2
+    # The older line is grader v1 and the new ones v2, and `compare` reports graders apart.
     assert tools.agent_eval.compare(argparse.Namespace(condition="arms")) == 0
-    assert "share their task's top wrong patch 2/3" in capsys.readouterr().out
+    first, second = capsys.readouterr().out.split("== arms: 2 sessions, grader v2")
+    assert "== arms: 1 sessions, grader v1" in first
+    assert "share their task's top wrong patch 0/1" in first
+    assert "share their task's top wrong patch 0/2" in second
