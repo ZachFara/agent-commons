@@ -11,9 +11,14 @@ from fastmcp import FastMCP
 from starlette.testclient import TestClient
 
 import factories
+from commons.domain import prompts
+from commons.service import agent_text
 from commons.service.ranking import rank
 from commons.store import insights
 from commons.store.connection import Connection
+from commons.store.prompt_versions import prompt_version_id
+from commons.store.reporters import upsert_reporter
+from commons.store.tasks import start_task
 from commons.web import app as web
 from mcp_client import call
 
@@ -317,3 +322,34 @@ def test_rows_from_before_versioning_share_one_line(
     assert after["tasks"] == before["tasks"] + 1
     assert after["short_hash"] is None
     assert client.get("/prompts").text.count("before versioning") == 1
+
+
+def test_hook_versions_are_listed_apart_with_tasks_and_reporters(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    other = upsert_reporter(db, f"hooks-{uuid.uuid4().hex[:6]}", "entry")
+    marker = uuid.uuid4().hex[:8]
+    released = prompts.prompt_version(
+        f"hooks-{marker}", {"session_start": f"<b>{marker}</b>"}, kind="hooks"
+    )
+    unknown = agent_text.reported_hook_version(uuid.uuid4().hex[:12])
+    released_id, unknown_id = (prompt_version_id(db, v) for v in (released, unknown))
+    for who, version_id in ((reporter, released_id), (other, released_id), (reporter, unknown_id)):
+        start_task(db, f"s-{uuid.uuid4()}", who, None, version_id)
+    start_task(db, f"s-{uuid.uuid4()}", reporter, None, released_id)
+
+    rows = {row["id"]: row for row in insights.hook_prompt_versions(db)}
+    assert (rows[released_id]["tasks"], rows[released_id]["reporters"]) == (3, 2)
+    assert (rows[unknown_id]["tasks"], rows[unknown_id]["reporters"]) == (1, 1)
+    assert rows[unknown_id]["label"] == "unrecognized"
+    assert released_id not in by_version(db)
+    assert unknown_id not in by_version(db)
+
+    page = client.get("/prompts").text
+    hooks_section = page.split("Hook versions", 1)[1]
+    for version in (released, unknown):
+        assert version.hash[:12] in hooks_section
+    assert f"&lt;b&gt;{marker}&lt;/b&gt;" in hooks_section
+    activity = client.get("/activity").text
+    assert released.hash[:12] in activity
+    assert f'{unknown.hash}</a> <span class="muted">unrecognized</span>' in activity

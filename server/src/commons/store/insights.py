@@ -175,9 +175,12 @@ def tasks(conn: Connection, limit: int = 100) -> list[Row]:
         "(SELECT count(*) FROM task_events e WHERE e.task_id = t.id AND e.kind = 'test_run' "
         " AND (e.data->>'exit_code')::int = 0) AS tests_passed, "
         "(SELECT count(*) FROM task_events e WHERE e.task_id = t.id AND e.kind = 'test_run' "
-        " AND (e.data->>'exit_code')::int <> 0) AS tests_failed "
+        " AND (e.data->>'exit_code')::int <> 0) AS tests_failed, "
+        "left(hv.hash, 12) AS hook_hash, hv.label AS hook_label "
         "FROM tasks t JOIN reporters rp ON rp.id = t.reporter_id "
-        "LEFT JOIN models m ON m.id = t.model_id ORDER BY t.created_at DESC LIMIT %(limit)s",
+        "LEFT JOIN models m ON m.id = t.model_id "
+        "LEFT JOIN prompt_versions hv ON hv.id = t.hook_prompt_version_id "
+        "ORDER BY t.created_at DESC LIMIT %(limit)s",
         {"limit": limit},
     )
 
@@ -323,7 +326,7 @@ WITH task_rows AS (
     ) stamped
     GROUP BY prompt_version_id
 ), versions AS (
-    SELECT id, hash, label, surfaces, created_at FROM prompt_versions
+    SELECT id, hash, label, surfaces, created_at FROM prompt_versions WHERE kind = 'server'
     UNION ALL
     SELECT NULL, NULL, NULL, NULL, NULL
 )
@@ -352,6 +355,24 @@ ORDER BY v.id IS NOT NULL, first_seen, v.hash
 def prompt_versions(conn: Connection) -> list[Row]:
     """Outcomes per served prompt version, oldest first; `id` None is before versioning."""
     return _rows(conn, _PROMPT_VERSIONS, _SUCCESS)
+
+
+# Hook versions (MIT-609) are their own list: a task has one, recorded at SessionStart, and
+# it is not mixed into the server figures above. Test keys record none (decision 0030).
+_HOOK_PROMPT_VERSIONS = """
+SELECT v.id, v.hash, left(v.hash, 12) AS short_hash, v.label, v.surfaces,
+       coalesce(min(t.created_at), v.created_at) AS first_seen, max(t.created_at) AS last_seen,
+       count(t.id) AS tasks, count(DISTINCT t.reporter_id) AS reporters
+FROM prompt_versions v LEFT JOIN tasks t ON t.hook_prompt_version_id = v.id
+WHERE v.kind = 'hooks'
+GROUP BY v.id
+ORDER BY first_seen, v.hash
+"""
+
+
+def hook_prompt_versions(conn: Connection) -> list[Row]:
+    """Tasks and distinct reporters per hook version, oldest first."""
+    return _rows(conn, _HOOK_PROMPT_VERSIONS, {})
 
 
 def _rows(conn: Connection, query: str, params: dict[str, Any]) -> list[Row]:
