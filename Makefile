@@ -1,5 +1,5 @@
-.PHONY: setup db observe check fix infra-check search-eval eval-confirm eval-effects eval-reliability \
-  eval-arms eval-compare
+.PHONY: setup db observe check fix infra-check search-eval eval-confirm eval-check eval-effects \
+  eval-reliability eval-arms eval-compare
 
 setup:  ## Install dependencies and git hooks
 	uv sync
@@ -52,6 +52,9 @@ eval-reliability:  ## Decision 0034's conditions on both models (asks nothing; c
 	  uv run python tools/agent_eval.py run $(EVAL_0034) --model $$model --variant previous --condition r-previous-$$model && \
 	  COMMONS_TURN_NUDGE=on uv run python tools/agent_eval.py run $(EVAL_0034) --model $$model --condition r-nudge-$$model; \
 	done
+
+eval-check:  ## Each scenario's tests fail as shipped; GitHub tasks' in throwaway containers (needs Docker)
+	uv run python tools/agent_eval.py check
 
 eval-effects:  ## Per-model results of an eval condition (EVAL_CONDITION=...)
 	uv run python tools/agent_eval.py effects --condition $(EVAL_CONDITION)

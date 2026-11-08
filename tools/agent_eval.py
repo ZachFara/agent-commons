@@ -5,7 +5,7 @@ isolated from the user's setup, and grades what the agent did from the database 
 transcript. Results and transcripts land in .scratch/eval/<condition>/.
 
 Usage:
-  uv run python tools/agent_eval.py check                 # scenarios fail then pass as designed
+  uv run python tools/agent_eval.py check [--on-host]     # scenarios fail then pass as designed
   uv run python tools/agent_eval.py run [--scenario NAME ...] [--runs N] [--model MODEL]
                                          [--condition NAME] [--no-hooks] [--concurrency N]
   uv run python tools/agent_eval.py report [--condition NAME ...]
@@ -45,7 +45,7 @@ from commons.store.counterfactuals import CounterfactualRun, known_entries, reco
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
-from tools.eval import repos, runner  # noqa: E402
+from tools.eval import container, repos, runner  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
 
 if TYPE_CHECKING:
@@ -56,11 +56,27 @@ if TYPE_CHECKING:
 RESULTS = REPO / ".scratch" / "eval"
 
 
-def check() -> int:
-    """Confirm each scenario's tests fail as shipped (a GitHub task's: and pass with the fix)."""
+ON_HOST_WARNING = (
+    "warning: --on-host runs each GitHub task's install and tests on this machine, as you, "
+    "with your home directory and network: only for repositories you trust"
+)
+
+
+def check(*, on_host: bool = False) -> int:
+    """Confirm each scenario's tests fail as shipped (a GitHub task's: and pass with the fix).
+
+    A GitHub task's install and tests run in throwaway containers, or with `on_host` (the
+    `--on-host` flag, which warns) on this machine.
+    """
+    execute: repos.Execute = container.run
+    if on_host:
+        print(ON_HOST_WARNING, file=sys.stderr)
+        execute = repos.run_on_host
     broken = 0
     for name, scenario in sorted(SCENARIOS.items()):
-        ok, outcome = repos.check(scenario.repo) if scenario.repo else check_shipped(scenario)
+        ok, outcome = (
+            repos.check(scenario.repo, execute) if scenario.repo else check_shipped(scenario)
+        )
         broken += not ok
         print(f"{name:<26} {outcome}")
     return 1 if broken else 0
@@ -825,13 +841,30 @@ def arms_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def check_options(parser: argparse.ArgumentParser) -> None:
+    """Add the `check` command's options: in a container (the default), or on the host."""
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument(
+        "--in-container",
+        dest="on_host",
+        action="store_false",
+        default=False,  # store_false would default to True: on the host
+        help="Run GitHub tasks' install and tests in throwaway containers (the default).",
+    )
+    where.add_argument(
+        "--on-host",
+        action="store_true",
+        help="Run them on this machine instead, as you: refused without this flag.",
+    )
+
+
 def main() -> int:
     """Dispatch to check, run, or report."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("check")
+    check_options(commands.add_parser("check"))
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--scenario", action="append", choices=sorted(SCENARIOS))
     run_parser.add_argument("--runs", type=int, default=1)
@@ -887,7 +920,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     commands_by_name: dict[str, Callable[[argparse.Namespace], int]] = {
-        "check": lambda _args: check(),
+        "check": lambda args: check(on_host=args.on_host),
         "run": run,
         "trials": lambda _args: by_variant(),
         "search": wording_search,
