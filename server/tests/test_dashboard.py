@@ -311,7 +311,10 @@ def test_entries_that_went_live_without_review_are_findable_outside_the_queue(
     live = trusted_proposal(server)
     sample(monkeypatch, sampled=True)
     sampled = trusted_proposal(server)
-    reviewed = factories.entry(db, reporter, symptom="reviewed by a human", human_reviewed=True)
+    # A human review leaves `provisional` set; only `human_reviewed` takes it off the list.
+    reviewed = factories.entry(
+        db, reporter, symptom="reviewed by a human", provisional=True, human_reviewed=True
+    )
 
     queue = client.get("/queue").text
     assert provisional_count(queue) - before == 1
