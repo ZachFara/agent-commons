@@ -9,7 +9,10 @@ from fastmcp import FastMCP
 from starlette.testclient import TestClient
 
 import factories
+from commons.service import trust
 from commons.service.ranking import rank
+from commons.store import insights
+from commons.store import trust as trust_store
 from commons.store.connection import Connection
 from commons.web import app as web
 from mcp_client import call
@@ -209,3 +212,77 @@ def test_after_a_review_you_return_to_the_page_you_were_on(
         headers={"origin": BASE, "referer": "https://evil.example/phish"},
     )
     assert elsewhere.headers["location"].startswith("/queue?")
+
+
+def trusted_proposal(server: FastMCP) -> uuid.UUID:
+    """Propose as a trusted reporter, so the entry goes live provisionally (decision 0028)."""
+    arguments = {
+        "symptom": f"{uuid.uuid4().hex} badge{uuid.uuid4().hex[:6]} failure",
+        "environment": {"language": "python 3.12"},
+        "cause": "Old version.",
+        "fix": "Upgrade it.",
+        "domains": ["python"],
+        "task_id": str(uuid.uuid4()),
+        "model": "claude-opus-5-5",
+    }
+    result = call(server, "propose", arguments)
+    assert result["status"] == "approved"
+    return uuid.UUID(result["entry_id"])
+
+
+def sample(monkeypatch: pytest.MonkeyPatch, *, sampled: bool) -> None:
+    monkeypatch.setattr("commons.service.trust.secrets.randbelow", lambda _n: 0 if sampled else 1)
+
+
+def test_the_badge_counts_what_the_queue_lists(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production showed a badge of 8 over an empty queue: it counted entries the queue hides."""
+    db.execute("UPDATE reporters SET trust_level = 1 WHERE id = %s", (reporter,))
+    before = insights.kpis(db)["awaiting"]
+
+    sample(monkeypatch, sampled=False)
+    trusted_proposal(server)
+    trust_store.confirm(db, trusted_proposal(server))
+    suspended = db.execute(
+        "INSERT INTO reporters (pseudonym, suspended_at) VALUES (%s, now()) RETURNING id",
+        (f"suspended-{uuid.uuid4().hex[:8]}",),
+    ).fetchone()
+    assert suspended
+    factories.entry(db, suspended[0], status="pending")
+
+    assert insights.kpis(db)["awaiting"] - before == 0
+    assert insights.kpis(db)["awaiting"] == trust.queue_health(db)[0]
+
+    sample(monkeypatch, sampled=True)
+    trusted_proposal(server)
+
+    assert insights.kpis(db)["awaiting"] - before == 1
+    assert insights.kpis(db)["awaiting"] == trust.queue_health(db)[0]
+
+
+def test_the_nav_badge_and_the_queue_header_agree(
+    client: TestClient,
+    server: FastMCP,
+    db: psycopg.Connection,
+    reporter: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Other tests commit entries; retire them in this rolled-back transaction.
+    db.execute("UPDATE entries SET status = 'retired'")
+    db.execute("UPDATE reporters SET trust_level = 1 WHERE id = %s", (reporter,))
+    sample(monkeypatch, sampled=False)
+    trusted_proposal(server)
+
+    queue = client.get("/queue").text
+    assert 'class="count hot"' not in queue
+    assert " waiting;" not in queue
+    assert "0 awaiting human review" in client.get("/").text
+
+    sample(monkeypatch, sampled=True)
+    trusted_proposal(server)
+
+    queue = client.get("/queue").text
+    assert '<span class="count hot">1</span>' in queue
+    assert "1 waiting;" in queue
+    assert "1 awaiting human review" in client.get("/").text

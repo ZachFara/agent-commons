@@ -7,6 +7,7 @@ from psycopg.rows import dict_row
 
 from commons.domain.outcomes import SUCCESS_OUTCOMES
 from commons.store.connection import Connection
+from commons.store.reviews import IN_QUEUE
 
 Row = dict[str, Any]
 _SUCCESS = {"success": list(SUCCESS_OUTCOMES)}
@@ -29,7 +30,7 @@ FROM days d ORDER BY d.day
 _KPIS = """
 SELECT
   (SELECT count(*) FROM entries WHERE status = 'approved') AS approved,
-  (SELECT count(*) FROM entries WHERE NOT human_reviewed AND status <> 'retired') AS awaiting,
+  (SELECT count(*) FROM entries e WHERE {in_queue}) AS awaiting,
   (SELECT count(*) FROM counted_retrievals WHERE created_at > now() - interval '30 days')
       AS retrievals_30d,
   (SELECT count(DISTINCT reporter_id) FROM tasks WHERE created_at > now() - interval '30 days')
@@ -42,7 +43,7 @@ SELECT
        AND created_at > now() - interval '30 days') AS observed_outcomes,
   (SELECT avg(reliability) FROM reporters WHERE reliability IS NOT NULL) AS mean_reliability,
   (SELECT count(*) FROM reporters WHERE reliability IS NOT NULL) AS rated_reporters
-"""
+""".replace("{in_queue}", IN_QUEUE)
 
 _OUTCOME_MIX = """
 SELECT outcome::text AS outcome,

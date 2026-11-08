@@ -6,6 +6,27 @@ from commons.domain.entries import EntryStatus
 from commons.domain.reviews import PendingEntry, ReviewDecision, ReviewRequest, ReviewSource
 from commons.store.connection import Connection
 
+IN_QUEUE = (
+    "NOT e.human_reviewed AND e.status <> 'retired' AND (NOT e.provisional OR e.sampled) "
+    "AND NOT EXISTS (SELECT 1 FROM reporters qr WHERE qr.id = e.created_by "
+    "AND qr.suspended_at IS NOT NULL)"
+)
+"""The review queue, as a condition on `entries e`. Every count of waiting entries uses it.
+
+Provisional entries wait only when sampled, and suspended reporters' entries not at all
+(decision 0028).
+"""
+
+_PENDING = """
+SELECT e.id AS entry_id, e.created_at, e.status, e.symptom, e.environment, e.cause,
+       e.fix, e.repro, e.domains, m.name AS proposed_by_model,
+       (SELECT count(*) FROM reviews r WHERE r.entry_id = e.id) AS agent_reviews,
+       e.redaction_report, e.risk_report
+FROM entries e JOIN models m ON m.id = e.created_by_model
+WHERE {in_queue}
+ORDER BY e.created_at, e.id LIMIT %s
+""".replace("{in_queue}", IN_QUEUE)
+
 
 def locked_entry_status(conn: Connection, entry_id: UUID) -> EntryStatus | None:
     """Return the entry's status, locking the row, or None if it doesn't exist."""
@@ -46,20 +67,9 @@ def set_review_state(
 
 
 def pending_entries(conn: Connection, limit: int) -> list[PendingEntry]:
-    """Entries no human has reviewed yet, oldest first. Retired entries are excluded."""
+    """Return the review queue (`IN_QUEUE`), oldest first."""
     with conn.cursor(row_factory=class_row(PendingEntry)) as cursor:
-        cursor.execute(
-            "SELECT e.id AS entry_id, e.created_at, e.status, e.symptom, e.environment, e.cause, "
-            "e.fix, e.repro, e.domains, m.name AS proposed_by_model, "
-            "(SELECT count(*) FROM reviews r WHERE r.entry_id = e.id) AS agent_reviews, "
-            "e.redaction_report, e.risk_report "
-            "FROM entries e JOIN models m ON m.id = e.created_by_model "
-            "JOIN reporters rp ON rp.id = e.created_by "
-            "WHERE NOT e.human_reviewed AND e.status <> 'retired' AND rp.suspended_at IS NULL "
-            "AND (NOT e.provisional OR e.sampled) "
-            "ORDER BY e.created_at, e.id LIMIT %s",
-            (limit,),
-        )
+        cursor.execute(_PENDING, (limit,))
         return cursor.fetchall()
 
 

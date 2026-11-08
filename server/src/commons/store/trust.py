@@ -4,7 +4,7 @@ from uuid import UUID
 from commons.domain.reviews import ReviewRequest
 from commons.domain.trust import ContributorHistory, Role
 from commons.store.connection import Connection
-from commons.store.reviews import add_review
+from commons.store.reviews import IN_QUEUE, add_review
 
 _HISTORIES = """
 SELECT rp.id,
@@ -20,6 +20,13 @@ SELECT rp.id,
   rp.reliability
 FROM reporters rp
 """
+
+_QUEUE_AGE = """
+SELECT count(*), extract(epoch FROM now() - min(greatest(e.created_at, (
+    SELECT max(v.created_at) FROM reviews v WHERE v.entry_id = e.id AND v.decision = 'reopen'
+)))) / 86400
+FROM entries e WHERE {in_queue}
+""".replace("{in_queue}", IN_QUEUE)
 
 
 def contributor_histories(conn: Connection) -> dict[UUID, ContributorHistory]:
@@ -126,14 +133,7 @@ def queue_age_days(conn: Connection) -> tuple[int, float | None]:
 
     A reopened entry waits from its reopening, not from when it was first proposed.
     """
-    row = conn.execute(
-        "SELECT count(*), extract(epoch FROM now() - min(greatest(e.created_at, ("
-        "  SELECT max(v.created_at) FROM reviews v WHERE v.entry_id = e.id "
-        "  AND v.decision = 'reopen')))) / 86400 "
-        "FROM entries e JOIN reporters rp ON rp.id = e.created_by "
-        "WHERE NOT e.human_reviewed AND e.status <> 'retired' AND rp.suspended_at IS NULL "
-        "AND (NOT e.provisional OR e.sampled)"
-    ).fetchone()
+    row = conn.execute(_QUEUE_AGE).fetchone()
     if row is None:
         return 0, None
     return int(row[0]), None if row[1] is None else float(row[1])
