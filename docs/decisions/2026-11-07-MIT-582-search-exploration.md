@@ -46,10 +46,15 @@ after the eval below.
    entry's 0017 Beta posterior, Beta(1 + Σw·s, 1 + Σw − Σw·s), in place of its mean. The hit
    scores relevance × version factor × the draw. Sort and cut at `limit` as today.
    - The score is already this posterior's mean, so the draw adds no tuning setting. Entries
-     with much evidence draw close to their mean and keep their place. Entries with little
-     evidence vary widely, so they sometimes rise. This is the exploration.
+     with much evidence draw close to their mean. Entries with little evidence vary widely, so
+     they sometimes rise. This is the exploration.
+   - Relevance order is not protected for entries with little evidence. An entry with no
+     outcomes draws from Beta(1, 1), which is uniform from 0 to 1. Among such entries the order
+     is relevance × uniform noise: a hit with relevance 0.3 outranks one with 0.9 about 1 time
+     in 6. Most of the store has no outcomes today, and neither does any entry in the judged set.
    - Exploration is one on/off switch, off by default, like the other server settings.
-   - The relevance cutoff still applies first. A draw never shows an entry below 0.25.
+   - The relevance cutoff still applies first. A draw never shows an entry below 0.25, but
+     above the cutoff it can put a less relevant hit first.
    - Snapshots store only the mean (`store/migrations/0001_initial_schema.sql:142-153`), and the
      mean alone does not give the posterior. A migration adds Σw and Σw·s to
      `ranking_snapshots`, and `commons rank` writes them (`service/ranking.py:38-42`). An entry
@@ -57,36 +62,50 @@ after the eval below.
    - The draw lives in `ranking`, which does no I/O. It takes a random generator as an argument.
 3. What is logged, so rankings can be evaluated later. Each retrieval also records:
    - `explored`: the entry was shown, but the mean ranking would have cut it.
-   - its probability of being shown in that search, estimated by repeating the draw (suggested
-     200 times) over the same hits. With it, a later ranking can be scored on logged searches,
-     each result weighted by 1 / its probability.
+   - its probability of being shown in that search, p = (k + 1) / (N + 1). The draw is repeated
+     N times over the same hits (suggested N = 200), and k counts the repeats that show the
+     entry. The served draw counts as one more, so p is never 0. With p, a later ranking can be
+     scored on logged searches, each result weighted by 1 / p. A small p gives a large weight,
+     so these estimates are high-variance.
    The rank and score logged today stay; the score is the drawn one.
 4. The `commons search` preview keeps the mean ranking (`server/src/commons/cli/main.py:408-418`,
    `service/search.py:36-39`). A human checking the store sees the same order every time.
-   `make search-eval` and the relevance test (decision 0025) also measure the mean ranking.
+   `make search-eval` and the relevance test (decision 0025) keep measuring the mean ranking.
+   They check relevance itself. They do not measure what agents see under the draw; point 6
+   adds that check.
 5. Tests pass a seeded random generator, so every order they check is reproducible.
    Production uses an unseeded one.
-6. The eval. Exploration changes result order, which is what the agent sees. So it is one
-   decision 0023 condition, `exploration`, run on Sonnet and Opus against the baseline at the
-   baseline's run count. Today's scenarios seed entries with no outcomes
-   (`tools/eval/runner.py:150-169`), so no entry has evidence to lose its place. The condition
-   needs scenarios where more entries match than are shown, some with an outcome history. The
-   outcome history that MIT-588's record proposes for `seed()` is a prerequisite.
-   Exploration ships only if, on both models, the rates of `used`, `tests_passed` and `report`
-   do not fall against the baseline.
+6. Two gates before shipping.
+   - Relevance under the draw. On the judged set, compute expected precision@5 and recall@5
+     under the draw: N seeded runs (suggested N = 100), averaged, so the numbers are the same
+     every time. Each may fall by no more than a margin Zach sets from the mean ranking's
+     (suggested 0.02). The judged set has no outcomes, so this is the worst case.
+   - The agent eval. Exploration changes result order, which is what the agent sees. So it is one
+     decision 0023 condition, `exploration`, run on Sonnet and Opus against the baseline at the
+     baseline's run count. Today's scenarios seed entries with no outcomes
+     (`tools/eval/runner.py:152-172`), so no entry has evidence to lose its place. The condition
+     needs scenarios where more entries match than are shown, some with an outcome history. The
+     outcome history that MIT-588's record proposes for `seed()` is a prerequisite.
+     Exploration ships only if, on both models, the rates of `used`, `tests_passed` and
+     `report` do not fall against the baseline.
 7. What it supersedes, once accepted:
    - In 0017, "Search keeps relevance × latest score (decision 0012)" becomes relevance × a draw
      from the posterior while exploration is on. The snapshot bullet gains Σw and Σw·s.
    - In 0025, step 3's "then apply the outcome score (decision 0017) as today" becomes "apply
-     the draw". Step 5's rule (no step ships if precision@5 or recall@5 falls) is judged on the
-     mean ranking. Exploration is judged by the eval in point 6.
+     the draw". Step 5's rule (no step ships if precision@5 or recall@5 falls) still applies to
+     the mean ranking. Under the draw it becomes the margin in point 6: a draw over entries
+     without outcomes always costs some relevance, so "no fall at all" would rule exploration
+     out by definition. The margin bounds that cost instead.
 
 Consequences: the trigger is checked from numbers the Searches page already shows. If it never
 fires, nothing is built. If it fires, the change is small: one draw per hit, two snapshot
 columns, two retrieval columns. Harder: search results stop being the same for the same query,
 which makes a single bad result harder to reproduce; the logged probability and the preview's
-mean ranking cover this. A new entry with no outcomes draws from a flat prior, so it can rise
-above a proven one often; that is the cost of letting it earn evidence. Revisit the switch if
+mean ranking cover this. Exploration can lower the relevance of what agents see while entries
+lack evidence: an entry with no outcomes draws from a flat prior, so a less relevant hit
+sometimes outranks a more relevant one, and a new entry often rises above a proven one. That is
+the cost of letting entries earn evidence. It is largest now, while most entries have no
+outcomes, and shrinks as evidence builds; the margin in point 6 bounds it. Revisit the switch if
 the share used at ranks 2-4+ falls after shipping, or if full result sets drop below the
 threshold.
 
