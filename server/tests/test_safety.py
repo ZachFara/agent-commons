@@ -1,17 +1,25 @@
-"""Entry safety (decision 0029): risk reports, rate limits per key, revoke and purge."""
+"""Entry safety (decision 0029): risk reports, rescans, rate limits per key, revoke and purge."""
 
+import json
+import logging
+import re
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import psycopg
 import pytest
 from fastmcp import FastMCP
+from psycopg.types.json import Jsonb
 
 import factories
 from commons.cli.main import main
 from commons.domain.errors import NotFoundError, RateLimitedError
 from commons.domain.lifecycle import FixedIn
+from commons.domain.risks import RISK_LABELS
+from commons.privacy import risks
 from commons.service import corrections, keys, lifecycle, purges
 from commons.service.identity import acting_as
 from commons.service.rates import limit
@@ -50,6 +58,138 @@ def test_proposals_carry_a_risk_report_and_search_labels_risky_entries(
         server, "search", {"query": symptom[0], "task_id": str(uuid.uuid4()), "model": "m"}
     )["data"]
     assert "contains: pipe-to-shell; review before running" in found[0]["provenance"]
+
+
+# Rescanning when the patterns change
+
+PLANTED = "frobnicate-everything"
+CLEAN = {"scanned": True, "findings": []}
+FOUND = {"scanned": True, "findings": [{"field": "fix", "kind": "planted_word", "count": 1}]}
+
+
+@pytest.fixture
+def new_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pattern added after the entries were written (decision 0029 grows its list)."""
+    planted = risks.RiskPattern("planted_word", re.compile(rf"\b{PLANTED}\b"))
+    monkeypatch.setattr(risks, "RISKS", (*risks.RISKS, planted))
+    monkeypatch.setitem(RISK_LABELS, "planted_word", "plants a test word")
+
+
+@pytest.fixture
+def cli_on_db(db: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the CLI on the test's rolled-back connection."""
+
+    @contextmanager
+    def test_connection() -> Iterator[psycopg.Connection]:
+        yield db
+
+    monkeypatch.setattr("commons.cli.main.connect", test_connection)
+
+
+def risk_state(db: psycopg.Connection, entry_id: uuid.UUID) -> tuple[Any, ...]:
+    row = db.execute(
+        "SELECT status::text, provisional, risk_report, fix FROM entries WHERE id = %s",
+        (entry_id,),
+    ).fetchone()
+    assert row
+    return tuple(row)
+
+
+def rescan_entries(db: psycopg.Connection, reporter: uuid.UUID, word: str) -> list[uuid.UUID]:
+    """A human-approved, a provisional and a pending entry whose fix the new pattern matches,
+    one whose hidden characters were stripped on write, and an old one that still has them.
+
+    The human-approved one is provisional too: a human review leaves `provisional` set.
+    """
+    fix = f"Run `{PLANTED}` before the build."
+    clean = Jsonb(CLEAN)
+    hidden = [{"field": "fix", "kind": "invisible_unicode", "count": 2}]
+    stripped = {"scanned": True, "findings": hidden}
+    return [
+        factories.entry(
+            db,
+            reporter,
+            symptom=f"{word} hangs",
+            fix=fix,
+            provisional=True,
+            human_reviewed=True,
+            risk_report=clean,
+        ),
+        factories.entry(db, reporter, fix=fix, provisional=True, risk_report=clean),
+        factories.entry(db, reporter, fix=fix, status="pending", risk_report=clean),
+        factories.entry(db, reporter, risk_report=Jsonb(stripped)),
+        factories.entry(db, reporter, fix="Upgrade\u200b Jinja2.", risk_report=clean),
+    ]
+
+
+@pytest.mark.usefixtures("new_pattern", "cli_on_db")
+def test_rescan_without_apply_only_prints_what_would_change(
+    db: psycopg.Connection, reporter: uuid.UUID, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ours = rescan_entries(db, reporter, f"dryrescan{uuid.uuid4().hex[:6]}")
+    reviewed, provisional, waiting, unchanged, hidden = ours
+    before = {entry_id: risk_state(db, entry_id) for entry_id in ours}
+
+    assert main(["admin", "rescan"]) == 0
+
+    out = capsys.readouterr().out
+    assert {entry_id: risk_state(db, entry_id) for entry_id in ours} == before
+    assert f"{reviewed}  approved  none -> planted_word in fix\n" in out
+    assert f"{provisional}  approved  none -> planted_word in fix  would reopen\n" in out
+    assert f"{waiting}  pending   none -> planted_word in fix\n" in out
+    assert f"{hidden}  approved  none -> invisible_unicode in fix\n" in out
+    assert str(unchanged) not in out
+    assert "nothing written (use --apply)" in out
+
+
+@pytest.mark.usefixtures("new_pattern", "cli_on_db")
+def test_rescan_apply_labels_old_entries_and_reopens_unreviewed_ones_once(
+    db: psycopg.Connection,
+    reporter: uuid.UUID,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    word = f"rescanned{uuid.uuid4().hex[:6]}"
+    ours = rescan_entries(db, reporter, word)
+    reviewed, provisional, waiting, unchanged, hidden = ours
+    stripped = risk_state(db, unchanged)
+    caplog.set_level(logging.INFO, logger="commons")
+
+    assert main(["admin", "rescan", "--apply"]) == 0
+
+    out = capsys.readouterr().out
+    assert f"{provisional}  approved  none -> planted_word in fix  reopened\n" in out
+    assert f"{reviewed}  approved  none -> planted_word in fix\n" in out
+    assert risk_state(db, reviewed)[:3] == ("approved", True, FOUND)
+    assert risk_state(db, provisional)[:3] == ("pending", False, FOUND)
+    assert provisional in {row.entry_id for row in pending(db)}
+
+    def reopens(entry_id: uuid.UUID) -> list[tuple[Any, ...]]:
+        return db.execute(
+            "SELECT reason, source::text FROM reviews WHERE entry_id = %s AND decision = 'reopen'",
+            (entry_id,),
+        ).fetchall()
+
+    assert reopens(provisional) == [("new risk finding on rescan (0029)", "auto")]
+    assert reopens(reviewed) == []
+    assert risk_state(db, waiting)[:3] == ("pending", False, FOUND)
+    assert risk_state(db, unchanged) == stripped
+    hidden_findings = [{"field": "fix", "kind": "invisible_unicode", "count": 1}]
+    assert risk_state(db, hidden)[2:] == (
+        {"scanned": True, "findings": hidden_findings},
+        "Upgrade\u200b Jinja2.",  # reported, never stripped
+    )
+    logged = [json.loads(r.getMessage()) for r in caplog.records if r.name == "commons.events"]
+    (action,) = [line for line in logged if line["event"] == "admin_action"]
+    assert (action["action"], action["ok"], action["severity"]) == ("rescan", True, "NOTICE")
+
+    assert main(["search", word]) == 0
+    assert "contains: plants a test word; review before running" in capsys.readouterr().out
+
+    after = {entry_id: risk_state(db, entry_id) for entry_id in ours}
+    assert main(["admin", "rescan", "--apply"]) == 0
+    assert capsys.readouterr().out == "0 entr(ies) rescanned, 0 reopened\n"
+    assert {entry_id: risk_state(db, entry_id) for entry_id in ours} == after
 
 
 # Rate limits

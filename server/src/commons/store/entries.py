@@ -1,5 +1,7 @@
+from typing import Any
 from uuid import UUID
 
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from commons.domain.entries import Proposal
@@ -44,6 +46,25 @@ def approved_fixes(conn: Connection) -> list[str]:
 def set_risk_report(conn: Connection, entry_id: UUID, report: dict[str, object]) -> None:
     """Store what the risk scanner found in the entry's text (decision 0029)."""
     conn.execute("UPDATE entries SET risk_report = %s WHERE id = %s", (Jsonb(report), entry_id))
+
+
+def scannable_entries(conn: Connection, *, lock: bool) -> list[dict[str, Any]]:
+    """Approved and pending entries' current text and risk report, for a rescan (0029).
+
+    With `lock`, the rows stay locked until the transaction ends, so no edit lands between
+    reading the text and storing its report.
+    """
+    with conn.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(_SCANNABLE_LOCKED if lock else _SCANNABLE)
+        return cursor.fetchall()
+
+
+_SCANNABLE = (
+    "SELECT id, status::text AS status, symptom, environment, cause, fix, repro, domains, "
+    "task_id, risk_report, provisional AND NOT human_reviewed AS unreviewed "
+    "FROM entries WHERE status IN ('approved', 'pending') ORDER BY created_at, id"
+)
+_SCANNABLE_LOCKED = _SCANNABLE + " FOR UPDATE"
 
 
 def set_imported_from(conn: Connection, entry_id: UUID, origin: dict[str, object]) -> None:
