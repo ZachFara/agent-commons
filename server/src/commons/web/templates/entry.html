@@ -63,10 +63,25 @@
       {% else %}<div class="empty">Not reviewed yet.</div>{% endif %}</section>
   </div>
 </div>
+{% set f = funnel %}
+<section class="card" style="margin-top: 16px"><h2>What came of each retrieval <span class="hint">all time, excluded rows left out</span></h2>
+  {% if f.retrieved %}<ul class="toplist">
+  {% for key, label, parent, note in [
+      ("retrieved", "Retrieved", none, ""),
+      ("not_used", "Not used", "retrieved", "hooks saw it go unused: probably the wrong retrieval"),
+      ("used_unknown", "Use unknown", "retrieved", "no hooks observed it, or no outcome yet"),
+      ("used", "Used, yes or partial", "retrieved", ""),
+      ("worked", "Worked", "used", ""),
+      ("failed", "Failed", "used", "tests failed, error persisted, or user rejected"),
+      ("no_result", "No result", "used", "outcome unknown or abandoned")] %}
+    <li data-stage="{{ key }}"><span class="name" style="padding-left: {{ 0 if parent is none else (18 if parent == 'retrieved' else 36) }}px">{{ label }}{% if note %} <span class="muted">{{ note }}</span>{% endif %}</span>
+      <span class="stats"><b>{{ f[key] }}</b>{% if parent and f[parent] %} · {{ pct(f[key] / f[parent]) }} of {{ "retrieved" if parent == "retrieved" else "used" }}{% endif %}</span></li>{% endfor %}
+  </ul>{% else %}<div class="empty">Never retrieved yet.</div>{% endif %}</section>
 <section class="card" style="margin-top: 16px"><h2>Retrievals <span class="hint">latest 50</span></h2>
-  {% if retrievals %}<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th class="num">Rank</th><th>Used</th><th>Outcome</th><th>Agent's assessment</th><th></th></tr></thead><tbody>
+  {% if retrievals %}<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th class="num">Rank</th><th class="num" title="How well the query matched the entry when it was retrieved; blank before this was logged">Relevance</th><th>Used</th><th>Outcome</th><th>Agent's assessment</th><th></th></tr></thead><tbody>
   {% for r in retrievals %}<tr class="{{ 'excluded' if r.excluded }}"><td class="muted" style="white-space: nowrap">{{ r.created_at.strftime("%b %d %H:%M") }}{% if r.excluded %}<div><span class="badge soft">excluded</span></div>{% endif %}</td>
     <td>{{ r.reporter }}<div class="muted">{{ r.model }}</div></td><td class="num">{{ r.rank_position }}</td>
+    <td class="num">{{ "%.2f" | format(r.relevance) if r.relevance is not none else "" }}</td>
     <td>{{ r.used or "–" }}</td><td>{{ outcome(r.outcome, r.source) }}</td>
     <td><div class="clip" style="max-width: 360px" title="{{ r.agent_assessment or '' }}">{{ r.agent_assessment or "" }}</div></td>
     <td><details class="correct"><summary>Correct</summary>

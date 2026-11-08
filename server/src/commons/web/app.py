@@ -121,6 +121,7 @@ class Dashboard:
             lambda conn: {
                 "totals": insights.search_totals(conn),
                 "missed": insights.missed_queries(conn),
+                "unused": insights.unused_searches(conn),
                 "recent": insights.recent_searches(conn),
             }
         )
@@ -452,6 +453,7 @@ def _entry_data(conn: Connection, entry_id: UUID) -> dict[str, Any]:
         "revisions": insights.entry_revisions(conn, entry_id),
         "reviews": insights.entry_reviews(conn, entry_id),
         "history": charts.line([(row["computed_at"], row["score"]) for row in history]),
+        "funnel": insights.entry_funnel(conn, entry_id),
         "retrievals": insights.entry_retrievals(conn, entry_id),
     }
 

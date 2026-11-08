@@ -103,6 +103,47 @@ WHERE r.entry_id = ANY(%(ids)s) AND o.used IN ('yes', 'partial')
 GROUP BY r.entry_id
 """
 
+# Every counted retrieval of an entry, by what came of it. The buckets add up: retrieved =
+# not_used + used_unknown + used, and used = worked + failed + no_result. A retrieval with no
+# counted outcome (none yet, or the outcome excluded) is used_unknown, like `used IS NULL`.
+# Worked and failed match `_DAILY` and `_COSTS`; no_result is `unknown` or `abandoned`.
+_FUNNEL = """
+SELECT count(*) AS retrieved,
+       count(*) FILTER (WHERE o.used = 'no') AS not_used,
+       count(*) FILTER (WHERE o.used IS NULL) AS used_unknown,
+       count(*) FILTER (WHERE o.used IN ('yes', 'partial')) AS used,
+       count(*) FILTER (WHERE o.used IN ('yes', 'partial')
+           AND o.outcome = ANY(%(success)s::outcome_kind[])) AS worked,
+       count(*) FILTER (WHERE o.used IN ('yes', 'partial')
+           AND o.outcome NOT IN ('unknown', 'abandoned')
+           AND o.outcome <> ALL(%(success)s::outcome_kind[])) AS failed,
+       count(*) FILTER (WHERE o.used IN ('yes', 'partial')
+           AND o.outcome IN ('unknown', 'abandoned')) AS no_result
+FROM counted_retrievals r LEFT JOIN counted_outcomes o ON o.retrieval_id = r.id
+WHERE r.entry_id = %(id)s
+"""
+
+# Recent searches whose every counted retrieval has a counted outcome with used = 'no'. A
+# retrieval has no search id: it is written in the search's transaction, so it shares the
+# search's task, reporter, query and created_at (now() is the transaction's start).
+_UNUSED_SEARCHES = """
+SELECT s.id, s.created_at, s.query, rp.pseudonym AS reporter, m.name AS model, hits.entries
+FROM counted_searches s JOIN reporters rp ON rp.id = s.reporter_id
+JOIN models m ON m.id = s.model_id
+JOIN LATERAL (
+    SELECT count(*) AS retrieved, count(*) FILTER (WHERE o.used = 'no') AS not_used,
+           json_agg(json_build_object('entry_id', r.entry_id, 'rank', r.rank_position,
+               'relevance', r.relevance, 'symptom', e.symptom) ORDER BY r.rank_position)
+               AS entries
+    FROM counted_retrievals r JOIN entries e ON e.id = r.entry_id
+    LEFT JOIN counted_outcomes o ON o.retrieval_id = r.id
+    WHERE r.task_id = s.task_id AND r.reporter_id = s.reporter_id AND r.query = s.query
+      AND r.created_at = s.created_at
+) hits ON hits.retrieved > 0 AND hits.not_used = hits.retrieved
+WHERE s.created_at > now() - interval '30 days'
+ORDER BY s.created_at DESC LIMIT %(limit)s
+"""
+
 
 def daily_activity(conn: Connection, days: int) -> list[Row]:
     """Per day for the last `days` days: retrievals, successes, failures, proposals."""
@@ -154,6 +195,11 @@ def entry_costs(conn: Connection, entry_ids: list[UUID]) -> dict[UUID, Row]:
     return {row["entry_id"]: row for row in rows}
 
 
+def entry_funnel(conn: Connection, entry_id: UUID) -> Row:
+    """Return how the entry's counted retrievals ended, bucketed as `_FUNNEL` describes."""
+    return _rows(conn, _FUNNEL, {"id": entry_id, **_SUCCESS})[0]
+
+
 def entry_reviews(conn: Connection, entry_id: UUID) -> list[Row]:
     """Return the entry's reviews, oldest first."""
     return _rows(
@@ -181,7 +227,8 @@ def entry_retrievals(conn: Connection, entry_id: UUID, limit: int = 50) -> list[
         conn,
         "SELECT r.id AS retrieval_id, o.id AS outcome_id, "
         "r.excluded OR coalesce(o.excluded, false) AS excluded, "
-        "r.created_at, r.task_id, r.query, r.rank_position, rp.pseudonym AS reporter, "
+        "r.created_at, r.task_id, r.query, r.rank_position, r.relevance, "
+        "rp.pseudonym AS reporter, "
         "m.name AS model, o.used::text AS used, o.outcome::text AS outcome, "
         "o.evidence->>'outcome_source' AS source, o.agent_assessment "
         "FROM retrievals r JOIN reporters rp ON rp.id = r.reporter_id "
@@ -247,6 +294,15 @@ def recent_searches(conn: Connection, limit: int = 100) -> list[Row]:
         "JOIN models m ON m.id = s.model_id ORDER BY s.created_at DESC LIMIT %(limit)s",
         {"limit": limit},
     )
+
+
+def unused_searches(conn: Connection, limit: int = 50) -> list[Row]:
+    """Return searches of the last 30 days where hooks saw no returned entry used.
+
+    Newest first. Each row's `entries` lists what came back in rank order with its relevance,
+    None for a retrieval logged before relevance was (MIT-602).
+    """
+    return _rows(conn, _UNUSED_SEARCHES, {"limit": limit})
 
 
 def reporters(conn: Connection) -> list[Row]:

@@ -1,3 +1,4 @@
+import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -6,6 +7,7 @@ import httpx2
 import psycopg
 import pytest
 from fastmcp import FastMCP
+from psycopg import sql
 from starlette.testclient import TestClient
 
 import factories
@@ -161,6 +163,151 @@ def test_searches_page_lists_what_was_not_found(
     assert "QuuxError: dashboard-never-documented &lt;script&gt;" in page
     assert "<script>" not in page.split("<body>", 1)[1]
     assert 'href="/searches" class="active"' in page
+
+
+def set_outcome(db: psycopg.Connection, outcome_id: uuid.UUID, **fields: object) -> None:
+    for field, value in fields.items():
+        db.execute(
+            sql.SQL("UPDATE outcomes SET {} = %s WHERE id = %s").format(sql.Identifier(field)),
+            (value, outcome_id),
+        )
+
+
+def exclude_retrieval_of(db: psycopg.Connection, outcome_id: uuid.UUID) -> None:
+    db.execute(
+        "UPDATE retrievals SET excluded = true "
+        "WHERE id = (SELECT retrieval_id FROM outcomes WHERE id = %s)",
+        (outcome_id,),
+    )
+
+
+def funnel_entry(db: psycopg.Connection, reporter: uuid.UUID) -> uuid.UUID:
+    """An entry retrieved 9 counted times: 2 not used, 3 use unknown, 4 used (2 worked)."""
+    entry_id = factories.entry(db, reporter, human_reviewed=True, provisional=False)
+    for result, used in (
+        ("tests_passed", "yes"),
+        ("error_resolved", "partial"),
+        ("tests_failed", "yes"),
+        ("unknown", "yes"),
+        ("tests_passed", "no"),
+        ("tests_failed", "no"),
+        ("tests_passed", None),
+    ):
+        set_outcome(db, factories.outcome(db, entry_id, reporter, result), used=used)
+    # A retrieval with no outcome yet, and one whose outcome is excluded: both use unknown.
+    no_outcome = factories.outcome(db, entry_id, reporter)
+    db.execute("DELETE FROM outcomes WHERE id = %s", (no_outcome,))
+    set_outcome(db, factories.outcome(db, entry_id, reporter), excluded=True)
+    # An excluded retrieval is left out altogether.
+    exclude_retrieval_of(db, factories.outcome(db, entry_id, reporter, "tests_failed"))
+    return entry_id
+
+
+def test_entry_funnel_splits_unused_retrievals_from_failures(
+    db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    funnel = insights.entry_funnel(db, funnel_entry(db, reporter))
+    assert funnel == {
+        "retrieved": 9,
+        "not_used": 2,
+        "used_unknown": 3,
+        "used": 4,
+        "worked": 2,
+        "failed": 1,
+        "no_result": 1,
+    }
+
+
+def test_entry_page_shows_the_funnel_and_relevance(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    entry_id = funnel_entry(db, reporter)
+    page = client.get(f"/entries/{entry_id}").text
+    stages = dict(re.findall(r'data-stage="(\w+)">.*?<b>(\d+)</b>', page, re.DOTALL))
+    assert stages == {
+        "retrieved": "9",
+        "not_used": "2",
+        "used_unknown": "3",
+        "used": "4",
+        "worked": "2",
+        "failed": "1",
+        "no_result": "1",
+    }
+    assert "probably the wrong retrieval" in page
+    # factories.outcome writes no relevance, like rows from before MIT-602: a blank cell.
+    assert page.count('<td class="num"></td>') == 10
+    db.execute("UPDATE retrievals SET relevance = 0.4242 WHERE entry_id = %s", (entry_id,))
+    page = client.get(f"/entries/{entry_id}").text
+    assert page.count('<td class="num">0.42</td>') == 10
+    assert '<td class="num"></td>' not in page
+
+
+def test_an_entry_never_retrieved_has_an_empty_funnel(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    entry_id = factories.entry(db, reporter, human_reviewed=True, provisional=False)
+    assert insights.entry_funnel(db, entry_id)["retrieved"] == 0
+    page = client.get(f"/entries/{entry_id}").text
+    assert "data-stage" not in page
+
+
+def searched(
+    server: FastMCP, db: psycopg.Connection, word: str, used: tuple[str | None, ...]
+) -> uuid.UUID:
+    """Search for `word` in a new task, then give the hits outcomes with `used`, in rank order.
+
+    A `None` leaves that hit without an outcome. Returns the search's id.
+    """
+    task_id = uuid.uuid4()
+    hits = call(server, "search", {"query": word, "task_id": str(task_id)})["data"]
+    assert len(hits) == len(used)
+    for hit, value in zip(hits, used, strict=True):
+        if value is not None:
+            db.execute(
+                "INSERT INTO outcomes (retrieval_id, used) SELECT id, %s FROM retrievals "
+                "WHERE task_id = %s AND entry_id = %s",
+                (value, task_id, hit["entry_id"]),
+            )
+    row = db.execute("SELECT id FROM searches WHERE task_id = %s", (task_id,)).fetchone()
+    assert row
+    search_id: uuid.UUID = row[0]
+    return search_id
+
+
+def test_searches_where_nothing_returned_was_used(
+    client: TestClient, server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    word = f"fitmiss{uuid.uuid4().hex[:6]}"
+    for n in (1, 2):
+        factories.entry(
+            db, reporter, symptom=f"FitError: {word} {n}", human_reviewed=True, provisional=False
+        )
+    unused = searched(server, db, word, ("no", "no"))
+    old = searched(server, db, word, ("no", "no"))
+    db.execute(
+        "UPDATE retrievals SET relevance = NULL WHERE task_id = "
+        "(SELECT task_id FROM searches WHERE id = %s)",
+        (old,),
+    )
+    some_use = searched(server, db, word, ("no", "partial"))
+    pending = searched(server, db, word, ("no", None))
+    excluded = searched(server, db, word, ("no", "no"))
+    db.execute("UPDATE searches SET excluded = true WHERE id = %s", (excluded,))
+
+    rows = {row["id"]: row for row in insights.unused_searches(db)}
+    assert unused in rows
+    assert old in rows
+    assert not {some_use, pending, excluded} & rows.keys()
+    relevances = [hit["relevance"] for hit in rows[unused]["entries"]]
+    assert len(relevances) == 2
+    assert all(r is not None and r > 0 for r in relevances)
+    assert [hit["relevance"] for hit in rows[old]["entries"]] == [None, None]
+
+    page = client.get("/searches").text
+    section = page.split("Found, not used", 1)[1].split("Recent searches", 1)[0]
+    assert section.count(f'">FitError: {word}') == 4  # link text: 2 searches x 2 entries
+    assert f'<span class="num">{relevances[0]:.2f}</span>' in section
+    assert '<span class="num"></span>' in section
 
 
 def test_entries_filter_by_status_and_unknown_entry_is_404(
