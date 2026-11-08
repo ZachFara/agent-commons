@@ -122,6 +122,9 @@ class Dashboard:
                 "totals": insights.search_totals(conn),
                 "missed": insights.missed_queries(conn),
                 "recent": insights.recent_searches(conn),
+                "lookups": insights.lookup_totals(conn),
+                "missed_lookups": insights.misses_with_lookups(conn),
+                "libraries": insights.libraries_looked_up(conn),
             }
         )
         return self._render(request, "searches.html", "searches", data)
@@ -250,7 +253,7 @@ class Dashboard:
         return await self._act(request, run)
 
     async def exclude_task(self, request: Request) -> Response:
-        """Exclude a whole task's retrievals and searches."""
+        """Exclude a whole task's retrievals, searches and doc lookups."""
         if not _same_origin(request, hosted=self._hosted):
             return PlainTextResponse("Cross-origin request refused.", status_code=403)
         reason = str((await request.form()).get("reason") or "")

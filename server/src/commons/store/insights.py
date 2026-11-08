@@ -3,6 +3,7 @@
 from typing import Any
 from uuid import UUID
 
+from psycopg import sql
 from psycopg.rows import dict_row
 
 from commons.domain.outcomes import SUCCESS_OUTCOMES
@@ -237,6 +238,78 @@ def recent_searches(conn: Connection, limit: int = 100) -> list[Row]:
     )
 
 
+# Context7 lookups beside Commons searches (MIT-623), both from the counted views over the
+# last 30 days. A miss is a search with hit_count = 0 and a hit one with hit_count > 0, as in
+# search_totals and DESIGN §3.
+_LOOKUP_WINDOW = sql.SQL("""
+WITH looked AS (
+    SELECT task_id, created_at, library_id, version
+    FROM counted_doc_lookups WHERE created_at > now() - interval '30 days'
+), searched AS (
+    SELECT id, task_id, created_at, query, hit_count, model_id
+    FROM counted_searches WHERE created_at > now() - interval '30 days'
+)
+""")
+
+_LOOKUP_TOTALS = _LOOKUP_WINDOW + sql.SQL("""
+SELECT
+  (SELECT count(*) FROM looked) AS lookups,
+  (SELECT count(DISTINCT task_id) FROM looked) AS tasks,
+  (SELECT count(DISTINCT l.task_id)
+     FROM looked l JOIN searched s ON s.task_id = l.task_id
+     WHERE s.hit_count = 0 AND s.created_at < l.created_at) AS missed_then_looked_up,
+  (SELECT count(DISTINCT l.task_id)
+     FROM looked l WHERE NOT EXISTS (SELECT 1 FROM searched s WHERE s.task_id = l.task_id))
+     AS looked_up_without_search,
+  (SELECT count(DISTINCT l.task_id)
+     FROM looked l JOIN searched s ON s.task_id = l.task_id
+     WHERE s.hit_count > 0) AS hit_and_looked_up
+""")
+
+_MISSES_WITH_LOOKUPS = _LOOKUP_WINDOW + sql.SQL("""
+SELECT s.task_id, s.created_at, s.query, m.name AS model,
+       string_agg(DISTINCT l.library_id
+                  || CASE WHEN l.version = '' THEN '' ELSE ' ' || l.version END, ', ')
+           AS libraries,
+       CASE WHEN bool_and(l.created_at > s.created_at) THEN 'after'
+            WHEN bool_and(l.created_at < s.created_at) THEN 'before'
+            ELSE 'before and after' END AS timing
+FROM searched s JOIN looked l ON l.task_id = s.task_id
+JOIN models m ON m.id = s.model_id
+WHERE s.hit_count = 0
+GROUP BY s.id, s.task_id, s.created_at, s.query, m.name
+ORDER BY s.created_at DESC LIMIT %(limit)s
+""")
+
+_LIBRARIES_LOOKED_UP = _LOOKUP_WINDOW + sql.SQL("""
+SELECT l.library_id, l.version, count(*) AS lookups, count(DISTINCT l.task_id) AS tasks,
+       count(DISTINCT h.task_id)::float / count(DISTINCT l.task_id) AS hit_share
+FROM looked l
+LEFT JOIN (SELECT DISTINCT task_id FROM searched WHERE hit_count > 0) h
+    ON h.task_id = l.task_id
+GROUP BY l.library_id, l.version
+ORDER BY lookups DESC, tasks DESC, l.library_id, l.version LIMIT %(limit)s
+""")
+
+
+def lookup_totals(conn: Connection) -> Row:
+    """Count lookups, and the tasks where a lookup met a Commons miss, no search, or a hit."""
+    return _rows(conn, _LOOKUP_TOTALS, {})[0]
+
+
+def misses_with_lookups(conn: Connection, limit: int = 100) -> list[Row]:
+    """Return each Commons miss in a task that also looked up docs, newest first.
+
+    `timing` says whether the task's lookups came before the search, after it, or both.
+    """
+    return _rows(conn, _MISSES_WITH_LOOKUPS, {"limit": limit})
+
+
+def libraries_looked_up(conn: Connection, limit: int = 100) -> list[Row]:
+    """Return each library and version looked up, with the share of its tasks Commons hit."""
+    return _rows(conn, _LIBRARIES_LOOKED_UP, {"limit": limit})
+
+
 def reporters(conn: Connection) -> list[Row]:
     """Every reporter with contribution and accuracy figures."""
     return _rows(
@@ -279,7 +352,7 @@ def models(conn: Connection) -> list[Row]:
     )
 
 
-def _rows(conn: Connection, query: str, params: dict[str, Any]) -> list[Row]:
+def _rows(conn: Connection, query: str | sql.Composed, params: dict[str, Any]) -> list[Row]:
     with conn.cursor(row_factory=dict_row) as cursor:
         cursor.execute(query, params)
         return cursor.fetchall()

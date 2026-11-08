@@ -63,6 +63,23 @@ def test_doctor_all_good_after_setup(home: Path, capsys: pytest.CaptureFixture[s
     assert all(line.startswith("✓") for line in out[:-1])
 
 
+def test_doctor_warns_about_hooks_without_the_query_docs_matcher(home: Path) -> None:
+    settings = home / "claude" / "settings.json"
+    install_hooks(settings)
+    written = json.loads(settings.read_text(encoding="utf-8"))
+    written["hooks"]["PostToolUse"][0]["matcher"] = "Bash|Edit|Write|MultiEdit"
+    settings.write_text(json.dumps(written), encoding="utf-8")
+
+    (check,) = [c for c in doctor.run_checks(unreachable, no_server) if c.name == "hooks"]
+    assert check.status == "warn"
+    assert "query-docs" in check.detail
+    assert "commons install-hooks" in check.detail
+
+    install_hooks(settings)
+    (check,) = [c for c in doctor.run_checks(unreachable, no_server) if c.name == "hooks"]
+    assert check.status == "ok"
+
+
 def test_doctor_counts_recent_hook_errors(home: Path) -> None:
     log = home / "state" / "hooks.log"
     log.parent.mkdir(parents=True)

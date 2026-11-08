@@ -106,6 +106,16 @@ TABLES = {
         "results",
         "excluded",
     },
+    "doc_lookups": {
+        "task_id",
+        "reporter_id",
+        "model_id",
+        "privacy_mode",
+        "library_id",
+        "version",
+        "query",
+        "excluded",
+    },
     "corrections": {
         "batch_id",
         "corrected_by",
@@ -119,6 +129,7 @@ TABLES = {
         "undone_by",
     },
     "search_months": {"month", "query", "searches", "misses"},
+    "doc_lookup_months": {"month", "library_id", "version", "lookups"},
     "outcomes": {
         "retrieval_id",
         "used",

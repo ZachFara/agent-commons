@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -6,6 +7,7 @@ import pytest
 
 from commons.cli.main import main
 from commons.service.hook_install import (
+    POST_TOOL_USE_MATCHER,
     commons_executable,
     commons_hooks,
     is_commons_hook,
@@ -24,7 +26,28 @@ def test_hooks_run_this_installs_commons_executable() -> None:
     assert command == f'"{commons_executable()}" hook session-start'
     assert commons_executable().exists()
     assert set(hooks) == {"SessionStart", "PostToolUse", "PostToolUseFailure", "Stop"}
-    assert hooks["PostToolUse"][0]["matcher"] == "Bash|Edit|Write|MultiEdit"
+    assert hooks["PostToolUse"][0]["matcher"] == POST_TOOL_USE_MATCHER
+
+
+@pytest.mark.parametrize(
+    ("tool", "matched"),
+    [
+        ("Bash", True),
+        ("Edit", True),
+        ("Write", True),
+        ("MultiEdit", True),
+        ("mcp__context7__query-docs", True),
+        ("mcp__claude_ai_Context7__query-docs", True),
+        ("mcp__plugin_context7_context7__query-docs", True),
+        ("mcp__claude_ai_Context7__resolve-library-id", False),
+        ("NotebookEdit", False),
+        ("TodoWrite", False),
+        ("Read", False),
+    ],
+)
+def test_the_post_tool_use_matcher_covers_query_docs(tool: str, *, matched: bool) -> None:
+    """Claude Code tests a regex matcher with RegExp.test, unanchored, so ours is anchored."""
+    assert bool(re.search(POST_TOOL_USE_MATCHER, tool)) is matched
 
 
 @pytest.mark.parametrize(
@@ -55,6 +78,18 @@ def test_merge_keeps_other_tools_and_replaces_stale_commons_hooks() -> None:
     assert merge_hooks(merged, commons_hooks()) == merged
 
 
+def test_merge_replaces_an_old_matcher_post_tool_use_group() -> None:
+    """An install from before MIT-622 has a PostToolUse group that can't see query-docs."""
+    old = {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [{"type": "command", "command": '"/old/bin/commons" hook post-tool-use'}],
+    }
+    settings: dict[str, Any] = {"hooks": {"PostToolUse": [OTHER_TOOL, old]}}
+    merged = merge_hooks(settings, commons_hooks())
+    assert merged["hooks"]["PostToolUse"] == [OTHER_TOOL, *commons_hooks()["PostToolUse"]]
+    assert merged["hooks"]["PostToolUse"][1]["matcher"] == POST_TOOL_USE_MATCHER
+
+
 def test_install_hooks_command_writes_backs_up_and_is_idempotent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -67,6 +102,7 @@ def test_install_hooks_command_writes_backs_up_and_is_idempotent(
     assert written["theme"] == "dark"
     assert written["hooks"]["PostToolUse"][0] == OTHER_TOOL
     assert len(written["hooks"]["PostToolUse"]) == 2
+    assert written["hooks"]["PostToolUse"][1]["matcher"] == POST_TOOL_USE_MATCHER
     assert "SessionStart" in written["hooks"]
     backup = tmp_path / "settings.json.agent-commons.bak"
     assert json.loads(backup.read_text(encoding="utf-8")) == original

@@ -35,7 +35,7 @@ def correct(conn: Connection, correction: Correction, batch_id: UUID | None = No
 
 
 def exclude_task(conn: Connection, task_id: UUID, *, reason: str, by: str) -> int:
-    """Exclude every retrieval and search of a task (e.g. test traffic); return how many.
+    """Exclude a task's retrievals, searches and doc lookups (e.g. test traffic); return how many.
 
     The corrections share a batch, so undoing any of them undoes the whole task.
     """

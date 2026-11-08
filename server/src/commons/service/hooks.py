@@ -9,15 +9,19 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from commons.domain.errors import NotPermittedError
+from commons.domain.observations import DocLookup
 from commons.domain.outcomes import ObservedRun, merge_observation
 from commons.domain.usage import ArtifactFrequencies, UseObservation, count_artifacts
+from commons.privacy.doc_lookup_log import doc_lookup_record
 from commons.service.agent_text import TURN_NUDGE
-from commons.service.identity import current_reporter
+from commons.service.identity import current_reporter, test_traffic
 from commons.service.ranking import rank, ranking_is_stale
 from commons.store.connection import Connection
+from commons.store.doc_lookups import record_doc_lookup
 from commons.store.entries import approved_fixes
 from commons.store.models import model_id
 from commons.store.outcomes import locked_outcome, save_outcome, set_used
+from commons.store.searches import privacy_mode
 from commons.store.task_events import (
     TaskRetrieval,
     acted_in_turn,
@@ -54,16 +58,23 @@ def record_tool_use(
     session_id: str,
     test_run: dict[str, object] | None,
     file_change: dict[str, object] | None,
+    doc_lookup: DocLookup | None = None,
 ) -> None:
     """Store derived observations of one tool call; ignore sessions we have no task for."""
     with conn.transaction():
-        task_id = task_for_session(conn, session_id, current_reporter(conn))
+        reporter = current_reporter(conn)
+        task_id = task_for_session(conn, session_id, reporter)
         if task_id is None:
             return
         if test_run is not None:
             add_task_event(conn, task_id, "test_run", test_run)
         if file_change is not None:
             add_task_event(conn, task_id, "file_change", file_change)
+        if doc_lookup is not None:
+            mode = privacy_mode(conn, reporter, task_id)
+            record = doc_lookup_record(doc_lookup, task_id, mode)
+            # A test key's lookups never count (decision 0030).
+            record_doc_lookup(conn, record, reporter, excluded=test_traffic())
 
 
 def retrievals_to_judge(conn: Connection, session_id: str) -> list[TaskRetrieval]:

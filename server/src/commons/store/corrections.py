@@ -100,10 +100,12 @@ def mark_undone(conn: Connection, correction_id: UUID, by: str) -> None:
 
 
 def task_rows(conn: Connection, task_id: UUID) -> list[tuple[CorrectionTable, UUID]]:
-    """Return the task's retrievals and searches that still count."""
+    """Return the task's retrievals, searches and doc lookups that still count."""
     rows = conn.execute(
         "SELECT 'retrievals', id FROM retrievals WHERE task_id = %(t)s AND NOT excluded "
-        "UNION ALL SELECT 'searches', id FROM searches WHERE task_id = %(t)s AND NOT excluded",
+        "UNION ALL SELECT 'searches', id FROM searches WHERE task_id = %(t)s AND NOT excluded "
+        "UNION ALL SELECT 'doc_lookups', id FROM doc_lookups "
+        "WHERE task_id = %(t)s AND NOT excluded",
         {"t": task_id},
     ).fetchall()
     return [(table, row_id) for table, row_id in rows]

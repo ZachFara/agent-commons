@@ -10,11 +10,15 @@ from fastmcp import FastMCP
 from starlette.testclient import TestClient
 
 import factories
-from commons.service import trust
+from commons.domain.corrections import Correction
+from commons.service import corrections, trust
 from commons.service.ranking import rank
 from commons.store import insights
 from commons.store import trust as trust_store
 from commons.store.connection import Connection
+from commons.store.models import model_id
+from commons.store.rows import returned_id
+from commons.store.tasks import start_task
 from commons.web import app as web
 from mcp_client import call
 
@@ -75,6 +79,87 @@ def test_searches_page_lists_what_was_not_found(
     assert "QuuxError: dashboard-never-documented &lt;script&gt;" in page
     assert "<script>" not in page.split("<body>", 1)[1]
     assert 'href="/searches" class="active"' in page
+
+
+def add_task(db: psycopg.Connection, reporter: uuid.UUID) -> uuid.UUID:
+    task_id = start_task(db, f"session-{uuid.uuid4()}", reporter, None)
+    assert task_id
+    return task_id
+
+
+def add_search(db: psycopg.Connection, task_id: uuid.UUID, query: str, hits: int, ago: str) -> None:
+    db.execute(
+        "INSERT INTO searches (created_at, task_id, reporter_id, model_id, privacy_mode, query, "
+        "result_limit, hit_count) SELECT now() - %s::interval, id, reporter_id, %s, 'entry', %s, "
+        "5, %s FROM tasks WHERE id = %s",
+        (ago, model_id(db, "claude-opus-5-5"), query, hits, task_id),
+    )
+
+
+def add_lookup(db: psycopg.Connection, task_id: uuid.UUID, library: str, version: str) -> uuid.UUID:
+    cursor = db.execute(
+        "INSERT INTO doc_lookups (created_at, task_id, reporter_id, privacy_mode, library_id, "
+        "version) SELECT now() - interval '1 hour', id, reporter_id, 'entry', %s, %s "
+        "FROM tasks WHERE id = %s RETURNING id",
+        (library, version, task_id),
+    )
+    return returned_id(cursor.fetchone())
+
+
+def lookup_section(page: str) -> str:
+    return page.split("Docs looked up", 1)[1].split("Recent searches", 1)[0]
+
+
+def test_searches_page_shows_commons_misses_next_to_doc_lookups(
+    client: TestClient, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    db.execute("DELETE FROM doc_lookups")  # other tests' committed lookups; rolled back after
+    missed, hit, only, excluded = (add_task(db, reporter) for _ in range(4))
+    add_search(db, missed, "DashError: nothing for this", 0, "2 hours")
+    add_lookup(db, missed, "/dash/next", "v16")
+    add_search(db, hit, "DashError: an entry has it", 2, "2 hours")
+    add_lookup(db, hit, "/dash/next", "v16")
+    add_lookup(db, only, "/dash/only", "")
+    add_search(db, excluded, "DashError: excluded miss", 0, "2 hours")
+    lookup = add_lookup(db, excluded, "/dash/excluded", "v1")
+    corrections.correct(
+        db, Correction("doc_lookups", lookup, "excluded", value=True, reason="test", by="owner")
+    )
+
+    totals = insights.lookup_totals(db)
+    assert (totals["lookups"], totals["tasks"]) == (3, 3)
+    assert totals["missed_then_looked_up"] == 1
+    assert totals["looked_up_without_search"] == 1
+    assert totals["hit_and_looked_up"] == 1
+    rows = insights.misses_with_lookups(db)
+    assert [(r["task_id"], r["query"], r["libraries"], r["model"], r["timing"]) for r in rows] == [
+        (missed, "DashError: nothing for this", "/dash/next v16", "claude-opus-5-5", "after")
+    ]
+    libraries = insights.libraries_looked_up(db)
+    assert [
+        (r["library_id"], r["version"], r["lookups"], r["tasks"], r["hit_share"]) for r in libraries
+    ] == [
+        ("/dash/next", "v16", 2, 2, 0.5),
+        ("/dash/only", "", 1, 1, 0.0),
+    ]
+
+    section = lookup_section(client.get("/searches").text)
+    assert "DashError: nothing for this" in section
+    assert "/dash/next" in section
+    assert "50%" in section
+    assert "after the search" in section
+    assert "/dash/excluded" not in section
+    assert "DashError: excluded miss" not in section
+    assert str(excluded)[:8] not in section
+
+
+def test_searches_page_says_when_there_are_no_lookups(
+    client: TestClient, db: psycopg.Connection
+) -> None:
+    db.execute("DELETE FROM doc_lookups")  # rolled back after the test
+    section = lookup_section(client.get("/searches").text)
+    assert "No doc lookups in the last 30 days" in section
+    assert "<table" not in section
 
 
 def test_entries_filter_by_status_and_unknown_entry_is_404(

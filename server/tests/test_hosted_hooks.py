@@ -6,6 +6,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -17,14 +18,15 @@ from starlette.testclient import TestClient
 
 import factories
 from commons.cli.main import main
-from commons.domain.observations import ToolUse
+from commons.domain.keys import KeyOptions
+from commons.domain.observations import DocLookup, ToolUse
 from commons.domain.search import SearchRequest
 from commons.service import hook_client
 from commons.service import search as search_service
 from commons.service.hook_client import RemoteBackend
 from commons.service.identity import acting_as
-from commons.service.keys import create_key
-from commons.service.local_state import cached_frequencies, read_spool
+from commons.service.keys import create_key, issue_key
+from commons.service.local_state import bind_store, cached_frequencies, read_spool
 from commons.store.connection import Connection
 from commons.store.reporters import find_reporter
 from commons.web import app as web
@@ -169,6 +171,21 @@ def test_local_privacy_reporters_are_refused(app: Starlette, db: psycopg.Connect
         {"session_id": "s", "test_run": {"command": "pytest", "exit_code": 0, "stdout": "code"}},
         {"session_id": "s", "file_change": {"path_sha256": "x", "content_sha256": "y"}},
         {"session_id": "s", "file_change": {"content": "def secret(): ..."}},
+        {
+            "session_id": "s",
+            "doc_lookup": {
+                "library_id": "/a/b",
+                "version": "",
+                "query": None,
+                "response": "docs text",
+            },
+        },
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b", "version": ""}},
+        {"session_id": "s", "doc_lookup": {"library_id": "a/b", "version": "", "query": None}},
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b/1", "version": "", "query": None}},
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b", "version": "1/2", "query": None}},
+        {"session_id": "s", "doc_lookup": {"library_id": "/a/b", "version": "", "query": 5}},
+        {"session_id": "s", "doc_lookup": "/a/b"},
         {"session_id": 5},
         {},
     ],
@@ -181,6 +198,152 @@ def test_only_derived_shapes_are_accepted(
     response = post(app, key, "tool-use", body)
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_input"
+
+
+def doc_lookups(db: psycopg.Connection, task_id: uuid.UUID) -> list[tuple[Any, ...]]:
+    return db.execute(
+        "SELECT library_id, version, query, privacy_mode::text, excluded FROM doc_lookups "
+        "WHERE task_id = %s",
+        (task_id,),
+    ).fetchall()
+
+
+def query_docs(session_id: str) -> ToolUse:
+    lookup = DocLookup("/vercel/next.js", "v16.2.9", "app router")
+    return ToolUse(
+        session_id, "mcp__context7__query-docs", None, None, None, None, doc_lookup=lookup
+    )
+
+
+@pytest.mark.usefixtures("state")
+@pytest.mark.parametrize(("mode", "query"), [("entry", None), ("full_trace", "app router")])
+def test_a_doc_lookup_is_stored_over_http(
+    app: Starlette, db: psycopg.Connection, mode: str, query: str | None
+) -> None:
+    key = create_key(db, f"docs-{mode}", admin=False)
+    db.execute(
+        "UPDATE reporters SET privacy_default = %s WHERE pseudonym = %s", (mode, f"docs-{mode}")
+    )
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None)
+
+    hook_client.on_tool_use(backend, query_docs(session))
+
+    assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", query, mode, False)]
+    assert read_spool(session) == []
+
+
+def recording(app: Starlette, key: str) -> tuple[TestClient, list[dict[str, Any]]]:
+    """Return a client for `key` and the JSON bodies it posts to /tool-use."""
+    sent: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> None:
+        if request.url.path.endswith("/tool-use"):
+            sent.append(json.loads(request.content))
+
+    recorder = client(app, key)
+    recorder.event_hooks = {"request": [record]}
+    return recorder, sent
+
+
+def key_in_mode(db: psycopg.Connection, pseudonym: str, mode: str) -> str:
+    key = create_key(db, pseudonym, admin=False)
+    db.execute("UPDATE reporters SET privacy_default = %s WHERE pseudonym = %s", (mode, pseudonym))
+    return key
+
+
+SECRET_QUERY = "auth with ghp_" + "t" * 36
+
+
+@pytest.mark.usefixtures("state")
+@pytest.mark.parametrize(
+    ("mode", "sent_query"), [("entry", None), ("full_trace", "auth with [REDACTED:github_token]")]
+)
+def test_only_full_trace_sends_the_lookup_query(
+    app: Starlette, db: psycopg.Connection, mode: str, sent_query: str | None
+) -> None:
+    """In entry mode the query never leaves the machine, not even scrubbed (decision 0016)."""
+    recorder, sent = recording(app, key_in_mode(db, f"sent-{mode}", mode))
+    backend = RemoteBackend(recorder)
+    session = str(uuid.uuid4())
+    hook_client.on_session_start(backend, session, None)
+    lookup = DocLookup("/vercel/next.js", "v16.2.9", SECRET_QUERY)
+
+    hook_client.on_tool_use(backend, replace(query_docs(session), doc_lookup=lookup))
+
+    assert [body["doc_lookup"] for body in sent] == [
+        {"library_id": "/vercel/next.js", "version": "v16.2.9", "query": sent_query}
+    ]
+
+
+def test_session_start_returns_the_tasks_privacy_mode(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = key_in_mode(db, "mode-returned", "full_trace")
+    started = post(app, key, "session-start", {"session_id": str(uuid.uuid4())}).json()
+    assert started == {"task_id": started["task_id"], "privacy_mode": "full_trace"}
+
+
+@pytest.mark.usefixtures("state")
+def test_a_session_bound_without_a_mode_sends_no_query(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    """A session bound before session-start returned the mode is treated as entry mode."""
+    key = key_in_mode(db, "bound-before", "full_trace")
+    session = str(uuid.uuid4())
+    task_id = uuid.UUID(post(app, key, "session-start", {"session_id": session}).json()["task_id"])
+    bind_store(session, ("https://commons.example", key))
+    recorder, sent = recording(app, key)
+
+    hook_client.on_tool_use(RemoteBackend(recorder), query_docs(session))
+
+    assert [body["doc_lookup"]["query"] for body in sent] == [None]
+    assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", None, "full_trace", False)]
+
+
+def test_the_server_drops_an_older_clients_query_in_entry_mode(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    """Older clients ignore the mode and still send the query; the server keeps none of it."""
+    key = create_key(db, "older-client", admin=False)
+    session = str(uuid.uuid4())
+    started = post(app, key, "session-start", {"session_id": session}).json()
+    body = {
+        "session_id": session,
+        "doc_lookup": {"library_id": "/vercel/next.js", "version": "v16.2.9", "query": "q"},
+    }
+
+    assert post(app, key, "tool-use", body).status_code == 200
+    assert doc_lookups(db, uuid.UUID(started["task_id"])) == [
+        ("/vercel/next.js", "v16.2.9", None, "entry", False)
+    ]
+
+
+@pytest.mark.usefixtures("state")
+def test_a_test_keys_doc_lookups_are_excluded(app: Starlette, db: psycopg.Connection) -> None:
+    key = issue_key(db, "docs-tester", "agent", KeyOptions(test=True)).key
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None)
+
+    hook_client.on_tool_use(backend, query_docs(session))
+
+    assert [row[-1] for row in doc_lookups(db, task_id)] == [True]
+
+
+def test_a_local_reporters_doc_lookup_is_refused(app: Starlette, db: psycopg.Connection) -> None:
+    key = create_key(db, "docs-local", admin=False)
+    session = str(uuid.uuid4())
+    started = post(app, key, "session-start", {"session_id": session}).json()
+    db.execute("UPDATE reporters SET privacy_default = 'local' WHERE pseudonym = 'docs-local'")
+    body = {
+        "session_id": session,
+        "doc_lookup": {"library_id": "/vercel/next.js", "version": "v16.2.9", "query": "q"},
+    }
+
+    assert post(app, key, "tool-use", body).status_code == 403
+    assert doc_lookups(db, uuid.UUID(started["task_id"])) == []
 
 
 def test_another_reporters_session_is_invisible(app: Starlette, db: psycopg.Connection) -> None:
@@ -253,6 +416,31 @@ def test_hook_cli_reports_to_the_server_when_connected(
         (task_id,),
     ).fetchone()
     assert owner == ("cli-remote",)
+
+
+def test_the_hook_cli_sends_a_query_docs_lookup_to_the_server(
+    app: Starlette, db: psycopg.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = create_key(db, "cli-docs", admin=False)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"server": "https://commons.example", "key": key}), "utf-8")
+    monkeypatch.setenv("COMMONS_CONFIG", str(config))
+    monkeypatch.setenv("COMMONS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("COMMONS_DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+    monkeypatch.setattr("commons.cli.hooks.remote_client", lambda _url, k: client(app, k))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(RemoteBackend(client(app, key)), session, None)
+    payload = {
+        "session_id": session,
+        "tool_name": "mcp__claude_ai_Context7__query-docs",
+        "tool_input": {"libraryId": "/vercel/next.js/v16.2.9", "query": "app router"},
+        "tool_response": [{"type": "text", "text": "SENTINEL-docs"}],
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+
+    assert main(["hook", "post-tool-use"]) == 0
+
+    assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", None, "entry", False)]
 
 
 @pytest.mark.usefixtures("state")
