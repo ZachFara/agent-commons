@@ -234,8 +234,8 @@ def _switched_on(setting: str) -> bool:
 
 
 def _prompts() -> list[Prompt]:
-    """Offer `/commons:record` when COMMONS_RECORD_PROMPT=on (decision 0034; off by default)."""
-    if not _switched_on("COMMONS_RECORD_PROMPT"):
+    """Offer `/commons:record` unless COMMONS_RECORD_PROMPT=off (decision 0034; on by default)."""
+    if os.environ.get("COMMONS_RECORD_PROMPT", "on").strip().lower() == "off":
         return []
     description = "Review this session and record what to share."
     return [Prompt.from_function(_record, name="record", description=description)]

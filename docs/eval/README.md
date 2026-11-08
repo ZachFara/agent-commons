@@ -337,3 +337,118 @@ The adopted text (`w-a0b4c5d1e0f1g1h0n0s1`) passes the bar on both models: more 
 (Opus 25/27 vs 18/27, Sonnet 18/27 vs 2/27), no proposal on any control, no lower fix rate. Both
 models now search where it matters and not on controls. Sonnet still skips the search on a known
 entry (without duplicating it).
+
+## Scenarios added: no test (MIT-597, 2026-11-07)
+
+Configuration tasks with no failing test and no exception text, after two real misses. The prompt
+is the request itself, and an outcome check judges the result after the session, out of the
+agent's sight. Not yet verified with a real session, so not counted (decision 0023).
+
+- `config-app-overwrites`: a notes app the runner starts (`vaultapp`) writes its plugin settings from memory over `data.json` on every autosave and on exit, so a direct edit is lost; `vaultapp config set` works.
+- `config-default-wins`: a router (`switchyard`) whose unlisted `exporter` default (`cloud`) beats the documented `textfile_dir`; the export prints the cloud's 401, exits 0, and writes no metrics file.
+- `known-config-app-overwrites`: `config-app-overwrites` with the answer already in the commons.
+- `known-config-default-wins`: `config-default-wins` with the answer already in the commons.
+
+## Condition: the skill (MIT-624)
+
+Decision 0034 built a skill (`client/plugin/skills/agent-commons/SKILL.md`) but never measured
+it. A skill's name and description sit in context from the start, while the MCP tools stay
+deferred behind `ToolSearch`. `run --skill` measures it: each session also gets
+`--plugin-dir` pointing at a copy of `client/plugin` in its temp dir, and the `Skill` tool is
+allowed for that one skill. Everything else matches a plain session, including the server text
+(`--variant`, the shipped text by default).
+
+- **Hooks run once.** The copy leaves out the plugin's `hooks/`: they are the hooks
+  `commons join` installs, which the session's settings already carry, so loading both would run
+  each hook twice. The settings' copy also points at this checkout's `commons` and the session's
+  own database; the plugin's runs whatever `commons` is on `PATH`. So `--skill` is the plugin as
+  it would run (skill plus hooks, once each), and no separate "skill without hooks" condition is
+  needed. `--skill --no-hooks` gives the skill with no hooks at all.
+- **Checked at start.** A skill session whose init event (each turn's) does not list
+  `commons:agent-commons` is marked errored: it never reaches the ledger and `--resume` reruns it.
+- **Recorded.** Ledger lines carry `"skill": true` (older lines have no key and count as
+  `false`); `trials` shows such rows as `<variant>+skill`.
+
+Not run yet. Run one session first to confirm the skill loads (the init check has only been
+tested on a recorded init with the skill added by hand):
+
+```
+uv run python tools/agent_eval.py run --skill --scenario control-typo --condition s-smoke
+```
+
+Then the comparison: the shipped text with and without the skill, on the four no-test scenarios
+(MIT-597) and the five genuine controls, 3 runs each, on both models. That is
+9 scenarios x 3 runs x 2 conditions x 2 models = **108 sessions** (about 45 minutes at the
+`eval-confirm` rate). Add `--resume` to rerun after a usage limit.
+
+```
+scenarios=(--scenario config-app-overwrites --scenario config-default-wins
+  --scenario known-config-app-overwrites --scenario known-config-default-wins
+  --scenario control-typo --scenario control-arithmetic --scenario control-clear-error
+  --scenario control-documented-option --scenario control-documented-flag --runs 3)
+for model in sonnet claude-opus-5-5; do
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --condition s-shipped-$model
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --skill --condition s-skill-$model
+done
+```
+
+The bar (decision 0034): the skill beats the shipped text on both models, with no new proposals
+on the controls. `uv run python tools/agent_eval.py report --condition s-shipped-sonnet
+--condition s-skill-sonnet` (and the same for Opus) compares them.
+
+## Drafted variants: config surprises with no error text (MIT-625, 2026-11-08)
+
+Drafts from the review of real sessions where the owner had to ask agents about the commons
+(MIT-595). Those misses were configuration work with no failing test, and 3 of 4 real `propose`
+calls were rejected for an unversioned `tool`. Nothing ships: `baseline` is unchanged (same
+fingerprint), and `join` and the invite still install no skill. Each draft is one change on top
+of the shipped text, selected with `--variant <name>` (`COMMONS_INSTRUCTIONS_VARIANT`):
+
+| Variant | Surface | Change |
+|---|---|---|
+| `search-surprise` | instructions | The search rule widened the way the propose rule was (decision 0034 step 6): a dependency, tool or runtime that fails *or surprises you* (a default, a bare error page, no error text), searched "with the error or what you saw" |
+| `own-mistake` | instructions | "It counts even if you first fixed your own mistake." after the propose rule |
+| `lesson-also-propose` | instructions | "Lesson for AGENTS.md, memory or a README? Consider `propose` too." |
+| `propose-example` | `propose` description | The shipped worked example plus a second one for a tool with no error text (cron reading `%` as a newline), with the tool as a versioned `tool`; the shipped example only shows `pytest 9.0`, which did not stop the rejections |
+| `combined` | both | All four (instructions at 1,496 of the 1,500-character limit, so no room for more) |
+
+The skill (`client/plugin/skills/agent-commons/SKILL.md`) was refreshed in the same change: its
+description now triggers on library, tool and config surprises with or without an error, and its
+body adds worked `propose` calls for a config value (PyYAML reading `NO` as false) and a tool
+(cron reading `%` as a newline). Both examples are documented behavior picked to show the shapes;
+the controls check that they don't teach proposing documented behavior. Ledger lines record
+`"skill": true` but not which skill text, so `--skill` results from before this change are not
+comparable with later ones.
+
+The skill's version-change example is PyJWT 2 returning `jwt.encode()` as str, not bytes,
+instead of the shipped whenever `ignore_dst` case, which is the cause of the hold-out scenario
+`real-whenever-ignore-dst`. The skill's `search` and three `propose` examples, the free text of
+its `report` example (`agent_assessment`), and the example in `propose-example` were checked
+against every measured scenario's cause and `cause_words`; a test fails if one of them names any
+scenario's cause word. They replace the first draft's examples,
+which shared a mechanism and cause words with the two no-test discovery scenarios (an in-memory
+overwrite, and a default that beats a setting) and the hold-out. The shipped server text still
+carries the whenever example, since `baseline` stays byte-identical.
+
+**Suggested conditions**, on the four no-test scenarios (MIT-597) and the five genuine controls,
+3 runs each, on both models. Verify the no-test scenarios with one real session each first (they
+are not yet counted). Start with `combined` against the shipped text: 9 scenarios × 3 runs ×
+2 conditions × 2 models = **108 sessions**. Only if `combined` passes the bar, attribute it with
+the four single drafts (another 216 sessions), so the shipped text gains only the lines that help.
+
+```
+scenarios=(--scenario config-app-overwrites --scenario config-default-wins
+  --scenario known-config-app-overwrites --scenario known-config-default-wins
+  --scenario control-typo --scenario control-arithmetic --scenario control-clear-error
+  --scenario control-documented-option --scenario control-documented-flag --runs 3)
+for model in sonnet claude-opus-5-5; do
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --condition d-baseline-$model
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --variant combined --condition d-combined-$model
+done
+# then, if combined passes: --variant search-surprise / own-mistake / lesson-also-propose / propose-example
+```
+
+Count, per model: good proposals on the two discovery scenarios, search-found-used-reported on the
+two known-entry scenarios (and no duplicate proposal there), searches and proposals on the
+controls, rejected `propose` calls, and fix rate. The bar is decision 0023's. MIT-598 holds the
+go/no-go.

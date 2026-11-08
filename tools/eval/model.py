@@ -1,14 +1,18 @@
 """What a scenario is and what a session did. Shared by the scenario files and the runner."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 TEST_COMMAND = "uv run --python 3.12 --with pytest pytest -q"
 PROJECT_TEST_COMMAND = "uv run pytest -q"  # for scenarios with a pyproject.toml
 CANARY = "agent-commons-eval-canary"
 
-# Why a scenario should make an agent propose (DESIGN.md §5), or why it shouldn't.
-Trigger = Literal["contradicted_docs", "version_specific", "multi_attempt", "control"]
+# Why a scenario should make an agent propose (DESIGN.md §5), or why it shouldn't. `no_test`:
+# configuration work with no failing test and no exception text, where the outcome is checked
+# directly (MIT-597).
+Trigger = Literal["contradicted_docs", "version_specific", "multi_attempt", "no_test", "control"]
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,13 @@ class Scenario:
     # Multi-turn (decision 0034): a second task that arrives in the same session, through
     # `--resume`, after the first turn ends. Its files and libraries appear only then.
     then: "Scenario | None" = None
+    # A task with no failing test (MIT-597): `task` is the prompt, and `outcome(project, site)`
+    # judges the result after the session, out of the agent's sight, in place of the tests.
+    task: str = ""
+    outcome: Callable[[Path, Path], bool] | None = None
+    # A local app the runner starts in the project before the session and stops (SIGTERM)
+    # after it, before grading. It prints one line once it is ready.
+    app: str = ""
 
     @property
     def follow_up(self) -> str:
@@ -75,6 +86,8 @@ class Scenario:
     @property
     def prompt(self) -> str:
         """The neutral task the agent gets; it never mentions the commons."""
+        if self.task:
+            return self.task
         return (
             f"The tests in this project fail. Fix the bug so `{self.test_command}` passes. "
             "Don't modify the tests."

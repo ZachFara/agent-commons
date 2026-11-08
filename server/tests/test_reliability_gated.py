@@ -1,4 +1,7 @@
-"""Decision 0034: the gated helpers for reliable propose and report. All ship switched off."""
+"""Decision 0034: the gated helpers for reliable propose and report.
+
+All ship switched off except `/commons:record`, which is on by default (owner, 2026-11-08).
+"""
 
 import asyncio
 import json
@@ -81,9 +84,23 @@ def prompts(monkeypatch: pytest.MonkeyPatch, setting: str | None) -> list[str]:
     return asyncio.run(listed())
 
 
-def test_the_record_prompt_is_offered_only_when_turned_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert prompts(monkeypatch, None) == []
+def test_the_record_prompt_is_offered_unless_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("COMMONS_RECORD_PROMPT", raising=False)
+    assert prompts(monkeypatch, None) == ["record"]
+    assert prompts(monkeypatch, "off") == []
+    assert prompts(monkeypatch, "OFF") == []
     assert prompts(monkeypatch, "on") == ["record"]
+
+
+def test_the_record_prompt_serves_the_record_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("COMMONS_RECORD_PROMPT", raising=False)
+
+    async def served() -> list[str]:
+        async with Client(build_server()) as client:
+            result = await client.get_prompt("record")
+            return [getattr(message.content, "text", "") for message in result.messages]
+
+    assert asyncio.run(served()) == [agent_text.RECORD_PROMPT]
 
 
 def test_the_shipped_text_is_the_wider_trigger_and_differs_only_in_the_propose_rule() -> None:
@@ -105,7 +122,7 @@ DESCRIPTION_LIMIT = 300  # short, so it doesn't crowd the skills list (decision 
 BODY_LIMIT = 4000
 
 
-def test_the_skill_stays_inside_its_budgets_and_its_example_is_a_valid_proposal() -> None:
+def test_the_skill_stays_inside_its_budgets_and_its_examples_are_valid_proposals() -> None:
     text = SKILL.read_text(encoding="utf-8")
     front, body = text.split("---\n", 2)[1:]
     meta = dict(line.split(": ", 1) for line in front.strip().splitlines())
@@ -113,18 +130,25 @@ def test_the_skill_stays_inside_its_budgets_and_its_example_is_a_valid_proposal(
     assert len(meta["description"]) <= DESCRIPTION_LIMIT
     assert len(body) <= BODY_LIMIT
     blocks = [json.loads(b) for b in re.findall(r"```json\n(.*?)```", body, re.DOTALL)]
-    example = next(b for b in blocks if "symptom" in b)
-    validate_proposal(
-        Proposal(
-            symptom=example["symptom"],
-            environment=example["environment"],
-            cause=example["cause"],
-            fix=example["fix"],
-            domains=tuple(example["domains"]),
-            repro=None,
-            task_id=uuid.uuid4(),
+    examples = [b for b in blocks if "symptom" in b]
+    # a library version change, a config value, and a tool, the last two with no error text
+    assert len(examples) == 3
+    assert [example["environment"].get("tool") for example in examples[1:]] == [
+        None,
+        "cronie 1.7.2",
+    ]
+    for example in examples:
+        validate_proposal(
+            Proposal(
+                symptom=example["symptom"],
+                environment=example["environment"],
+                cause=example["cause"],
+                fix=example["fix"],
+                domains=tuple(example["domains"]),
+                repro=None,
+                task_id=uuid.uuid4(),
+            )
         )
-    )
 
 
 def test_the_plugin_hooks_match_what_join_installs() -> None:

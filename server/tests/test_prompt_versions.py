@@ -108,8 +108,10 @@ def test_mcp_search_and_its_retrievals_point_at_the_served_version(
     assert {row[0] for row in retrievals} == {version_id}
     hash_, label, surfaces = version_row(db, version_id)
     assert hash_ == served_hash(server)
-    assert label == f"baseline:{agent_text.SHIPPED}"
+    # `/commons:record` is on by default (decision 0034, 2026-11-08), so the label says so.
+    assert label == f"baseline:{agent_text.SHIPPED}+record"
     assert surfaces["instructions"] == agent_text.VARIANTS["baseline"].instructions
+    assert surfaces["record_prompt"] == agent_text.RECORD_PROMPT
 
 
 def test_mcp_propose_points_the_entry_at_the_same_version(
@@ -138,7 +140,7 @@ def test_one_row_per_distinct_text(db: psycopg.Connection, monkeypatch: pytest.M
     previous = searched_version(db, build(db, monkeypatch, "previous"))
     assert first == again
     assert previous != first
-    assert version_row(db, previous)[1] == f"previous:{agent_text.PREVIOUS_SHIPPED}"
+    assert version_row(db, previous)[1] == f"previous:{agent_text.PREVIOUS_SHIPPED}+record"
 
 
 def test_text_never_served_does_not_make_a_new_version(

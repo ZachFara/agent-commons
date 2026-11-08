@@ -14,7 +14,7 @@ the baseline only after it measurably helps on hold-out scenarios.
 import hashlib
 import os
 import re
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from functools import cache
 
 from commons.domain.prompts import PromptVersion, prompt_version
@@ -163,8 +163,7 @@ TURN_NUDGE = (
 
 
 # `/commons:record` (decision 0034): an MCP prompt, which clients show as a slash command. It
-# costs nothing unless invoked. Off unless COMMONS_RECORD_PROMPT=on, pending an eval of the
-# proposals it produces.
+# costs nothing unless invoked. On unless COMMONS_RECORD_PROMPT=off (the owner, 2026-11-08).
 RECORD_PROMPT = """\
 Review this session for what belongs in Agent Commons, then act:
 1. For each problem you solved, ask: was the cause a library or runtime behavior its docs \
@@ -520,6 +519,62 @@ VARIANTS["previous"] = resolve(PREVIOUS_SHIPPED)
 WIDER_TRIGGER = PREVIOUS_SHIPPED.replace("c5", f"c{len(PROPOSE_RULES) - 1}")
 SHIPPED = WIDER_TRIGGER
 VARIANTS["baseline"] = resolve(SHIPPED)
+
+
+# Drafts from the review of where the owner had to ask agents about the commons (MIT-595,
+# MIT-625). Not shipped: each is one change on top of the shipped text, for the eval to judge.
+# The misses were config work with no failing test (an app overwriting its settings, a default
+# winning), and 3 of 4 real `propose` calls were rejected for an unversioned `tool`, which the
+# shipped worked example (a pytest run) did not prevent. Instructions have little room left
+# under the limit (the shipped text uses 1,318 of 1,500), so the lines are short.
+_SHIPPED_SEARCH_RULE = SEARCH_RULES[4]
+# The search rule widened the way the propose rule was (decision 0034 step 6), and told what to
+# search with when there is no error text.
+SEARCH_RULE_SURPRISE = (
+    "Search first: before your first fix when a dependency, tool, or runtime fails or surprises "
+    "you (a default, a bare error page, no error text), call `search` with the error or what "
+    "you saw."
+)
+# An agent whose first fix undid its own mistake (say, an edit the app then overwrote) files
+# the whole thing as its own error and skips the surprise behind it.
+OWN_MISTAKE_LINE = "It counts even if you first fixed your own mistake."
+# Agents wrote what they learned into AGENTS.md or memory and stopped there.
+LESSON_ALSO_PROPOSE_LINE = "Lesson for AGENTS.md, memory or a README? Consider `propose` too."
+# The shipped worked example, plus one for a tool with no error text: `tool` names it with its
+# version, the shape the rejected calls got wrong. The example's mechanism (cron's `%`) and its
+# words are checked against every eval scenario's cause, so it gives none of them away.
+APP_EXAMPLE = """
+A surprise with no error text, from an app or a tool, has the same shape. Put the app or tool \
+in `tool` with its version (from its version flag or about page) and describe what you saw as \
+`symptom`:
+  symptom: "A cron job that logs to job-$(date +%F).log never creates the log; no error shown."
+  environment: {"tool": "cronie 1.7.2"}
+  cause: "cron reads each unescaped % in a crontab line as a newline, cutting the command short."
+  fix: "Escape each % in the crontab line with a backslash, or move the command into a script."
+  domains: ["cron", "shell"]
+A `tool` without a version is rejected.
+"""
+PROPOSE_EXAMPLES_APP = VARIANTS["baseline"].propose + APP_EXAMPLE
+_DRAFT_EDITS = {
+    "search-surprise": (_SHIPPED_SEARCH_RULE, SEARCH_RULE_SURPRISE),
+    "own-mistake": ("even for a one-line fix.", f"even for a one-line fix. {OWN_MISTAKE_LINE}"),
+    "lesson-also-propose": (CHECK_FIRST_RULE, f"{CHECK_FIRST_RULE} {LESSON_ALSO_PROPOSE_LINE}"),
+}
+
+
+def _draft(edits: list[tuple[str, str]], propose: str) -> Variant:
+    """Return the shipped variant with `edits` made to its instructions and `propose` shown."""
+    shipped = VARIANTS["baseline"]
+    instructions = shipped.instructions
+    for old, new in edits:
+        instructions = _swap(instructions, old, new)
+    return replace(shipped, instructions=instructions, propose=propose)
+
+
+for _name, _edit in _DRAFT_EDITS.items():
+    VARIANTS[_name] = _draft([_edit], VARIANTS["baseline"].propose)
+VARIANTS["propose-example"] = _draft([], PROPOSE_EXAMPLES_APP)
+VARIANTS["combined"] = _draft(list(_DRAFT_EDITS.values()), PROPOSE_EXAMPLES_APP)
 
 
 def _variant_name() -> str:
