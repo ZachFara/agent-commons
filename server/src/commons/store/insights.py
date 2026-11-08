@@ -171,9 +171,14 @@ ORDER BY s.created_at, s.id
 # open question 1). Each entry lands in exactly one bucket, the first that matches, so the
 # buckets add up to `proposals`:
 #   suspended       its proposer is suspended (decision 0029: reporters.suspended_at)
-#   merged          merged into another entry as a duplicate (decision 0027: a merge sets
-#                   superseded_by, then rejects a pending duplicate or retires an approved one)
-#   retired         retired with no successor (decision 0026)
+#   merged          merged into another entry as a duplicate (decision 0027). A merge
+#                   (service/duplicates.merge) sets superseded_by, then rejects a pending
+#                   duplicate or retires an approved one with the human review reason
+#                   "duplicate of <canonical id>". That reason naming the current successor
+#                   is what tells a merge from an admin's supersede (decision 0026 §3),
+#                   which also sets superseded_by but with the admin's own reason.
+#   retired         retired, with or without a successor (decision 0026): superseded
+#                   entries that weren't merged count here
 #   rejected        rejected by a human; by the reason of the latest human reject review
 #   human_approved  approved by a human (human_reviewed, decision 0005)
 #   auto_approved   approved on the proposer's trust, no human review yet (decision 0028:
@@ -199,7 +204,11 @@ _PROPOSAL_FUNNEL = """
 WITH proposals AS (
     SELECT m.name AS model,
            CASE WHEN rp.suspended_at IS NOT NULL THEN 'suspended'
-                WHEN e.superseded_by IS NOT NULL THEN 'merged'
+                WHEN e.status IN ('rejected', 'retired') AND EXISTS (
+                    SELECT 1 FROM reviews v WHERE v.entry_id = e.id AND v.source = 'human'
+                      AND v.decision IN ('reject', 'retire')
+                      AND v.reason = 'duplicate of ' || e.superseded_by::text)
+                    THEN 'merged'
                 WHEN e.status = 'retired' THEN 'retired'
                 WHEN e.human_reviewed AND e.status = 'rejected' THEN 'rejected'
                 WHEN e.human_reviewed AND e.status = 'approved' THEN 'human_approved'

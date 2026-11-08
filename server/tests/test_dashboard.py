@@ -12,6 +12,8 @@ from psycopg.types.json import Jsonb
 from starlette.testclient import TestClient
 
 import factories
+from commons.service.duplicates import merge
+from commons.service.lifecycle import retire
 from commons.service.ranking import rank
 from commons.store import insights
 from commons.store.connection import Connection
@@ -487,8 +489,11 @@ def funnel_proposals(db: psycopg.Connection, reporter: uuid.UUID, model: str) ->
         add_review(db, rejected, reporter, "an agent's reason", "agent")
         add_review(db, rejected, reporter, reason, "human")
     # Merged: a pending duplicate is rejected, an approved one retired, both superseded.
-    entry(status="rejected", human_reviewed=True, provisional=False, superseded_by=canonical)
-    entry(status="retired", human_reviewed=True, provisional=False, superseded_by=canonical)
+    for status in ("pending", "approved"):
+        merge(db, entry(status=status, human_reviewed=False, provisional=False), canonical)
+    # Superseded by an admin with no merge (decision 0026 §3): retired, not merged.
+    better = entry(human_reviewed=True, provisional=False)
+    retire(db, entry(human_reviewed=True, provisional=False), "a newer fix", superseded_by=better)
     flag = Jsonb([{"entry_id": str(canonical), "score": 0.5}])
     entry(status="pending", human_reviewed=False, provisional=False, duplicate_candidates=flag)
     entry(status="pending", human_reviewed=False, provisional=False)
@@ -502,15 +507,15 @@ def funnel_proposals(db: psycopg.Connection, reporter: uuid.UUID, model: str) ->
 
 
 FUNNEL = {
-    "proposals": 16,
-    "human_approved": 2,
+    "proposals": 18,
+    "human_approved": 3,
     "auto_approved": 2,
     "agent_approved": 1,
     "rejected": 3,
     "merged": 2,
     "flagged": 1,
     "pending": 2,
-    "retired": 1,
+    "retired": 2,
     "suspended": 2,
 }
 
