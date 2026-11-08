@@ -41,6 +41,8 @@ PYTEST_FIXTUREDEFS = Upstream(
 # step lookup with AttributeError on `_arg2fixturedefs`.
 # Fix: https://github.com/pytest-dev/pytest-bdd/pull/851 (merged 2026-10-29), a compat layer in
 # src/pytest_bdd/compat.py used by scenario.py; tests/feature/test_report.py changed with it.
+# The error's "Did you mean" names the new attribute, so it points at the rename: not a
+# hard-set task under decision 0023. Cause words name the new keying, not the attribute.
 PYTEST_BDD = GitHubTask(
     name="gh-pytest-bdd-fixturedefs",
     repo="https://github.com/pytest-dev/pytest-bdd",
@@ -56,7 +58,7 @@ PYTEST_BDD = GitHubTask(
     upstream=PYTEST_FIXTUREDEFS,
     discovery=Discovery(
         symptom_words=("_arg2fixturedefs", "FixtureManager"),
-        cause_words=("_arg2node2fixturedefs", "9.2"),
+        cause_words=("9.2", "per node", "per-node", "by node"),
         library="pytest",
     ),
     trigger="version_specific",
@@ -100,7 +102,8 @@ TEKORE = GitHubTask(
     upstream=PYDANTIC_ENUM_MISSING,
     discovery=Discovery(
         symptom_words=("lower", "AttributeError", "NoneType"),
-        cause_words=("_missing_", "enum constructor", "2.14"),
+        # Not `_missing_`: the traceback ends in it and every fix edits it.
+        cause_words=("enum constructor", "calls the enum", "2.14"),
         library="pydantic",
     ),
     trigger="version_specific",
