@@ -88,10 +88,13 @@ after the eval below.
        with more than 5 hits above the cutoff. On those queries the draw can push the
        relevant entry out of the top 5, which hit@1 alone would count the same as a drop to
        rank 2. Zach decided this gate on 2026-11-08 (Question MIT-589, option a). Under the
-       draw, precision@5 and recall@5 may each fall by no more than the top-5 margin, 0.01,
-       from the mean ranking's. The strict no-fall rule applies only to the mean ranking.
+       draw, precision@5 and recall@5 may each fall by no more than a top-5 margin Zach sets
+       (suggested 0.01) from the mean ranking's. The strict no-fall rule applies only to the
+       mean ranking.
      - The judged set must include queries with more than 5 hits above the cutoff, or the
-       top-5 margin measures nothing. Today such queries are rare or absent.
+       top-5 margin measures nothing. Today there are none: of the 60 answerable queries in
+       `server/tests/search_relevance/judged.json`, none has more than 3 hits above the
+       cutoff. Adding such queries is part of building exploration.
    - The agent eval. Exploration changes result order, which is what the agent sees. So it is one
      decision 0023 condition, `exploration`, run on Sonnet and Opus against the baseline at the
      baseline's run count. Today's scenarios seed entries with no outcomes
@@ -105,9 +108,9 @@ after the eval below.
      from the posterior while exploration is on. The snapshot bullet gains Σw and Σw·s.
    - In 0025, step 3's "then apply the outcome score (decision 0017) as today" becomes "apply
      the draw". Step 5's rule (no step ships if precision@5 or recall@5 falls) still applies to
-     the mean ranking, unchanged. Under the draw it becomes the top-5 margin (0.01) in point
-     6, and point 6 adds hit@1 with its own margin. Order is where the draw costs relevance,
-     and step 5's measures do not see order.
+     the mean ranking, unchanged. Under the draw it becomes the top-5 margin in point 6
+     (suggested 0.01), and point 6 adds hit@1 with its own margin. Order is where the draw
+     costs relevance, and step 5's measures do not see order.
 
 Consequences: the trigger is checked from numbers the Searches page already shows. If it never
 fires, nothing is built. If it fires, the change is small: one draw per hit, two snapshot
