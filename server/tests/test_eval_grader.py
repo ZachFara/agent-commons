@@ -1,14 +1,16 @@
 """The behavioral eval's grader (tools/eval/runner.py, decision 0023)."""
 
 import json
+import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
 import tools.agent_eval
-from tools.eval import runner
+from tools.eval import repos, runner
 from tools.eval.model import Discovery
 from tools.eval.runner import grade_proposal
 from tools.eval.scenarios import SCENARIOS
@@ -105,9 +107,15 @@ def graded_recording(
     monkeypatch: pytest.MonkeyPatch,
     arm: str = "commons",
     events: list[dict[str, Any]] | None = None,
+    plant: Callable[[Path], None] | None = None,
 ) -> runner.Result:
-    """Grade the recorded session in `arm`, its tests' run stubbed as passing."""
+    """Grade the recorded session in `arm`, its tests' run stubbed as passing.
+
+    `plant`, if given, changes the project further, as the agent might have.
+    """
     pristine, project = project_pair(tmp_path, {"app.py": FIXED})
+    if plant is not None:
+        plant(project)
     passed = subprocess.CompletedProcess(["pytest"], 0, "1 passed", "")
     monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: passed)  # the tests' run
     scenario = SCENARIOS["control-typo"]
@@ -187,9 +195,9 @@ def test_patches_differing_only_in_whitespace_share_a_hash(tmp_path: Path) -> No
     first = runner.project_patch(*project_pair(tmp_path / "a", {"app.py": FIXED}))
     second = runner.project_patch(*project_pair(tmp_path / "b", {"app.py": spaced}))
     other = runner.project_patch(*project_pair(tmp_path / "c", {"app.py": "def total(xs): 0\n"}))
-    assert first[0] != second[0]
-    assert first[1] == second[1]
-    assert other[1] != first[1]
+    assert first.text != second.text
+    assert first.hash == second.hash
+    assert other.hash != first.hash
 
 
 def test_test_file_edits_are_left_out_of_the_patch(tmp_path: Path) -> None:
@@ -204,11 +212,11 @@ def test_test_file_edits_are_left_out_of_the_patch(tmp_path: Path) -> None:
     )
     (project / "__pycache__").mkdir()
     (project / "__pycache__" / "app.cpython-312.pyc").write_bytes(b"\x00")
-    patch, _hash = runner.project_patch(pristine, project)
+    patch = runner.project_patch(pristine, project).text
     assert "b/notes.md" in patch
     assert "test" not in patch
     assert "pycache" not in patch
-    assert runner.project_patch(pristine, pristine)[0] == ""
+    assert runner.project_patch(pristine, pristine).text == ""
 
 
 def test_files_tools_generate_while_running_are_left_out_of_the_patch(tmp_path: Path) -> None:
@@ -226,4 +234,115 @@ def test_files_tools_generate_while_running_are_left_out_of_the_patch(tmp_path: 
     }
     runner.write_files(project, generated)
     assert runner.project_patch(pristine, project) == clean
-    assert clean[0] == ""
+    assert clean.text == ""
+
+
+OUTSIDE_SECRET = "planted-outside-" + "7f3c" * 8  # matches no secret pattern; only the walk
+PLANTED_KEY = "sk-ant-api03-" + "q" * 40
+LINE = "x" * 63 + "\n"  # 64 bytes
+LINES_AT_CAP = runner.FILE_CAP // len(LINE)
+
+
+def links_to_a_secret(home: Path) -> Callable[[Path], None]:
+    """Return a plant linking the project to a secret file under `home`, four ways."""
+    runner.write_files(home, {".ssh/id_ed25519": OUTSIDE_SECRET + "\n"})
+    key = home / ".ssh" / "id_ed25519"
+
+    def plant(project: Path) -> None:
+        (project / "key.txt").symlink_to(key)
+        (project / "keys").symlink_to(key.parent, target_is_directory=True)
+        (project / "relative.txt").symlink_to(os.path.relpath(key, project))
+        os.link(key, project / "hard.txt")
+
+    return plant
+
+
+def ledger_line(graded: runner.Result, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Append the result to a ledger of its own; return the line written."""
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    tools.agent_eval.append_ledger([graded])
+    return ledger.read_text(encoding="utf-8")
+
+
+def test_a_link_to_a_secret_outside_the_project_reaches_no_patch_ledger_or_excerpt(
+    tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plant = links_to_a_secret(tmp_path / "home")
+    graded = graded_recording(tmp_path / "session", database_url, monkeypatch, plant=plant)
+
+    assert OUTSIDE_SECRET not in graded.patch
+    assert "id_ed25519" not in graded.patch  # named by its own path only, never its target
+    for name in ("key.txt", "keys", "relative.txt", "hard.txt"):
+        assert f"+++ b/{name}" in graded.patch
+    assert graded.patch.count(f"\n+{runner.SYMLINK}") == 3
+    assert f"\n+{runner.HARD_LINK}" in graded.patch
+    assert "+    return sum(xs)" in graded.patch  # the fix itself is still read
+    line = ledger_line(graded, tmp_path, monkeypatch)
+    assert OUTSIDE_SECRET not in line
+    assert runner.SYMLINK in json.loads(line)["patch_excerpt"]
+    runner.save_result(tmp_path, "c-control-typo-1", graded)
+    for saved in ("c-control-typo-1.patch", "c-control-typo-1.json"):
+        assert OUTSIDE_SECRET not in (tmp_path / saved).read_text(encoding="utf-8")
+
+
+def test_a_large_generated_file_is_cut_at_its_cap_and_the_patch_marked(
+    tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    big = LINE * (LINES_AT_CAP + 16)  # 1 KiB over the cap, never more
+
+    def plant(project: Path) -> None:
+        runner.write_files(project, {"data.csv": big})
+
+    graded = graded_recording(tmp_path, database_url, monkeypatch, plant=plant)
+    assert graded.patch_truncated
+    assert graded.patch.endswith(f"\n+{runner.FILE_CUT}")
+    assert graded.patch.count("\n+" + LINE.strip()) == LINES_AT_CAP  # whole lines, to the cap
+    line = json.loads(ledger_line(graded, tmp_path, monkeypatch))
+    assert line["patch_truncated"] is True
+    assert line["patch_excerpt"].endswith(runner.EXCERPT_CUT)
+    assert len(line["patch_excerpt"]) <= runner.EXCERPT_CAP + len(runner.EXCERPT_CUT)
+
+
+def test_a_patch_over_its_cap_is_cut_but_its_hash_covers_the_whole_diff(tmp_path: Path) -> None:
+    files = {f"data/part{i}.txt": LINE * LINES_AT_CAP for i in range(5)}  # each at the cap
+    changed_last = {**files, "data/part4.txt": LINE * (LINES_AT_CAP - 1) + "z\n"}
+    first = runner.project_patch(*project_pair(tmp_path / "a", files))
+    second = runner.project_patch(*project_pair(tmp_path / "b", changed_last))
+    assert first.truncated
+    assert first.text.endswith(f"\n{runner.PATCH_CUT}")
+    assert len(first.text) <= runner.PATCH_CAP + len(runner.PATCH_CUT)
+    assert runner.FILE_CUT not in first.text  # no file was over its own cap
+    assert second.text == first.text  # the last file's change is past the cut
+    assert second.hash != first.hash
+
+
+def test_a_planted_key_reaches_the_ledger_only_redacted(
+    tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def plant(project: Path) -> None:
+        runner.write_files(project, {"settings.py": f'ANTHROPIC = "{PLANTED_KEY}"\n'})
+
+    graded = graded_recording(tmp_path, database_url, monkeypatch, plant=plant)
+    assert PLANTED_KEY in graded.patch  # the whole patch, kept only in the results directory
+    line = ledger_line(graded, tmp_path, monkeypatch)
+    assert PLANTED_KEY not in line
+    excerpt = json.loads(line)["patch_excerpt"]
+    assert '+ANTHROPIC = "[REDACTED:anthropic_key]"' in excerpt
+    assert "+    return sum(xs)" in excerpt
+    assert json.loads(line)["patch_truncated"] is False
+
+    runner.save_result(tmp_path, "c-control-typo-1", graded)
+    assert PLANTED_KEY in (tmp_path / "c-control-typo-1.patch").read_text(encoding="utf-8")
+    saved = json.loads((tmp_path / "c-control-typo-1.json").read_text(encoding="utf-8"))
+    assert "patch" not in saved
+    assert saved["patch_excerpt"] == excerpt
+    assert PLANTED_KEY not in json.dumps(saved)
+
+
+def test_the_results_directory_the_whole_patch_goes_to_is_git_ignored() -> None:
+    stem = tools.agent_eval.RESULTS / "arms" / "arms-control-typo-1"
+    paths = [f"{stem}{suffix}" for suffix in (".patch", ".jsonl", ".json")]
+    # `git check-ignore` fails (and so `run` raises) unless every path is ignored.
+    ignored = repos.run(["git", "check-ignore", *paths], tools.agent_eval.REPO)
+    assert ignored.splitlines() == paths

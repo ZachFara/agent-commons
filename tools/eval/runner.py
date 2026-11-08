@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
@@ -33,6 +34,7 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.types.json import Jsonb
 
+from commons.privacy.secrets import redact
 from commons.service import agent_text
 from commons.service.hook_install import commons_executable, commons_hooks
 from commons.store.migrate import apply_migrations
@@ -101,6 +103,16 @@ GENERATED = (
 # Files a tool writes as it runs (`uv run` creates uv.lock), never the agent's fix.
 GENERATED_FILES = ("uv.lock", ".coverage", ".coverage.*", "*.pyc", "*.egg-info")
 TEST_DIRS = frozenset({"tests", "test", "__tests__"})
+# A patch reads nothing outside its project: what it doesn't read, it names with a marker.
+SYMLINK = "[symlink: not read]"
+HARD_LINK = "[hard link: not read]"  # another name for a file that may live outside the project
+OUTSIDE = "[outside the project: not read]"
+FILE_CAP = 256 * 1024  # bytes of one file a patch reads
+PATCH_CAP = 1024 * 1024  # characters of one patch kept, in the results directory
+EXCERPT_CAP = 4000  # characters of a patch's scrubbed excerpt, in the committed ledger
+FILE_CUT = f"[file cut at {FILE_CAP} bytes]"
+PATCH_CUT = f"[patch cut at {PATCH_CAP} characters]"
+EXCERPT_CUT = f"[excerpt cut at {EXCERPT_CAP} characters]"
 # The only hosts an experiment store may live on: scripts/test-db.sh's rule.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
 _CLONING = threading.Lock()  # one clone of the store at a time
@@ -163,9 +175,10 @@ class Result:
     tokens_out: int = 0
     wall_clock_seconds: float = 0.0
     retrievals: list[Retrieval] = field(default_factory=list)
-    patch: str = ""  # the agent's diff of non-test files
+    patch: str = ""  # the agent's diff of non-test files; never committed (`patch_excerpt`)
     patch_hash: str = ""  # of the diff with whitespace removed
     repeat: int = 0  # which repeat of its task, arm and model (`arms`); 0 elsewhere
+    patch_truncated: bool = False  # a changed file or the patch itself was cut at its cap
 
     def summary(self) -> str:
         """One line describing what the agent did."""
@@ -545,29 +558,107 @@ def is_generated(name: str) -> bool:
 
 
 def source_files(root: Path) -> dict[str, str]:
-    """Return the project's non-test, non-generated files as {relative path: text}."""
+    """Return the project's non-test, non-generated files as {relative path: text}.
+
+    The walk never follows a symlink, so nothing outside `root` is read: a symlink (to a file
+    or a directory), a hard link, or a path resolving outside `root` maps to a marker naming
+    it instead of its contents. A file over FILE_CAP bytes is cut and marked; anything not a
+    regular file (a FIFO, a socket) is left out.
+    """
     files: dict[str, str] = {}
+    inside = root.resolve()
     for directory, subdirectories, names in os.walk(root):
-        subdirectories[:] = [d for d in subdirectories if not is_generated(d)]
-        for name in names:
-            path = Path(directory) / name
+        here = Path(directory)
+        links = [d for d in subdirectories if (here / d).is_symlink()]
+        subdirectories[:] = [d for d in subdirectories if not is_generated(d) and d not in links]
+        for name in [*names, *links]:
+            path = here / name
             relative = path.relative_to(root)
-            if path.is_file() and not is_generated(name) and not is_test_file(relative):
-                files[relative.as_posix()] = path.read_text(encoding="utf-8", errors="replace")
+            if is_generated(name) or is_test_file(relative):
+                continue
+            text = _read_inside(path, inside)
+            if text is not None:
+                files[relative.as_posix()] = text
     return files
 
 
-def project_patch(pristine: Path, project: Path) -> tuple[str, str]:
-    """Return (patch, patch hash): the agent's diff of non-test files against a pristine copy.
+def _read_inside(path: Path, inside: Path) -> str | None:
+    """Return a file's text (at most FILE_CAP bytes of it), a marker, or None if not a file."""
+    mode = path.lstat().st_mode
+    if stat.S_ISLNK(mode):
+        return SYMLINK
+    if not stat.S_ISREG(mode):
+        return None  # a FIFO or a socket, never opened
+    return _read_regular(path) if path.resolve().is_relative_to(inside) else OUTSIDE
+
+
+def _read_regular(path: Path) -> str | None:
+    """Return a regular file's text, cut at FILE_CAP bytes; a hard link's marker; else None."""
+    # Checked again on the open file: a link or FIFO swapped in since is not followed or waited on.
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as file:
+        status = os.fstat(file.fileno())
+        if not stat.S_ISREG(status.st_mode):
+            return None
+        if status.st_nlink > 1:
+            return HARD_LINK
+        data = file.read(FILE_CAP + 1)
+    if len(data) <= FILE_CAP:
+        return data.decode("utf-8", errors="replace")
+    return _whole_lines(data[:FILE_CAP].decode("utf-8", errors="replace")) + FILE_CUT
+
+
+def _whole_lines(text: str) -> str:
+    """Return text up to its last line break (all of it, if none), ending in one."""
+    return text[: text.rfind("\n") + 1] or text + "\n"
+
+
+def _cut(text: str, cap: int, marker: str) -> str:
+    """Return text if within `cap` characters, else its whole lines within `cap` and `marker`."""
+    return text if len(text) <= cap else _whole_lines(text[:cap]) + marker
+
+
+@dataclass(frozen=True)
+class Patch:
+    """The agent's diff of non-test files against the pristine copy of its project."""
+
+    text: str  # cut at PATCH_CAP characters, and marked
+    hash: str  # of the whole diff of what was read, whitespace removed
+    truncated: bool  # a changed file was cut at FILE_CAP, or the diff at PATCH_CAP
+
+
+NO_PATCH = Patch("", "", truncated=False)
+
+
+def project_patch(pristine: Path, project: Path) -> Patch:
+    """Return the agent's diff of non-test files against a pristine copy.
 
     The hash is of the same diff taken with every line's whitespace removed and blank lines
-    dropped, so patches that differ only in whitespace share it.
+    dropped, so patches that differ only in whitespace share it. It covers the whole diff of
+    what was read, even past PATCH_CAP.
     """
     before, after = source_files(pristine), source_files(project)
     paths = sorted(before.keys() | after.keys())
-    patch = _diff(before, after, paths, lambda text: text)
+    whole = _diff(before, after, paths, lambda text: text)
     normalized = _diff(before, after, paths, _without_whitespace)
-    return patch, hashlib.sha256(normalized.encode()).hexdigest()[:16]
+    cut_file = any(
+        before.get(path) != after.get(path)
+        and any(side.get(path, "").endswith(FILE_CUT) for side in (before, after))
+        for path in paths
+    )
+    return Patch(
+        text=_cut(whole, PATCH_CAP, PATCH_CUT),
+        hash=hashlib.sha256(normalized.encode()).hexdigest()[:16],
+        truncated=cut_file or len(whole) > PATCH_CAP,
+    )
+
+
+def patch_excerpt(patch: str) -> str:
+    """Return the part of a patch fit to commit: secrets scrubbed (as the server does), then cut.
+
+    Scrubbing comes first, so a cut never splits a secret into a part the scrub misses.
+    """
+    return _cut(redact(patch).text, EXCERPT_CAP, EXCERPT_CUT)
 
 
 def _without_whitespace(text: str) -> str:
@@ -738,7 +829,7 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         if str(call.get("name")).startswith("mcp__commons__")
         and call.get("input", {}).get("task_id")
     }
-    patch, patch_hash = project_patch(session.pristine, project) if session.pristine else ("", "")
+    patch = project_patch(session.pristine, project) if session.pristine else NO_PATCH
     test_runs = [
         c
         for c in calls
@@ -805,8 +896,9 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         tokens_out=tokens_out,
         wall_clock_seconds=seconds,
         retrievals=activity.retrievals,
-        patch=patch,
-        patch_hash=patch_hash,
+        patch=patch.text,
+        patch_hash=patch.hash,
+        patch_truncated=patch.truncated,
     )
 
 
@@ -884,7 +976,7 @@ def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: b
                 repos.materialize(scenario.repo, project)
                 repos.prepare(scenario.repo, project)
             pristine = Path(tmp) / "pristine"
-            shutil.copytree(
+            shutil.copytree(  # symlinks are copied as symlinks, never followed
                 project,
                 pristine,
                 symlinks=True,
@@ -913,8 +1005,20 @@ def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: b
                 "\n".join(json.dumps(e) for e in events), encoding="utf-8"
             )
             result = replace(grade(session, events), model=chosen, repeat=job.repeat)
-            (transcripts / f"{stem}.json").write_text(json.dumps(asdict(result), indent=1))
+            save_result(transcripts, stem, result)
             return result
+
+
+def save_result(transcripts: Path, stem: str, result: Result) -> None:
+    """Write a session's whole patch and its result next to its transcript, `stem`.jsonl.
+
+    That directory is git-ignored, but its JSON is copied into `docs/eval/<condition>/` to be
+    committed, so the JSON holds the patch's scrubbed excerpt in place of the patch.
+    """
+    (transcripts / f"{stem}.patch").write_text(result.patch, encoding="utf-8")
+    record = {**asdict(result), "patch_excerpt": patch_excerpt(result.patch)}
+    del record["patch"]
+    (transcripts / f"{stem}.json").write_text(json.dumps(record, indent=1), encoding="utf-8")
 
 
 def next_turn(

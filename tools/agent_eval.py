@@ -296,7 +296,9 @@ def append_ledger(results: list[runner.Result]) -> None:
                 "tokens_out": result.tokens_out,
                 "wall_clock_seconds": result.wall_clock_seconds,
                 "retrievals": [asdict(retrieval) for retrieval in result.retrievals],
-                "patch": result.patch,
+                # Never the whole patch: it stays next to the transcript (`runner.save_result`).
+                "patch_excerpt": runner.patch_excerpt(result.patch),
+                "patch_truncated": result.patch_truncated,
                 "patch_hash": result.patch_hash,
                 "repeat": result.repeat,
             }
@@ -709,7 +711,8 @@ def herded(rows: list[Row]) -> int:
     """
     wrong: dict[str, Counter[str]] = defaultdict(Counter)
     for row in rows:
-        if not row["tests_pass"] and row.get("patch"):
+        # A line keeps the patch's excerpt; a line from before kept the whole patch.
+        if not row["tests_pass"] and (row.get("patch_excerpt") or row.get("patch")):
             wrong[str(row["scenario"])][str(row.get("patch_hash"))] += 1
     tops = (counts.most_common(1)[0][1] for counts in wrong.values())
     return sum(top for top in tops if top >= HERD)

@@ -53,7 +53,8 @@ Everything needed to measure the agent-facing text again is in the repo: the har
   and no lower fix rate. Ship by setting `SHIPPED` in `agent_text.py`.
 - **Record results:** each run appends to `trials.jsonl` as sessions finish and writes one JSON
   per session to `.scratch/eval/<condition>/`; commit the ledger lines and copy the JSON into
-  `docs/eval/<condition>/`. Transcripts are not committed (size, local paths); those from
+  `docs/eval/<condition>/`. Transcripts and whole patches (`*.patch`) are not committed (size,
+  local paths, secrets); those from
   2026-10-25 are archived on the owner's machine at
   `~/Development/agent-commons-eval-archive/eval-2026-10-25.tar.gz` (1,455 transcripts, logs,
   and the agent interviews).
@@ -165,8 +166,9 @@ Each result and ledger line also records, in every arm and in `run` and `search`
 | `tokens_out` | output tokens, from the same |
 | `wall_clock_seconds` | the result events' `duration_ms`, in seconds |
 | `retrievals` | per retrieval under the session's task ids: `entry_id`, `rank`, `used`, `observed_outcome` (hook-observed), `reported`; empty without the commons |
-| `patch` | the agent's unified diff of non-test files against a pristine copy of the project made before the session |
-| `patch_hash` | 16 hex digits of sha256 over the same diff taken with whitespace removed and blank lines dropped, so whitespace-only differences share a hash |
+| `patch_excerpt` | the start of the agent's unified diff of non-test files against a pristine copy of the project made before the session, scrubbed of secrets by the server's own scrub (`commons.privacy.secrets`), then cut at 4,000 characters. Lines from before this field kept the whole diff as `patch` |
+| `patch_truncated` | true when the diff is not all of the agent's change: a changed file was over 256 KiB, or the diff over 1 MiB |
+| `patch_hash` | 16 hex digits of sha256 over the whole diff of what was read, taken with whitespace removed and blank lines dropped, so whitespace-only differences share a hash |
 | `repeat` | which of `--runs` repeats of its task, arm and model the session was (1 to N); 0 outside `arms`. Unlike `run`, the same repeat pairs across arms |
 
 Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
@@ -174,6 +176,19 @@ Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test
 `.venv`, `node_modules`, `__pycache__`, the pytest, mypy, ruff and hypothesis caches, `build/`,
 `dist/`, `*.egg-info`, `*.pyc`, `.coverage*`, and `uv.lock` (which `uv run` creates). `trials` groups by arm too, and `effects` counts only
 `commons`-arm lines.
+
+**The patch reads nothing outside the project.** The ledger is committed to a public repo, so
+the walk that builds the patch never follows a symlink. A symlink (to a file or a directory), a
+hard link, or a path resolving outside the project shows in the diff by its own name only, as
+one line `[symlink: not read]`, `[hard link: not read]` or `[outside the project: not read]`.
+Anything not a regular file (a FIFO, a socket) is left out. The pristine copy copies symlinks
+as symlinks. A file is read up to 256 KiB, cut at its last whole line, and ends in
+`[file cut at 262144 bytes]`. The diff is kept up to 1 MiB and ends in
+`[patch cut at 1048576 characters]`. The whole diff (up to that cap, not scrubbed) is written to
+`.scratch/eval/<condition>/<condition>-<task>-<index>.patch`, next to the session's transcript,
+which `.gitignore` keeps out of git (a test checks it). The ledger line and the session's JSON
+there hold only `patch_excerpt`. Herding groups by `patch_hash`; a line counts as having a
+patch when its `patch_excerpt` (or an older line's `patch`) isn't empty.
 
 ### The experiment store
 

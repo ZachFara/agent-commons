@@ -8,6 +8,7 @@ No session runs here. The init events are recorded ones, trimmed: the commons on
 import argparse
 import json
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -333,3 +334,27 @@ def test_old_ledger_lines_still_load_in_trials_and_effects(
     pooled = capsys.readouterr().out
     assert "per option" in pooled
     assert "w-a0b4c5d1e0f1g1h0n0s1" in pooled  # the old line is a config of its condition
+
+
+def test_herding_reads_a_lines_excerpt_and_an_older_lines_whole_patch_by_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Lines from before kept the whole patch; lines now keep its excerpt. Both herd."""
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    older = {**OLD_LINE, "condition": "arms", "scenario": "control-typo", "arm": "both"}
+    older |= {"tests_pass": False, "patch": "-x\n+y", "patch_hash": "p1", "retrievals": []}
+    ledger.write_text(json.dumps(older) + "\n", encoding="utf-8")
+    failed = replace(result("both", None), tests_pass=False)
+    tools.agent_eval.append_ledger(
+        [
+            replace(failed, patch="-x\n+ y", patch_hash="p1"),
+            replace(failed, patch="", patch_hash="p1"),  # no patch: never herded
+        ]
+    )
+    rows = tools.agent_eval.condition_rows("arms")
+    assert "patch" not in rows[1]
+    assert rows[1]["patch_excerpt"] == "-x\n+ y"
+    assert tools.agent_eval.herded(rows) == 2
+    assert tools.agent_eval.compare(argparse.Namespace(condition="arms")) == 0
+    assert "share their task's top wrong patch 2/3" in capsys.readouterr().out
