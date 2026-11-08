@@ -9,11 +9,18 @@ Denied (exit code 2, reason on stderr):
   mutations, plus `gh repo edit|delete|rename|archive|unarchive|sync` and `gh secret|variable`
   writes: they change repository settings.
 - reading live Commons credentials: Secret Manager, `~/.config/agent-commons`, the Neon key.
+- a Linear issue ID agents don't own (any `MIT-<n>` outside `.agents/owned-issues.txt` and
+  the agent project) in GitHub-visible text: `git commit` messages (`-m`, `-F` files),
+  `gh pr create|edit|merge` titles, bodies and body files, new branch names (`git switch -c`,
+  `git checkout -b`, `git branch`), pushed refspecs and `gh pr create --head`. Linear's GitHub
+  integration links a PR to every issue its title, body or head branch names, and moves that
+  issue as the PR opens and merges. `--base` is allowed: Linear doesn't link the base branch.
 
 Commands are split into simple commands on `;`, `&&`, `||`, `|`, newlines and `$(`; shell
 wrappers (`bash -c`, `eval`, `xargs`, a heredoc fed to a shell) are checked recursively.
-Other heredoc bodies (commit messages, PR bodies) are data. This guards against mistakes, not
-an adversary: the GitHub rulesets on main and feature/ are the backstop.
+Other heredoc bodies (commit messages, PR bodies) are data, checked only for issue IDs when
+the command commits or writes PR text. This guards against mistakes, not an adversary: the
+GitHub rulesets on main and feature/ are the backstop.
 
 Entry script: .claude/hooks/bash_guard.sh. Tests: server/tests/test_agent_hooks.py.
 """
@@ -22,8 +29,8 @@ import re
 import shlex
 import subprocess
 import sys
-from collections.abc import Callable
-from pathlib import PurePosixPath
+from collections.abc import Callable, Iterable
+from pathlib import Path, PurePosixPath
 
 from tools.agent_hooks import state
 
@@ -57,6 +64,27 @@ MERGE_WITH_VALUE = frozenset(
     | {"--match-head-commit", "-R", "--repo"}
 )
 API_FIELDS = ("-f", "-F", "--field", "--raw-field", "--input")
+# A Linear issue ID, also inside a longer word (`feature/MIT-575-x`); `P-MIT-29` is a project.
+ISSUE_ID = re.compile(r"(?<![a-z])(?:p-)?mit-\d+", re.IGNORECASE)
+COMMIT_MESSAGES = frozenset({"-m", "--message"})
+COMMIT_FILES = frozenset({"-F", "--file"})
+# Options of `git switch` / `git checkout` that create a branch, and their short value letters.
+NEW_BRANCH_OPTIONS = {
+    "switch": (frozenset({"-c", "-C", "--create", "--force-create", "--orphan"}), "cC"),
+    "checkout": (frozenset({"-b", "-B", "--orphan"}), "bB"),
+}
+# `git branch` options under which it lists, deletes or configures instead of creating.
+BRANCH_NOT_CREATING = frozenset(
+    {"-d", "-D", "--delete", "-l", "--list", "-a", "--all", "-r", "--remotes", "--show-current"}
+    | {"--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}
+    | {"-u", "--set-upstream-to", "--unset-upstream", "--edit-description"}
+)
+BRANCH_RENAMING = frozenset({"-m", "-M", "--move", "-c", "-C", "--copy"})
+# `gh pr` subcommands that write PR text, with their short options that take a value.
+PR_VALUE_LETTERS = {"create": "aBbFHlmprRTt", "edit": "BbFRt", "merge": "AbFRt"}
+PR_TEXT = frozenset({"-t", "--title", "--subject", "-b", "--body"})
+PR_FILES = frozenset({"-F", "--body-file"})
+PR_HEAD = frozenset({"-H", "--head"})
 SETTINGS_COMMANDS = {
     "repo": frozenset({"edit", "delete", "rename", "archive", "unarchive", "sync"}),
     "secret": frozenset({"set", "delete", "remove"}),
@@ -114,6 +142,73 @@ def program(words: list[str]) -> str:
     return PurePosixPath(words[0]).name
 
 
+def option_values(
+    args: list[str], names: frozenset[str], value_letters: str, attached_letters: str = ""
+) -> list[str]:
+    """Return the values given to the options in `names`, up to `--`.
+
+    Accepts `--name=value`, `--name value`, `-x value`, `-xvalue` and clusters (`-am value`).
+    In a cluster the first of `value_letters` takes the rest of the cluster or the next
+    argument as its value; one of `attached_letters` takes the rest of the cluster only.
+    """
+    values: list[str] = []
+    index = 0
+    while index < len(args) and args[index] != "--":
+        name, value = option_value(args[index], value_letters + attached_letters)
+        short_with_value = len(name) == len("-m") and name[1] in value_letters
+        takes_next = value is None and (name in names or short_with_value)
+        if name in names and (value is not None or index + 1 < len(args)):
+            values.append(args[index + 1] if value is None else value)
+        index += 2 if takes_next else 1
+    return values
+
+
+def option_value(arg: str, letters: str) -> tuple[str, str | None]:
+    """Split one argument into an option name and its attached value (None if not attached)."""
+    if arg.startswith("--"):
+        name, equals, value = arg.partition("=")
+        return name, value if equals else None
+    if not arg.startswith("-"):
+        return "", None
+    index = next((i for i, letter in enumerate(arg[1:], start=1) if letter in letters), 0)
+    return (f"-{arg[index]}", arg[index + 1 :] or None) if index else (arg, None)
+
+
+def foreign_ids(texts: Iterable[str]) -> list[str]:
+    """Return the issue IDs in `texts` that agents don't own, decided as linear_guard does."""
+    found = {match.upper() for text in texts for match in ISSUE_ID.findall(text)}
+    if not found:
+        return []
+    owned = state.owned_issues()
+    return sorted(i for i in found if i.lower() not in owned and not state.is_agent_project(i))
+
+
+def check_ids(texts: Iterable[str], where: str) -> str | None:
+    """Deny GitHub-visible text that names an issue agents don't own."""
+    if foreign := foreign_ids(texts):
+        return (
+            f"{where} names {', '.join(foreign)}, which agents don't own: write it without the"
+            " ID (Linear links PR text to that ticket)"
+        )
+    return None
+
+
+def check_text(values: list[str], files: list[str], cwd: str, where: str) -> str | None:
+    """Check message values and the files they are read from (`-` is stdin: see heredocs)."""
+    texts = list(values)
+    for name in files:
+        if name == "-":
+            continue
+        try:
+            texts.append((Path(cwd) / Path(name).expanduser()).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as error:
+            return (
+                f"can't read {name} to check {where} for issue IDs ({error});"
+                " write the file in an earlier command"
+            )
+    return check_ids(texts, where)
+
+
 def current_branch(cwd: str) -> str:
     """Return the branch checked out in `cwd`, or "" if it can't be read."""
     result = subprocess.run(
@@ -160,10 +255,21 @@ def check_push(args: list[str], cwd: str) -> str | None:
     if {"--mirror", "--all"} & set(options):
         return "--mirror and --all push main too; push your own branch by name"
     targets = {spec.rsplit(":", 1)[-1].removeprefix("refs/heads/") for spec in refspecs}
-    on_main = (not refspecs or "HEAD" in targets) and current_branch(cwd) == "main"
-    if "main" in targets or on_main:
+    branch = current_branch(cwd) if not refspecs or "HEAD" in targets else ""
+    if "main" in targets or branch == "main":
         return "only Zach changes main; push your own branch and open a PR"
-    return None
+    sides = [side for spec in refspecs for side in spec.split(":")]
+    return check_ids([*sides, branch], "the pushed branch name")
+
+
+def new_branches(subcommand: str, args: list[str]) -> list[str]:
+    """Return the names of the branches a git command creates (or renames to)."""
+    if subcommand in NEW_BRANCH_OPTIONS:
+        return option_values(args, *NEW_BRANCH_OPTIONS[subcommand])
+    if subcommand != "branch" or {arg.partition("=")[0] for arg in args} & BRANCH_NOT_CREATING:
+        return []
+    names = [arg for arg in args if not arg.startswith("-")]
+    return names[-1:] if BRANCH_RENAMING & set(args) else names[:1]
 
 
 def commit_skips_hooks(args: list[str]) -> bool:
@@ -182,19 +288,34 @@ def commit_skips_hooks(args: list[str]) -> bool:
     return False
 
 
-def check_git(args: list[str], cwd: str) -> str | None:
-    """Check a git command: find its subcommand past the global options."""
+def check_commit(args: list[str], cwd: str) -> str | None:
+    """Deny `git commit -n`, and messages that name an issue agents don't own."""
+    if commit_skips_hooks(args):
+        return "git commit -n skips the checks"
+    letters = (COMMIT_VALUE_LETTERS, COMMIT_ATTACHED_LETTERS)
+    messages = option_values(args, COMMIT_MESSAGES, *letters)
+    files = option_values(args, COMMIT_FILES, *letters)
+    return check_text(messages, files, cwd, "the commit message")
+
+
+def git_subcommand(args: list[str], cwd: str) -> tuple[str, list[str], str]:
+    """Return a git command's subcommand, its arguments, and the directory it runs in."""
     index = 0
     while index < len(args) and args[index].startswith("-"):
         if args[index] == "-C" and index + 1 < len(args):
-            cwd = args[index + 1]
+            cwd = str(Path(cwd) / args[index + 1])
         index += 2 if args[index] in GIT_GLOBAL_WITH_VALUE else 1
-    subcommand, rest = (args[index], args[index + 1 :]) if index < len(args) else ("", [])
+    return (args[index], args[index + 1 :], cwd) if index < len(args) else ("", [], cwd)
+
+
+def check_git(args: list[str], cwd: str) -> str | None:
+    """Check a git command: find its subcommand past the global options."""
+    subcommand, rest, cwd = git_subcommand(args, cwd)
     if subcommand == "push":
         return check_push(rest, cwd)
-    if subcommand == "commit" and commit_skips_hooks(rest):
-        return "git commit -n skips the checks"
-    return None
+    if subcommand == "commit":
+        return check_commit(rest, cwd)
+    return check_ids(new_branches(subcommand, rest), "the new branch name")
 
 
 def merge_target(args: list[str]) -> list[str]:
@@ -241,10 +362,25 @@ def check_api(args: list[str]) -> str | None:
     return "agents may not change GitHub settings through gh api" if writes else None
 
 
+def check_pr_text(subcommand: str, args: list[str], cwd: str) -> str | None:
+    """Deny PR text, body files and a head branch that name an issue agents don't own."""
+    letters = PR_VALUE_LETTERS[subcommand]
+    if reason := check_ids(option_values(args, PR_HEAD, letters), "the head branch name"):
+        return reason
+    texts, files = option_values(args, PR_TEXT, letters), option_values(args, PR_FILES, letters)
+    return check_text(texts, files, cwd, "the pull request text")
+
+
+def is_pr_write(words: list[str]) -> bool:
+    """Return whether a gh command (without `gh`) creates, edits or merges a PR."""
+    return words[:1] == ["pr"] and len(words) > 1 and words[1] in PR_VALUE_LETTERS
+
+
 def check_gh(args: list[str], cwd: str) -> str | None:
     """Check a gh command."""
-    if args[:2] == ["pr", "merge"]:
-        return check_merge(args[2:], cwd)
+    if is_pr_write(args):
+        reason = check_pr_text(args[1], args[2:], cwd)
+        return reason or (check_merge(args[2:], cwd) if args[1] == "merge" else None)
     if args[:1] == ["api"]:
         return check_api(args[1:])
     if len(args) > 1 and args[1] in SETTINGS_COMMANDS.get(args[0], frozenset()):
@@ -280,6 +416,13 @@ def scan(patterns: tuple[tuple[re.Pattern[str], str], ...], text: str) -> str | 
     return next((reason for pattern, reason in patterns if pattern.search(text)), None)
 
 
+def writes_text(words: list[str]) -> bool:
+    """Return whether a simple command commits or writes PR text, which a heredoc may hold."""
+    if program(words) == "git":
+        return git_subcommand(words[1:], "")[0] == "commit"
+    return program(words) == "gh" and is_pr_write(words[1:])
+
+
 def check_words(words: list[str], cwd: str) -> str | None:
     """Check one simple command against the checks for its program."""
     check = PROGRAMS.get(program(words))
@@ -293,6 +436,8 @@ def reason_to_deny(command: str, cwd: str) -> str | None:
     reasons = [scan(CREDENTIALS, command), scan(BYPASSES, text)]
     if bodies and any(program(words) in SCRIPT_RUNNERS for words in commands):
         reasons.extend(reason_to_deny(body, cwd) for body in bodies)
+    if bodies and any(writes_text(words) for words in commands):
+        reasons.append(check_ids(bodies, "the heredoc"))
     reasons.extend(check_words(words, cwd) for words in commands)
     return next((reason for reason in reasons if reason), None)
 
