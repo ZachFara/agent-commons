@@ -101,27 +101,33 @@ by `uv run commons migrate`. Never edit a migration that has been merged.
 Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
 
 - **Tickets.** Zach's Linear project "Commons" (P-MIT-27) is read only for every agent. He
-  delegates a ticket by moving it to Delegated. Agents write only in "Commons Agent Project"
+  delegates a ticket by moving it to Delegated, and agents also act on its Backlog tickets
+  (Zach, 2026-11-07). Agents write only in "Commons Agent Project"
   (P-MIT-29): agent tickets (Next, In Progress, In Review, Done, Canceled), one "Final:
   MIT-<n>" ticket per delegated ticket, and "Question: ..." tickets in Inbox for Zach.
-- **Branches.** Each delegated ticket gets `feature/MIT-<n>-<slug>` from main. A coder
+- **Branches.** Each delegated ticket gets `feature/<slug>` from main, with no Commons ID in
+  the name (older ones are `feature/MIT-<n>-<slug>`). A coder
   branches `feat/|fix/|chore/|docs/<ticket ID>` from it and opens a PR back into it. The
   orchestrator squash-merges after CI passes and the reviewer returns PASS. Zach gets one PR
-  from the feature branch into main, and only Zach merges into main.
+  into main from `final/<slug>`, cut from the feature branch, and only Zach merges into main.
 - **Roles** (`.claude/agents/`): `commons-orchestrator` (run it with
   `claude --agent commons-orchestrator`), `planner`, `researcher`, `coder` (own worktree, no
   Linear), `reviewer`.
 - **Guards** (`.claude/settings.json`; logic and tests in `tools/agent_hooks/`): `linear_guard`
   keeps Linear writes in the agent project and on agent-created issues (`.agents/owned-issues.txt`,
   kept by `record_issue`). `bash_guard` blocks merges into anything but `feature/`, pushes to
-  main, force pushes, hook bypasses, settings-changing `gh` calls, and reads of live Commons
-  credentials. A denial is final: never look for another route to the same action.
+  main, force pushes, hook bypasses, settings-changing `gh` calls, reads of live Commons
+  credentials, git aliases it can't expand, and issue IDs agents don't own in commit messages,
+  PR text and new or pushed branch names (plus message text it can't read: shell substitution,
+  stdin without a heredoc, `gh pr create --fill`). A denial is final: never look for another route to the same action.
   GitHub rulesets on `main` and `feature/**` require a PR, the `check` status and an
   up-to-date branch, and refuse force pushes, for everyone.
 
 ## Data isolation
 
-- Agent shells load `.env.agent` (`set -a; . ./.env.agent; set +a`). It points at the local
+- Agent commands take their settings from `.env.agent`. Worktree shells can't source
+  `.env.agent`; pass the variables inline (`COMMONS_DATABASE_URL=... uv run commons status`)
+  or use `scripts/test-db.sh`, which loads it itself. It points at the local
   throwaway Postgres from `db/compose.yml` and keeps the CLI off this machine's real identity
   and keys. `.worktreeinclude` copies it into every agent worktree. Only `.env.agent.example`
   is committed.
@@ -181,3 +187,20 @@ Things past sessions found that the next one needs. The orchestrator's docs code
 from the Learned sections of merged PRs.
 
 - `make check` needs local Postgres running (`make db`).
+- In a linked worktree, git sets `GIT_DIR` (and related variables) for its hooks, and they override `git -C`. Any code or test that runs git against another repo from inside a hook must drop them (`tools/agent_hooks/state.py` `git_environment()`).
+- Agent worktrees refuse compound git commands (`&&`, `;`, `$(...)` around git), bare `git stash` (the stash is shared across sessions) and sourcing `. ./.env.agent`. Run one git command per call, use `git restore --staged` or a named stash, and pass env variables inline.
+- The repository allows squash merges only. Feature branches are protected, so they are updated through a PR, never by deleting and re-creating them.
+- Linear's GitHub integration is connected: it links a PR to every issue ID in its title, body or head branch name (not its base), and moves that issue to In Progress when the PR opens and to Done when it merges. `bash_guard` denies IDs agents don't own in commits, PR text and branch names, so write that text without Commons IDs.
+- Linear turns any issue ID in agent-written text into a mention. Write Commons IDs in code spans so nothing appears on Zach's tickets.
+- Custom agent types in `.claude/agents/` load at session start only. In a session where they were added later, use the built-in `Plan` (read only) and `general-purpose` (with `isolation: worktree`) agents pointed at the role files.
+- Parallel feature branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.
+- Agent worktrees can refuse any Bash command whose text contains the word "eval", paths included (`docs/eval`, `tools/agent_eval.py`, `grep -e eval`): the guard reads it as shell `eval`. Use the Read tool, globs (`tools/ev?l/`, `tools/agent_*.py`), or a `.scratch/` script that takes the path as an argument.
+- `server/tests` may not call `subprocess` directly: S603 and S607 are ignored only under `tools/**`. Put helpers that run commands in `tools/eval/runner.py` (`run_python`) and call them from tests.
+- Eval: `runner.grade` reads unscoped counts (all outcomes, all `eval-agent` entries). Tests that call it need their own database (`runner.fresh_database` with `runner.ADMIN_URL` patched to `COMMONS_TEST_DATABASE_URL`), not the shared session database.
+- Eval: a known-entry seed's fix must name the documented route as one concrete span, with no `<placeholder>` tokens and no second span the route doesn't touch, or used detection gives `partial` and the variant is MISSED on every run. Check it without a model with `commons.domain.usage.observe_use` (see `test_the_documented_route_counts_as_using_the_seeded_fix`).
+- Eval: the grader matches `cause_words` as case-insensitive substrings of cause plus fix, and some are very short ("end", "utc", "2.0"), so a version like "132.0" or a field name like `outcome` matches. Any worked example the agent sees must be checked mechanically against every scenario's `cause_words`, free-text values only; `test_no_example_names_a_scenarios_cause` does this for the skill and the drafted example.
+- Eval: drafted variants go into `VARIANTS` after `VARIANTS["baseline"]` and leave the shipped text byte-identical: `baseline`'s fingerprint must not change. The shipped instructions use 1,318 of the 1,500 characters allowed and `combined` leaves 4, so any new instructions line has to be short.
+- Eval: the shipped server text's worked example (whenever `ignore_dst`) is the cause of the hold-out scenario `real-whenever-ignore-dst`, so hold-out numbers measured with the shipped text are fitted to that scenario. It stays because `baseline` must stay byte-identical (Question `MIT-640`).
+- Eval: `--skill` has never run in a real session. The skill's name in the init event and whether `Skill(...)` permissions are needed are unconfirmed, so `SKILL_NAMES` accepts the namespaced and the bare name and both permission spellings are allowed. Run the one-session smoke run in `docs/eval/README.md` first; a session whose init lacks the skill is marked errored, the way usage-limit errors are (the runner has no MCP-server init check).
+- Eval: ledger lines record `"skill": true` but not which SKILL.md text was loaded, so `--skill` results from before and after a skill change can't be compared by ledger lines alone.
+- The log analysis behind the commons-misses feature (`MIT-595`) is not in the repo or on any branch; only tickets summarize it.
