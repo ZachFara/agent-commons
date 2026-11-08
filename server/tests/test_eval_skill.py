@@ -24,12 +24,14 @@ SCENARIO = SCENARIOS["control-typo"]
 SKILL_FILE = Path("skills") / "agent-commons" / "SKILL.md"
 
 # A real init event (Claude Code 2.1.316, an r-nudge session, 2026-10-31), trimmed to the keys
-# the runner reads plus a few for context. It ran without the plugin.
+# the runner reads (`mcp_servers` and `tools` for the arm check, `skills` and `plugins` for the
+# skill check) plus a few for context. It ran without the plugin.
 RECORDED_INIT: dict[str, Any] = {
     "type": "system",
     "subtype": "init",
     "session_id": "cd346891-1015-4ca2-bec5-88c88b4d71f2",
     "mcp_servers": [{"name": "commons", "status": "connected", "source": "dynamic"}],
+    "tools": [*runner.BUILTIN_TOOLS, *runner.COMMONS_TOOLS],
     "model": "claude-opus-5-5",
     "permissionMode": "acceptEdits",
     "claude_code_version": "2.1.316",
@@ -88,7 +90,8 @@ def test_a_plain_session_loads_no_plugin(tmp_path: Path) -> None:
     assert "--plugin-dir" not in argv
     assert not any(arg.startswith("Skill(") for arg in argv)
     assert not (workdir / "plugin").exists()
-    assert argv[-len(runner.ALLOWED_TOOLS) :] == runner.allowed_tools("baseline")
+    allowed = runner.allowed_tools("baseline")
+    assert argv[-len(allowed) :] == allowed
     settings = json.loads((workdir / "settings.json").read_text(encoding="utf-8"))
     assert settings == {"hooks": commons_hooks(commons_executable())}
 
@@ -298,5 +301,6 @@ def test_the_ledger_records_the_skill_and_old_lines_still_load(
     out = capsys.readouterr().out.splitlines()
     # The table, then the per-condition median-token lines (MIT-601), which aren't rows.
     rows = [line.split() for line in out[1:] if "median tokens per passing session" not in line]
-    assert [(row[0], row[3]) for row in rows] == [("baseline", "2"), ("baseline+skill", "1")]
+    # Columns: arm, variant, text, trigger, n, ... (the arm column came with the eval arms).
+    assert [(row[1], row[4]) for row in rows] == [("baseline", "2"), ("baseline+skill", "1")]
     assert out[-1].startswith("s: median tokens per passing session in 0 out 0 (n=2)")

@@ -13,6 +13,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+from tools.eval.github_tasks import GITHUB
 from tools.eval.holdout import HOLDOUT
 from tools.eval.model import Discovery, Expect, Scenario, Seed
 from tools.eval.runner import run_python
@@ -1200,4 +1201,9 @@ MULTI_TURN = [
     # the second surprise is a changed default the docs still describe the old way
     _two_turns("multi-turn-retry-then-timezone", DOCS_RETRY, DOCS_TIMEZONE),
 ]
-SCENARIOS = {**DEVELOPMENT, **HOLDOUT, **{s.name: s for s in (*NO_TEST, *MULTI_TURN)}}
+SCENARIOS = {
+    **DEVELOPMENT,
+    **HOLDOUT,
+    **GITHUB,
+    **{s.name: s for s in (*NO_TEST, *MULTI_TURN)},
+}

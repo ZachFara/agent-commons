@@ -26,11 +26,13 @@ from tools.eval.scenarios import BACKUP_SETTINGS, SCENARIOS, TEXTFILE_DIR
 from commons.domain.usage import Evidence, count_artifacts, observe_use
 from commons.store.models import model_id
 from commons.store.reporters import upsert_reporter
+from commons.store.tasks import start_task
 
 APP = "config-app-overwrites"
 ROUTER = "config-default-wins"
 KNOWN = {"known-config-app-overwrites": APP, "known-config-default-wins": ROUTER}
 SEARCH = ("mcp__commons__search", {"query": "setting reverts"})
+SESSION = "no-test-session"  # the Claude session id the events and the hooks' task share
 
 
 def lay_out(scenario: Scenario, tmp_path: Path) -> tuple[Path, Path]:
@@ -110,7 +112,8 @@ def test_the_task_is_a_request_with_no_tests_that_never_names_the_commons(name: 
 
 @pytest.mark.parametrize("name", [APP, ROUTER])
 def test_the_check_command_finds_each_task_not_done_as_shipped(name: str) -> None:
-    assert tools.agent_eval.check_outcome(name, SCENARIOS[name])
+    ok, outcome = tools.agent_eval.check_outcome(SCENARIOS[name])
+    assert ok, outcome
 
 
 @pytest.mark.parametrize(("known", "discovery"), KNOWN.items())
@@ -235,16 +238,19 @@ def transcript(*calls: tuple[str, dict[str, Any]]) -> list[dict[str, Any]]:
         }
         for i, (name, args) in enumerate(calls)
     ]
-    return [*events, {"type": "result", "num_turns": len(calls) + 1, "total_cost_usd": 0.0}]
+    result = {"type": "result", "num_turns": len(calls) + 1, "total_cost_usd": 0.0}
+    return [*events, {**result, "session_id": SESSION}]
 
 
 def propose(url: str, symptom: str, cause: str, libraries: dict[str, str]) -> None:
-    """Store a proposal as the eval agent's `propose` call would."""
+    """Store a proposal as the eval agent's `propose` call would, under the session's task."""
     with psycopg.connect(url) as conn:
         agent = upsert_reporter(conn, "eval-agent", "entry")
+        task_id = start_task(conn, SESSION, agent, None)
         conn.execute(
             "INSERT INTO entries (symptom, environment, cause, fix, domains, status, "
-            "created_by, created_by_model) VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s)",
+            "created_by, created_by_model, task_id) "
+            "VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s, %s)",
             (
                 symptom,
                 Jsonb({"language": "python 3.12", "libraries": libraries}),
@@ -253,6 +259,7 @@ def propose(url: str, symptom: str, cause: str, libraries: dict[str, str]) -> No
                 ["python"],
                 agent,
                 model_id(conn, "claude-sonnet"),
+                task_id,
             ),
         )
 

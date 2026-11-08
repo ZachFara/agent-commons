@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 import tools.agent_eval
 from tools.eval import runner
-from tools.eval.runner import Result, session_tokens
+from tools.eval.runner import Result, session_usage
 
 # A two-turn session as stream-json: assistant messages carry their own usage, which is already
 # part of each turn's `result` usage, so only the `result` events may be counted.
@@ -48,12 +48,12 @@ STREAM: list[dict[str, Any]] = [
 
 
 def test_tokens_sum_input_and_cache_tokens_over_the_final_events() -> None:
-    assert session_tokens(STREAM) == (10 + 2000 + 30000 + 5 + 12000, 500 + 200)
+    assert session_usage(STREAM)[:2] == (10 + 2000 + 30000 + 5 + 12000, 500 + 200)
 
 
 def test_a_result_without_usage_counts_nothing() -> None:
     crashed = [{"type": "result", "is_error": True, "result": "boom"}]
-    assert session_tokens(crashed) == (0, 0)
+    assert session_usage(crashed)[:2] == (0, 0)
 
 
 def result(condition: str, *, tests_pass: bool, tokens: tuple[int, int]) -> Result:
