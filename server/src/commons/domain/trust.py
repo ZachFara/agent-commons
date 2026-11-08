@@ -88,3 +88,15 @@ def validate_role(role: str) -> Role:
         msg = "role must be contributor, reviewer or admin."
         raise InvalidInputError(msg)
     return _ROLES[role]
+
+
+# A human-approved entry goes back to the queue when its used outcomes with a known result,
+# over the last REOPEN_WINDOW_DAYS days and since it was last reopened, hold at least
+# REOPEN_FAILURES failures and more failures than successes (decision 0026, amended).
+REOPEN_FAILURES = 3
+REOPEN_WINDOW_DAYS = 90
+
+
+def failures_to_reopen(failures: int, successes: int) -> int:
+    """How many more failures send a human-approved entry back to the queue; 0: it goes now."""
+    return max(REOPEN_FAILURES - failures, successes + 1 - failures, 0)

@@ -30,6 +30,7 @@ from commons.domain.errors import InvalidInputError, NotFoundError, NotInitializ
 from commons.domain.keys import KEY_SCOPES, KeyOptions, KeyScope, NewKey, parse_duration
 from commons.domain.lifecycle import FixedIn
 from commons.domain.reviews import REVIEW_DECISIONS, ReviewRequest
+from commons.domain.trust import REOPEN_WINDOW_DAYS, failures_to_reopen
 from commons.service import (
     contributors,
     corrections,
@@ -95,6 +96,8 @@ class Dashboard:
                     conn, insights.entries(conn, status=status, query=query, order=order)
                 ),
                 "stale": insights.stale_candidates(conn),
+                "failing": _failing(conn),
+                "failing_days": REOPEN_WINDOW_DAYS,
                 "query": query,
                 "status_filter": status,
                 "order": order,
@@ -459,6 +462,22 @@ def _entry_data(conn: Connection, entry_id: UUID) -> dict[str, Any]:
         "funnel": insights.entry_funnel(conn, entry_id),
         "retrievals": insights.entry_retrievals(conn, entry_id),
     }
+
+
+def _failing(conn: Connection) -> list[dict[str, Any]]:
+    """Entries by failure rate, with how many more failures reopen a human-approved one.
+
+    `to_reopen` is None for an entry no human approved: the provisional rule (0028) covers it.
+    """
+    return [
+        {
+            **row,
+            "to_reopen": failures_to_reopen(row["failures"], row["successes"])
+            if row["human_reviewed"]
+            else None,
+        }
+        for row in insights.failure_rates(conn)
+    ]
 
 
 def _with_costs(conn: Connection, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

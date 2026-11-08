@@ -10,6 +10,7 @@ from commons.domain.trust import (
     Role,
     TrustLevel,
     TrustSettings,
+    failures_to_reopen,
     may_hold,
     sample_one_in,
     trust_level,
@@ -22,6 +23,7 @@ from commons.store.reporters import find_reporter
 
 CONFIRM_SUCCESSES = 3
 CONFIRM_REPORTERS = 2
+FAILING_REASON = "kept failing when used, after human approval (0026)"
 
 
 def settings() -> TrustSettings:
@@ -62,12 +64,22 @@ def demote(conn: Connection, reporter_id: UUID) -> None:
 
 
 def confirm_by_outcomes(conn: Connection) -> None:
-    """Confirm provisional entries that worked for others; reopen ones that mostly failed."""
+    """Confirm provisional entries that worked for others; reopen ones that mostly failed.
+
+    Then reopen human-approved entries that keep failing (decision 0026, amended). Both run
+    nightly with `commons rank`; a reopened entry is pending, so a second run finds nothing.
+    """
     for entry_id, successes, failures, reporters in store.provisional_evidence(conn):
         if successes >= CONFIRM_SUCCESSES and reporters >= CONFIRM_REPORTERS:
             store.confirm(conn, entry_id)
         elif failures >= CONFIRM_SUCCESSES and failures > successes:
             store.reopen(conn, [entry_id], "mostly failed when used (0028)")
+    failing = [
+        entry_id
+        for entry_id, failures, successes in store.reviewed_evidence(conn)
+        if failures_to_reopen(failures, successes) == 0
+    ]
+    store.reopen(conn, failing, FAILING_REASON)
 
 
 _LEVELS: dict[int, TrustLevel] = {0: 0, 1: 1, 2: 2}
