@@ -82,17 +82,22 @@ def reopen(conn: Connection, entry_ids: list[UUID], reason: str) -> None:
 
 # What the reopen rule for human-approved entries weighs, for one entry `e` (decision 0026,
 # amended): its used outcomes with a known result (the split of `_SAMPLES` in
-# store/ranking.py), in the last `days` days and since its latest reopen, so the failures
-# that reopened it once don't reopen it again after a human approves it.
+# store/ranking.py), observed by hooks and from reporters other than its author (the
+# evidence `provisional_evidence` trusts), in the last `days` days and since its latest
+# reopen, so the failures that reopened it once don't reopen it again after a human approves
+# it. `failing_reporters` counts the distinct reporters behind the failures.
 FAILURE_EVIDENCE = sql.SQL("""
 JOIN LATERAL (
     SELECT count(*) FILTER (WHERE o.outcome <> ALL(%(success)s::outcome_kind[])) AS failures,
            count(*) FILTER (WHERE o.outcome = ANY(%(success)s::outcome_kind[])) AS successes,
+           count(DISTINCT r.reporter_id)
+               FILTER (WHERE o.outcome <> ALL(%(success)s::outcome_kind[])) AS failing_reporters,
            max(o.created_at) FILTER (WHERE o.outcome <> ALL(%(success)s::outcome_kind[]))
                AS last_failure
     FROM counted_outcomes o JOIN counted_retrievals r ON r.id = o.retrieval_id
     WHERE r.entry_id = e.id AND o.used IN ('yes', 'partial')
       AND o.outcome NOT IN ('unknown', 'abandoned')
+      AND o.evidence->>'outcome_source' = 'hook' AND r.reporter_id <> e.created_by
       AND o.created_at > now() - make_interval(days => %(days)s)
       AND o.created_at > coalesce((SELECT max(v.created_at) FROM reviews v
           WHERE v.entry_id = e.id AND v.decision = 'reopen'), '-infinity')
@@ -104,14 +109,17 @@ FAILURE_PARAMS: dict[str, object] = {
 }
 
 
-def reviewed_evidence(conn: Connection) -> list[tuple[UUID, int, int]]:
-    """Return (entry, failures, successes) per human-approved entry with a recent failure."""
+def reviewed_evidence(conn: Connection) -> list[tuple[UUID, int, int, int]]:
+    """Return (entry, failures, successes, failing reporters) per human-approved entry.
+
+    Only entries with a recent counted failure (`FAILURE_EVIDENCE`) are listed.
+    """
     query = sql.SQL(
-        "SELECT e.id, evidence.failures, evidence.successes FROM entries e {evidence} "
-        "WHERE e.status = 'approved' AND e.human_reviewed"
+        "SELECT e.id, evidence.failures, evidence.successes, evidence.failing_reporters "
+        "FROM entries e {evidence} WHERE e.status = 'approved' AND e.human_reviewed"
     ).format(evidence=FAILURE_EVIDENCE)
     rows = conn.execute(query, FAILURE_PARAMS)
-    return [(row[0], row[1], row[2]) for row in rows]
+    return [(row[0], row[1], row[2], row[3]) for row in rows]
 
 
 def provisional_entries_of(conn: Connection, reporter_id: UUID) -> list[UUID]:

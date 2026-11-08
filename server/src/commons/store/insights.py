@@ -566,7 +566,8 @@ def failure_rates(conn: Connection, limit: int = 20) -> list[Row]:
     query = sql.SQL(
         "SELECT e.id, e.symptom, e.human_reviewed, evidence.failures, evidence.successes, "
         "evidence.failures::float / (evidence.failures + evidence.successes) AS failure_rate, "
-        "evidence.last_failure FROM entries e {evidence} WHERE e.status = 'approved' "
+        "evidence.failing_reporters, evidence.last_failure "
+        "FROM entries e {evidence} WHERE e.status = 'approved' "
         "ORDER BY failure_rate DESC, evidence.failures DESC, evidence.last_failure DESC "
         "LIMIT %(limit)s"
     ).format(evidence=FAILURE_EVIDENCE)

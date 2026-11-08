@@ -472,7 +472,9 @@ def _failing(conn: Connection) -> list[dict[str, Any]]:
     return [
         {
             **row,
-            "to_reopen": failures_to_reopen(row["failures"], row["successes"])
+            "to_reopen": failures_to_reopen(
+                row["failures"], row["successes"], row["failing_reporters"]
+            )
             if row["human_reviewed"]
             else None,
         }

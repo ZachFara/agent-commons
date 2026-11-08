@@ -76,8 +76,8 @@ def confirm_by_outcomes(conn: Connection) -> None:
             store.reopen(conn, [entry_id], "mostly failed when used (0028)")
     failing = [
         entry_id
-        for entry_id, failures, successes in store.reviewed_evidence(conn)
-        if failures_to_reopen(failures, successes) == 0
+        for entry_id, failures, successes, reporters in store.reviewed_evidence(conn)
+        if failures_to_reopen(failures, successes, reporters) == 0
     ]
     store.reopen(conn, failing, FAILING_REASON)
 
