@@ -776,6 +776,422 @@ def test_bash_guard_caps_the_message_file_it_reads(
     assert "larger than 1 MiB" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("gh", "agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Shell keywords come before the program.
+        "{ git push origin main; }",
+        "if true; then git push --force origin feat/x; fi",
+        "if false; then :; else git push origin main; fi",
+        "if false; then :; elif git push origin main; then :; fi",
+        "for b in x; do git push --force origin feat/x; done",
+        "while true; do git push origin main; done",
+        "until git push origin main; do :; done",
+        "! git push origin main",
+        "! { git push origin main; }",
+        # Wrapper options, and the values some of them take.
+        "env -u X git push origin main",
+        "env -i PATH=/usr/bin git push origin main",
+        "env --unset=X git push origin main",
+        "env --unset X git push origin main",
+        "env -C . git push origin main",
+        "env -- git push origin main",
+        "sudo -u x git push origin main",
+        "sudo -E -u x git push origin main",
+        "sudo -Eux git push origin main",
+        "sudo --user=x git push origin main",
+        "command -p git push origin main",
+        "exec -a x git push origin main",
+        "time -p git push origin main",
+        # env -S splits its value into the command it runs.
+        "env -S 'git push origin main'",
+        "env -S'git push --force origin feat/x'",
+        "env --split-string='git push origin main'",
+        "env -i -S 'git push origin main'",
+        # eval joins its arguments into a command line and runs that.
+        'eval "git push origin main"',
+        "eval 'git push --force origin feat/x'",
+        "eval 'git' 'push origin main'",
+        "eval 'make check && git push origin main'",
+        "time eval 'git push origin main'",
+    ],
+)
+def test_bash_guard_sees_past_keywords_wrapper_options_and_eval_strings(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "push" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "{ git status; }",
+        "if git diff --quiet; then git push -u origin HEAD; fi",
+        "for f in a b; do echo if then git push origin main; done",
+        "env -u X git status",
+        "sudo -u x git log --oneline -5",
+        "env -S 'git status'",
+        "eval 'git status'",
+        "eval \"git commit -m 'feat: x'\"",
+    ],
+)
+def test_bash_guard_allows_keywords_wrappers_and_eval_around_allowed_commands(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GIT_CONFIG_GLOBAL=.scratch/config git commit -m 'feat: x'",
+        "GIT_CONFIG_SYSTEM=.scratch/config git commit -m 'feat: x'",
+        "HOME=.scratch git commit -m 'feat: x'",
+        "export HOME=.scratch; git push -u origin feat/x",
+        "env XDG_CONFIG_HOME=.scratch git merge origin/feat/x",
+        "GIT_DIR=../other/.git git commit -m 'feat: x'",
+        "GIT_CONFIG_GLOBAL=.scratch/config bash -c 'git commit -m x'",
+        # Other ways to assign them.
+        "HOME+=/x git commit -m 'feat: x'",
+        "export GIT_CONFIG_GLOBAL+=x; git commit -m 'feat: x'",
+        "printf -v HOME %s .scratch; git commit -m 'feat: x'",
+        "printf -vGIT_CONFIG_GLOBAL %s .scratch/config; git push -u origin feat/x",
+        "read HOME < .scratch/home; git commit -m 'feat: x'",
+        "read -r GIT_CONFIG_GLOBAL < .scratch/home; git merge feat/x",
+        "source .scratch/env.sh; git commit -m 'feat: x'",
+        ". .scratch/env.sh && git push -u origin feat/x",
+        ". .scratch/missing.sh && git commit -m 'feat: x'",
+    ],
+)
+def test_bash_guard_denies_config_variables_before_commands_that_run_hooks(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A config file the agent wrote could set core.hooksPath for git's own commit or push."""
+    (repo / ".scratch").mkdir()
+    (repo / ".scratch" / "env.sh").write_text("export HOME=.scratch\n", encoding="utf-8")
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "runs hooks" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GIT_CONFIG_GLOBAL=.scratch/config git status",
+        "printf -v x %s HOME; git commit -m 'feat: x'",
+        "read -r line < .scratch/home; git commit -m 'feat: x'",
+        "source .scratch/venv.sh && git commit -m 'feat: x'",
+        "git commit -F - <<'EOF'\nfix: keep HOME= out of the hook\nEOF",
+    ],
+)
+def test_bash_guard_allows_config_variables_elsewhere(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repo / ".scratch").mkdir()
+    (repo / ".scratch" / "venv.sh").write_text("PYTHONHOME=x\nPATH=x\n", encoding="utf-8")
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 0
+
+
+def test_bash_guard_denies_skip_appended_too(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert bash("SKIP+=check git commit -m 'feat: x'", repo, monkeypatch) == 2
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin {feat/x,main}",
+        "git push origin feat/x{,:main}",
+        "git push origin feat/{1..3}",
+        "git push origin 'refs/heads/*:refs/heads/*'",
+        "git push origin ma?n",
+        "git push origin m[a]in",
+        "git push {origin,x} feat/x",
+        "gh pr create --base main --head {feat/x,y} --title x --body y",
+        "gh pr create --base main -H feat/* -t x -b y",
+        "gh pr create --base main --head=feat/? -t x -b y",
+    ],
+)
+def test_bash_guard_denies_expansion_in_pushes_and_heads(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """shlex drops quotes, so quoted text is denied too; branch names never hold these."""
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "brace or glob expansion" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_allows_reflog_braces_in_a_push(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = "git push origin 'HEAD@{1}:refs/heads/feat/x'"
+    assert bash(command, repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize("wrapper", ["bash -c", "eval"])
+def test_bash_guard_reads_a_heredoc_inside_a_wrapped_command(
+    wrapper: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The heredoc's end comes before the closing quote, so the outer line holds its body."""
+
+    def wrapped(script: str) -> str:
+        return f'{wrapper} "{script}\n"'
+
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    commit = "git commit -F - <<'EOF'\nfeat: x {id}\nEOF"
+    assert bash(wrapped(commit.format(id=AGENT_TICKET)), repo, monkeypatch) == 0
+    assert bash(wrapped(commit.format(id=FOREIGN_ID)), repo, monkeypatch) == 2
+    assert FOREIGN_ID in capsys.readouterr().err
+    assert bash(wrapped("bash <<'EOF'\ngit push origin main\nEOF"), repo, monkeypatch) == 2
+    assert "only Zach changes main" in capsys.readouterr().err
+    assert bash(wrapped("git commit -F - <<EOF\nfeat: $(date)\nEOF"), repo, monkeypatch) == 2
+    assert "shell substitution" in capsys.readouterr().err
+    # The outer shell substitutes inside the double quotes, before `<<'EOF'` is read.
+    assert bash(wrapped("git commit -F - <<'EOF'\nfeat: $(date)\nEOF"), repo, monkeypatch) == 2
+    assert "shell substitution" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "timeout 120 git push origin main",
+        "timeout -k 5 -s KILL 120 git push --force origin feat/x",
+        "timeout --signal=KILL --preserve-status 1m git push origin main",
+        "timeout -- 120 git push origin main",
+        "nice git push origin main",
+        "nice -n 5 git push origin main",
+        "nice -5 git push origin main",
+        "nice --adjustment=5 git push origin main",
+        "stdbuf -oL git push origin main",
+        "stdbuf -o L -e 0 git push origin main",
+        "stdbuf --output=L git push origin main",
+        "timeout 60 nice -n 5 env -u X git push origin main",
+    ],
+)
+def test_bash_guard_sees_past_timeout_nice_and_stdbuf(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "push" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_allows_a_timed_push_of_the_own_branch(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash("timeout 120 git push -u origin HEAD", repo, monkeypatch) == 0
+    checkout(repo, "main")
+    assert bash("timeout 120 git push -u origin HEAD", repo, monkeypatch) == 2
+
+
+@pytest.mark.usefixtures("agent_ticket", "other_repo")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env -C ../other git push -u origin HEAD",
+        "env --chdir=../other git push",
+        "sudo -D ../other git push origin @",
+        "sudo --chdir ../other git push -u origin HEAD",
+    ],
+)
+def test_bash_guard_follows_a_wrapper_into_its_directory(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """other_repo is on main; the working repo is on the agent's own branch."""
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert bash(command.replace("../other", "."), repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_reads_message_files_where_env_runs_git(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    message = repo / "sub" / "msg.txt"
+    message.parent.mkdir()
+    message.write_text(f"feat: x\n\nPart of {AGENT_TICKET}.\n", encoding="utf-8")
+    assert bash("env -C sub git commit -F msg.txt", repo, monkeypatch) == 0
+    message.write_text(f"feat: x\n\nPart of {FOREIGN_ID}.\n", encoding="utf-8")
+    assert bash("env -C sub git commit -F msg.txt", repo, monkeypatch) == 2
+    assert FOREIGN_ID in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env -S 'git\\_push origin main'",
+        "env -S 'git push origin ${BRANCH}'",
+        "env -S'git push $REMOTE main'",
+        "env --split-string='echo \\c'",
+    ],
+)
+def test_bash_guard_denies_env_split_strings_with_escapes(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """env -S has its own escapes (`\\_` is a space) and `${NAME}`, which shlex doesn't read."""
+    assert bash(command, repo, monkeypatch) == 2
+    assert "env -S" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_checks_alias_expansions_for_bypasses(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / ".git" / "config").write_text(
+        "[alias]\n"
+        "\tci = commit --no-verify\n"
+        "\tsk = -c core.hooksPath=.scratch commit\n"
+        "\tsecret = show HEAD:.config/agent-commons/config.json\n",
+        encoding="utf-8",
+    )
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash("git ci -m 'feat: x'", repo, monkeypatch) == 2
+    assert "--no-verify" in capsys.readouterr().err
+    assert bash("git sk -m 'feat: x'", repo, monkeypatch) == 2
+    assert "core.hooksPath" in capsys.readouterr().err
+    assert bash("git secret", repo, monkeypatch) == 2
+    assert "credentials" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git commit -m "fix: deny GIT_DIR= before commit"',
+        "git commit -m 'docs: HOME=x and GIT_CONFIG_GLOBAL+=y are denied'",
+        "git push -u origin feat/x && git commit -m 'docs: why HOME= is denied'",
+    ],
+)
+def test_bash_guard_allows_config_assignments_as_quoted_text(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "HOME=.scratch; git commit -m 'feat: x'",
+        "{ HOME=.scratch; git commit -m 'feat: x'; }",
+        "declare -x HOME=.scratch; git commit -m 'feat: x'",
+        'HOME=".scratch dir" git commit -m x',
+        "eval 'export HOME=.scratch'; git commit -m 'feat: x'",
+        "eval export HOME=.scratch; git push -u origin feat/x",
+    ],
+)
+def test_bash_guard_still_denies_config_assignments_as_words(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "runs hooks" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    ("command", "reason"),
+    [
+        ('env -C "$PWD" git push origin HEAD', "shell expansion"),
+        ("env -C ~/x git push", "shell expansion"),
+        ("env -C missing git push", "isn't a directory"),
+        ("env --chdir=missing git push", "isn't a directory"),
+        ("env -C `pwd` git push", "shell expansion"),
+        ("env -C $(pwd) git push", "shell expansion"),
+        ("sudo -D '{.,..}' git push", "shell expansion"),
+        ("sudo --chdir=* git push", "shell expansion"),
+        ('git -C "$X" push', "shell expansion"),
+        ("git -C ~ push", "shell expansion"),
+        ("git -C . -C 'su?' push origin HEAD", "shell expansion"),
+    ],
+)
+def test_bash_guard_denies_directories_it_cant_follow(
+    command: str,
+    reason: str,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The shell expands these before env, sudo or git see them; the guard would look elsewhere."""
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert reason in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    ["git push origin HEAD", "git push", "gh pr create --base main --title x --body y"],
+)
+def test_bash_guard_denies_when_it_cant_read_the_current_branch(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / ".git" / "HEAD").write_text("a1" * 20 + "\n", encoding="utf-8")  # detached
+    assert bash(command, repo, monkeypatch) == 2
+    assert f"can't read the current branch in {repo}" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"make check  # run tests\ngit commit -m 'feat: {FOREIGN_ID}'",
+        "echo a#; git push origin main",
+        "git status # it's clean\ngit push origin main",
+        "echo `true #`; git push origin main",
+        "echo ${x:- #}; git push origin main",
+        "echo a\\ #; git push origin main",
+        "echo $'a\\' # x'; git push origin main",
+        'echo "$(date +"%F #")"; git push origin main',
+        'echo "$(echo \'a" # b\')"; git push origin main',
+        'echo "${x:-$(echo " #")}"; git push origin main',
+        "echo \"$(date)\" # '\ngit push origin main\n# '",
+        "echo \"$(date)\";# '\ngit push origin main\necho \\'",
+        'echo "$(#\'\ngit push origin main\n)"',
+        'echo "a # b"; git push origin main',
+    ],
+)
+def test_bash_guard_drops_only_real_comments(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `#` starts a comment only where it starts a word outside quotes, as in bash."""
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo hi # don't worry",
+        "# git push origin main\ngit status",
+        "git push -u origin HEAD # don't force it",
+        "make check  # run tests\ngit commit -m 'feat: x'",
+        "git commit -m \"$(cat <<'EOF'\nfix: thing\nEOF\n)\"",
+        "git commit -m \"$(cat <<'EOF'\nfix: thing\n\n## Learned\nNothing.\nEOF\n)\"",
+    ],
+)
+def test_bash_guard_ignores_comments(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 0
+
+
 def test_bash_guard_denies_a_nul_byte(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert bash("git commit -m 'feat: x\0'", repo, monkeypatch) == 2
 

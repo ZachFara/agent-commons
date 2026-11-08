@@ -119,10 +119,17 @@ Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
   main, force pushes, hook bypasses, settings-changing `gh` calls, reads of live Commons
   credentials, git aliases it can't expand or config it can't read (`include.*`, and
   `--git-dir`, `--work-tree`, `--bare`, `GIT_CONFIG*`, `GIT_DIR` or `HOME` before a subcommand
-  git doesn't ship), and issue IDs agents don't own in commit messages, PR text and new or
-  pushed branch names (plus text it can't read: shell substitution in messages, `--head`, push
-  arguments and `gh api graphql`; stdin unless a heredoc feeds that same command; message files
-  that aren't regular files of at most 1 MiB; `gh pr create --fill`). A denial is final: never look for another route to the same action.
+  git doesn't ship; those variables before `git commit`, `push` or `merge`, also set with `+=`,
+  `printf -v`, `read` or a `source`d file), and issue IDs agents don't own in commit messages,
+  PR text and new or pushed branch names (plus text it can't read: shell substitution in
+  messages, `--head`, push arguments and `gh api graphql`; brace or glob expansion in push
+  refspecs and `--head`; stdin unless a heredoc feeds that same command; message files that
+  aren't regular files of at most 1 MiB; `gh pr create --fill`; `env -S` values with `\` or
+  `$`; a pushed or PR-head current branch it can't read; `git -C`, `env -C` or `sudo -D`
+  directories the shell expands). It reads past shell keywords (`{`, `!`, `if`, `do`...) and wrappers with their options
+  (`env -u X`, `sudo -u x`, `timeout 120`, `nice`, `stdbuf`), follows `env -C` and `sudo -D`,
+  and reads into `eval` strings, `env -S`, `bash -c` and alias expansions. A denial is final:
+  never look for another route to the same action.
   GitHub rulesets on `main` and `feature/**` require a PR, the `check` status and an
   up-to-date branch, and refuse force pushes, for everyone.
 
