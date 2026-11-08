@@ -27,9 +27,10 @@ from commons.domain.outcomes import Usage
 from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
 from commons.service import contributors, events, hooks, imports
-from commons.service.identity import acting_as
+from commons.service.identity import acting_as, current_reporter
 from commons.service.keys import check_key
 from commons.store.connection import Connection
+from commons.store.searches import privacy_mode
 
 ConnectionFactory = Callable[[], AbstractContextManager[Connection]]
 Body = dict[str, Any]
@@ -164,7 +165,10 @@ def _model(body: Body) -> str | None:
 
 
 def _session_start(conn: Connection, body: Body) -> Body:
-    return {"task_id": str(hooks.session_start(conn, _session_id(body), _model(body)))}
+    task_id = hooks.session_start(conn, _session_id(body), _model(body))
+    # The client sends a doc lookup's query only in full_trace; this tells it the mode.
+    mode = privacy_mode(conn, current_reporter(conn), task_id)
+    return {"task_id": str(task_id), "privacy_mode": mode}
 
 
 def _tool_use(conn: Connection, body: Body) -> Body:

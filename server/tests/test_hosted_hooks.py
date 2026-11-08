@@ -6,6 +6,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,7 @@ from commons.service import search as search_service
 from commons.service.hook_client import RemoteBackend
 from commons.service.identity import acting_as
 from commons.service.keys import create_key, issue_key
-from commons.service.local_state import cached_frequencies, read_spool
+from commons.service.local_state import bind_store, cached_frequencies, read_spool
 from commons.store.connection import Connection
 from commons.store.reporters import find_reporter
 from commons.web import app as web
@@ -231,6 +232,92 @@ def test_a_doc_lookup_is_stored_over_http(
 
     assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", query, mode, False)]
     assert read_spool(session) == []
+
+
+def recording(app: Starlette, key: str) -> tuple[TestClient, list[dict[str, Any]]]:
+    """Return a client for `key` and the JSON bodies it posts to /tool-use."""
+    sent: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> None:
+        if request.url.path.endswith("/tool-use"):
+            sent.append(json.loads(request.content))
+
+    recorder = client(app, key)
+    recorder.event_hooks = {"request": [record]}
+    return recorder, sent
+
+
+def key_in_mode(db: psycopg.Connection, pseudonym: str, mode: str) -> str:
+    key = create_key(db, pseudonym, admin=False)
+    db.execute("UPDATE reporters SET privacy_default = %s WHERE pseudonym = %s", (mode, pseudonym))
+    return key
+
+
+SECRET_QUERY = "auth with ghp_" + "t" * 36
+
+
+@pytest.mark.usefixtures("state")
+@pytest.mark.parametrize(
+    ("mode", "sent_query"), [("entry", None), ("full_trace", "auth with [REDACTED:github_token]")]
+)
+def test_only_full_trace_sends_the_lookup_query(
+    app: Starlette, db: psycopg.Connection, mode: str, sent_query: str | None
+) -> None:
+    """In entry mode the query never leaves the machine, not even scrubbed (decision 0016)."""
+    recorder, sent = recording(app, key_in_mode(db, f"sent-{mode}", mode))
+    backend = RemoteBackend(recorder)
+    session = str(uuid.uuid4())
+    hook_client.on_session_start(backend, session, None)
+    lookup = DocLookup("/vercel/next.js", "v16.2.9", SECRET_QUERY)
+
+    hook_client.on_tool_use(backend, replace(query_docs(session), doc_lookup=lookup))
+
+    assert [body["doc_lookup"] for body in sent] == [
+        {"library_id": "/vercel/next.js", "version": "v16.2.9", "query": sent_query}
+    ]
+
+
+def test_session_start_returns_the_tasks_privacy_mode(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = key_in_mode(db, "mode-returned", "full_trace")
+    started = post(app, key, "session-start", {"session_id": str(uuid.uuid4())}).json()
+    assert started == {"task_id": started["task_id"], "privacy_mode": "full_trace"}
+
+
+@pytest.mark.usefixtures("state")
+def test_a_session_bound_without_a_mode_sends_no_query(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    """A session bound before session-start returned the mode is treated as entry mode."""
+    key = key_in_mode(db, "bound-before", "full_trace")
+    session = str(uuid.uuid4())
+    task_id = uuid.UUID(post(app, key, "session-start", {"session_id": session}).json()["task_id"])
+    bind_store(session, ("https://commons.example", key))
+    recorder, sent = recording(app, key)
+
+    hook_client.on_tool_use(RemoteBackend(recorder), query_docs(session))
+
+    assert [body["doc_lookup"]["query"] for body in sent] == [None]
+    assert doc_lookups(db, task_id) == [("/vercel/next.js", "v16.2.9", None, "full_trace", False)]
+
+
+def test_the_server_drops_an_older_clients_query_in_entry_mode(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    """Older clients ignore the mode and still send the query; the server keeps none of it."""
+    key = create_key(db, "older-client", admin=False)
+    session = str(uuid.uuid4())
+    started = post(app, key, "session-start", {"session_id": session}).json()
+    body = {
+        "session_id": session,
+        "doc_lookup": {"library_id": "/vercel/next.js", "version": "v16.2.9", "query": "q"},
+    }
+
+    assert post(app, key, "tool-use", body).status_code == 200
+    assert doc_lookups(db, uuid.UUID(started["task_id"])) == [
+        ("/vercel/next.js", "v16.2.9", None, "entry", False)
+    ]
 
 
 @pytest.mark.usefixtures("state")

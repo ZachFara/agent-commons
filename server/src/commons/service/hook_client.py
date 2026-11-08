@@ -31,6 +31,8 @@ from commons.service.hooks import StopResult
 from commons.service.identity import configured_test_runners
 from commons.service.local_state import (
     append_spool,
+    bind_privacy_mode,
+    bound_privacy_mode,
     cached_frequencies,
     prune_spools,
     read_spool,
@@ -152,10 +154,11 @@ class RemoteBackend:
         return scope if isinstance(scope, str) else None
 
     def session_start(self, session_id: str, model: str | None) -> UUID:
-        """Create or resume the session's task."""
-        return UUID(
-            self._post("session-start", {"session_id": session_id, "model": model})["task_id"]
-        )
+        """Create or resume the session's task; keep its privacy mode with the binding."""
+        started = self._post("session-start", {"session_id": session_id, "model": model})
+        mode = started.get("privacy_mode")
+        bind_privacy_mode(session_id, mode if isinstance(mode, str) else None)
+        return UUID(started["task_id"])
 
     def tool_use(
         self,
@@ -171,6 +174,8 @@ class RemoteBackend:
             "file_change": file_change,
         }
         if doc_lookup is not None:  # servers from before MIT-622 never see the key
+            if bound_privacy_mode(session_id) != "full_trace":  # the query stays here (0016)
+                doc_lookup = replace(doc_lookup, query=None)
             body["doc_lookup"] = asdict(doc_lookup)
         self._post("tool-use", body)
 
@@ -268,7 +273,8 @@ def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
     """Spool scrubbed text locally; send only the test run, file hashes and doc lookup.
 
     A doc lookup is not spooled: its library and redacted query go to the backend, which
-    keeps the query only in full_trace mode. The tool's response is never read.
+    keeps the query only in full_trace mode. A hosted backend sends the query only when the
+    session's task is full_trace. The tool's response is never read.
     """
     if use.command is not None:
         append_spool(use.session_id, {"tool": use.tool_name, "command": scrub(use.command)})
