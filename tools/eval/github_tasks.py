@@ -223,8 +223,11 @@ CLICK_FLAG_DEFAULT = Upstream(
 # Fix: https://github.com/pypa/pip-tools/pull/2475 (merged 2026-09-18), `get_compile_command`
 # compares a value with the option's resolved default. A merge commit: the base is its first
 # parent. The new test passes at the base on Click 8.4.2 (checked) and fails on 8.5.0. Its
-# docstring states only the symptom, with "See GH-2472". The version comes from setuptools-scm,
-# which needs a git checkout, hence the pretend version.
+# docstring states only the symptom, with "See GH-2472"; that issue states the cause, but eval
+# sessions have no web tools. The version comes from setuptools-scm, which needs a git
+# checkout, hence the pretend version.
+# Not bare "unset": a fix that only treats the symptom says it too ("skip options left unset").
+# The phrases name the option's default, and "`unset" matches `UNSET` written as code.
 PIP_TOOLS = GitHubTask(
     name="gh-pip-tools-flag-default",
     repo="https://github.com/pypa/pip-tools",
@@ -245,7 +248,14 @@ PIP_TOOLS = GitHubTask(
     upstream=CLICK_FLAG_DEFAULT,
     discovery=Discovery(
         symptom_words=("--no-index", "recorded command"),
-        cause_words=("unset", "sentinel", "8.5"),
+        cause_words=(
+            "sentinel",
+            "default is unset",
+            "default is now unset",
+            "default stays unset",
+            "`unset",
+            "8.5",
+        ),
         library="click",
     ),
     trigger="version_specific",
