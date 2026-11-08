@@ -4,8 +4,10 @@ from typing import Any
 import psycopg
 import pytest
 from fastmcp import FastMCP
+from psycopg import sql
 
 import factories
+from commons.store.outcome_stats import OUTCOME_STATS, OUTCOME_STATS_PARAMS
 from mcp_client import call
 
 LONG_ERROR = (
@@ -96,6 +98,42 @@ def test_provenance_reports_used_outcomes(
         "proposed by claude-opus-5-5; success 1/1 when used; last confirmed 20"
     )
     assert "unreviewed" not in hit["provenance"]
+
+
+def outcome_stats(db: psycopg.Connection, entry_id: uuid.UUID) -> tuple[Any, ...] | None:
+    query = sql.SQL("SELECT used_outcomes, successes FROM ({}) s WHERE entry_id = %(e)s").format(
+        sql.SQL(OUTCOME_STATS)
+    )
+    return db.execute(query, {**OUTCOME_STATS_PARAMS, "e": entry_id}).fetchone()
+
+
+def test_provenance_counts_only_used_outcomes_with_a_known_result(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    entry_id = factories.entry(db, reporter, human_reviewed=True)
+    for result in ("tests_passed", "unknown", "abandoned"):
+        factories.outcome(db, entry_id, reporter, result)
+    db.execute(
+        "UPDATE outcomes SET used = 'partial' WHERE outcome = 'abandoned' "
+        "AND retrieval_id IN (SELECT id FROM retrievals WHERE entry_id = %s)",
+        (entry_id,),
+    )
+
+    # Ranking skips unknown and abandoned outcomes (decision 0017); the rate does too.
+    assert outcome_stats(db, entry_id) == (1, 1)
+    (hit,) = hits(search(server), entry_id)
+    assert "; success 1/1 when used; " in hit["provenance"]
+
+
+def test_used_outcomes_with_no_known_result_show_no_success_rate(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID
+) -> None:
+    entry_id = factories.entry(db, reporter, human_reviewed=True)
+    factories.outcome(db, entry_id, reporter, "unknown")
+    factories.outcome(db, entry_id, reporter, "abandoned")
+
+    (hit,) = hits(search(server), entry_id)
+    assert hit["provenance"] == "proposed by claude-opus-5-5; no outcomes yet; never confirmed"
 
 
 def test_each_result_logs_a_retrieval(
