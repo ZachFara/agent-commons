@@ -101,27 +101,33 @@ by `uv run commons migrate`. Never edit a migration that has been merged.
 Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
 
 - **Tickets.** Zach's Linear project "Commons" (P-MIT-27) is read only for every agent. He
-  delegates a ticket by moving it to Delegated. Agents write only in "Commons Agent Project"
+  delegates a ticket by moving it to Delegated, and agents also act on its Backlog tickets
+  (Zach, 2026-11-07). Agents write only in "Commons Agent Project"
   (P-MIT-29): agent tickets (Next, In Progress, In Review, Done, Canceled), one "Final:
   MIT-<n>" ticket per delegated ticket, and "Question: ..." tickets in Inbox for Zach.
-- **Branches.** Each delegated ticket gets `feature/MIT-<n>-<slug>` from main. A coder
+- **Branches.** Each delegated ticket gets `feature/<slug>` from main, with no Commons ID in
+  the name (older ones are `feature/MIT-<n>-<slug>`). A coder
   branches `feat/|fix/|chore/|docs/<ticket ID>` from it and opens a PR back into it. The
   orchestrator squash-merges after CI passes and the reviewer returns PASS. Zach gets one PR
-  from the feature branch into main, and only Zach merges into main.
+  into main from `final/<slug>`, cut from the feature branch, and only Zach merges into main.
 - **Roles** (`.claude/agents/`): `commons-orchestrator` (run it with
   `claude --agent commons-orchestrator`), `planner`, `researcher`, `coder` (own worktree, no
   Linear), `reviewer`.
 - **Guards** (`.claude/settings.json`; logic and tests in `tools/agent_hooks/`): `linear_guard`
   keeps Linear writes in the agent project and on agent-created issues (`.agents/owned-issues.txt`,
   kept by `record_issue`). `bash_guard` blocks merges into anything but `feature/`, pushes to
-  main, force pushes, hook bypasses, settings-changing `gh` calls, and reads of live Commons
-  credentials. A denial is final: never look for another route to the same action.
+  main, force pushes, hook bypasses, settings-changing `gh` calls, reads of live Commons
+  credentials, git aliases it can't expand, and issue IDs agents don't own in commit messages,
+  PR text and new or pushed branch names (plus message text it can't read: shell substitution,
+  stdin without a heredoc, `gh pr create --fill`). A denial is final: never look for another route to the same action.
   GitHub rulesets on `main` and `feature/**` require a PR, the `check` status and an
   up-to-date branch, and refuse force pushes, for everyone.
 
 ## Data isolation
 
-- Agent shells load `.env.agent` (`set -a; . ./.env.agent; set +a`). It points at the local
+- Agent commands take their settings from `.env.agent`. Worktree shells can't source
+  `.env.agent`; pass the variables inline (`COMMONS_DATABASE_URL=... uv run commons status`)
+  or use `scripts/test-db.sh`, which loads it itself. It points at the local
   throwaway Postgres from `db/compose.yml` and keeps the CLI off this machine's real identity
   and keys. `.worktreeinclude` copies it into every agent worktree. Only `.env.agent.example`
   is committed.
@@ -181,3 +187,22 @@ Things past sessions found that the next one needs. The orchestrator's docs code
 from the Learned sections of merged PRs.
 
 - `make check` needs local Postgres running (`make db`).
+- In a linked worktree, git sets `GIT_DIR` (and related variables) for its hooks, and they override `git -C`. Any code or test that runs git against another repo from inside a hook must drop them (`tools/agent_hooks/state.py` `git_environment()`).
+- Agent worktrees refuse compound git commands (`&&`, `;`, `$(...)` around git), bare `git stash` (the stash is shared across sessions) and sourcing `. ./.env.agent`. Run one git command per call, use `git restore --staged` or a named stash, and pass env variables inline.
+- The repository allows squash merges only. Feature branches are protected, so they are updated through a PR, never by deleting and re-creating them.
+- Linear's GitHub integration is connected: it links a PR to every issue ID in its title, body or head branch name (not its base), and moves that issue to In Progress when the PR opens and to Done when it merges. `bash_guard` denies IDs agents don't own in commits, PR text and branch names, so write that text without Commons IDs.
+- Linear turns any issue ID in agent-written text into a mention. Write Commons IDs in code spans so nothing appears on Zach's tickets.
+- Custom agent types in `.claude/agents/` load at session start only. In a session where they were added later, use the built-in `Plan` (read only) and `general-purpose` (with `isolation: worktree`) agents pointed at the role files.
+- Parallel feature branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.
+- The scratchpad directory can be shared with other sessions. Give PR body and commit message files unique names, or another session's file can overwrite yours.
+- Pre-commit checks the staged tree: it stashes unstaged files first, so committing a subset runs the check on that subset alone.
+- `SELECT *` views (the `counted_` views from 0010) freeze their columns when created. A migration that adds a column to `retrievals`, `searches` or `outcomes` must `CREATE OR REPLACE VIEW` its `counted_` view (0017 did; `counted_retrievals` had lacked `revision` since 0011). No `counted_` view reads `tasks`.
+- Lint limits already reached: `record_retrievals` is at ruff's 6 arguments (its fields travel as a `Searcher`), `build_server` at 40 statements and complexity 8. New parameters or statements there need a helper or a grouping type.
+- Ruff's S608 rejects SQL built with `+` from a string starting `SELECT`/`WITH`. Share a fragment as a `psycopg.sql.SQL` composed with `.format(...)` (`store/entries.py` `WRITTEN_HERE`, `store/corrections.py`). `Cursor.execute` then takes `str | sql.Composed`; mypy rejects `psycopg.abc.Query`, which includes `Template`.
+- FastMCP 4.1.3 serves `_meta: {"fastmcp": {"tags": []}}` on every tool, which `Tool.get_meta()` returns. Plain functions in `tools=[...]` serve the same as `Tool.from_function(fn)`.
+- Argument-shape failures reach `CallLog`'s `except ToolError` branch, because `StructuredValidationErrors` sits inside it in the middleware list. Anything `CallLog.__call__` adds to the line before `call_next` lands on those lines too. `test_telemetry.py` asserts the exact set of `commons.*` span attributes, so a new span field goes there as well.
+- Prompt-version figures (the Prompts page, `commons prompts`) count every task-linked row under the version of the task's earliest search or proposal (each count CTE joins `task_first`); rows with no task count under their own stamp. A straddle counts distinct non-null hashes only. Seeds and imports are left out through `WRITTEN_HERE`.
+- "Tasks" in those figures are distinct task_ids seen on searches and entries, not `tasks` rows: anything that writes a row with a made-up task_id (a hosted import mints one per entry) adds a task. Only `store.tasks.start_task`, called by SessionStart, inserts into `tasks`.
+- Changing `SESSION_START` or `REPORT_REMINDER` in `agent_text`: append the new pair to `RELEASED_HOOK_TEXTS` and keep the old ones, or hosted servers label clients showing it `unrecognized`. Re-capture `server/tests/hook_texts.json`; `test_hook_texts.py` fails on purpose when the text changes.
+- Test keys have no task-level `excluded` flag (decision 0030 excludes only searches, retrievals and outcomes), so SessionStart records no hook version for them. If their hook versions must show, adding that flag is a schema decision for its own ticket.
+- CLI tests share the session database, so a test that needs an empty store builds its own (`fresh_store` in `test_cli_utilities.py`, as `test_duplicates.py` does).

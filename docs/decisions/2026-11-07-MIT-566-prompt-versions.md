@@ -13,6 +13,7 @@ fields, not what FastMCP serves, and the ledger depends on its values staying as
 Decision:
 1. A `prompt_versions` table: `hash` (SHA-256 as 64 lowercase hex characters, unique, shown
    as the first 12), `label` (up to 120 characters) and `surfaces` (jsonb, {surface: text}).
+   Every server version has both; point 6 adds the one row shape without them.
    `searches`, `retrievals` and `entries` get a nullable, indexed `prompt_version_id` foreign
    key. Migration 0017 also recreates `counted_retrievals` and `counted_searches`, whose
    `SELECT *` was expanded in 0010, so they show the new column (and `retrievals.revision`).
@@ -35,6 +36,24 @@ Decision:
    the one shared row on every search. Imports and seeds pass no version, so their rows, like
    rows from before 0017, stay NULL. Tool responses are unchanged.
 5. `agent_text.fingerprint` is left as it is.
+6. Hook versions (migration 0018). The installed hook client shows its own text, which the
+   server never serves: the SessionStart sentence, the Stop report reminder, and the variant's
+   start line and nudge. `agent_text.hook_version` hashes those templates the same way into a
+   version of kind `hooks` (`prompt_versions.kind`, enum `server`, `hooks`, default
+   `server`), and SessionStart points `tasks.hook_prompt_version_id` at it. A local hook stores
+   it with its surfaces. A hosted client sends only `prompt_hash`, the first 12 hex
+   characters, never the text. The server labels the hash from the hook texts its own code
+   has released (`RELEASED_HOOK_TEXTS`, crossed with every variant and wording start line)
+   and stores that 64-hex version with its surfaces; a hash it doesn't know is stored as
+   sent, 12 hex characters, labelled `unrecognized`, with NULL `surfaces`. So the server never
+   stores text a client sent, and a row is either 64 hex with `surfaces` or a `hooks` row
+   with 12 hex and NULL `surfaces` (the check constraint). `RELEASED_HOOK_TEXTS` is
+   append-only: changing `SESSION_START` (or `REPORT_REMINDER`) without appending the new
+   pair makes hosted clients that show it appear as `unrecognized`, and dropping an old pair
+   does the same to clients still running it. A resume takes the newer version (coalesced
+   like `model_id`); a resume that sends none keeps the old one. Test keys' tasks record
+   none (decision 0030). Hook versions are listed apart from server versions on the Prompts
+   page and never mixed into its server figures.
 
 Consequences: Rates can be grouped by the exact text served, and `surfaces` shows what
 changed between two versions. A FastMCP or pydantic upgrade that changes the schema JSON
@@ -43,6 +62,10 @@ version with no wording change; compare `surfaces` before reading anything into 
 redeploy doesn't refresh the text in a running session: hosted MCP is stateless HTTP, and
 Claude Code reads the instructions only at initialize, so rows from a session that began
 before a deploy point at the new version although the agent may still be reading the old
-instructions. The turn nudge and feedback switches are read when the server is built; over
-stdio the hook processes read their own environment, which can differ. We'd revisit recording
-the version per session at initialize if those cases turn out to matter.
+instructions. For that reason the Prompts page and `commons prompts` count every row of a
+task under the version of the task's earliest search or proposal. The turn nudge and
+feedback switches are read when the server is built; over stdio the hook processes read
+their own environment, which can differ. We'd revisit recording the version per session at
+initialize if those cases turn out to matter. A hosted server older than a client's hook
+text shows that client as `unrecognized`; once a release learns the text, new sessions get
+a separate 64-hex row and the old 12-hex row stays as it was.
