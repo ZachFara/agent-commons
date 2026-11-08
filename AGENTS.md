@@ -101,27 +101,33 @@ by `uv run commons migrate`. Never edit a migration that has been merged.
 Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
 
 - **Tickets.** Zach's Linear project "Commons" (P-MIT-27) is read only for every agent. He
-  delegates a ticket by moving it to Delegated. Agents write only in "Commons Agent Project"
+  delegates a ticket by moving it to Delegated, and agents also act on its Backlog tickets
+  (Zach, 2026-11-07). Agents write only in "Commons Agent Project"
   (P-MIT-29): agent tickets (Next, In Progress, In Review, Done, Canceled), one "Final:
   MIT-<n>" ticket per delegated ticket, and "Question: ..." tickets in Inbox for Zach.
-- **Branches.** Each delegated ticket gets `feature/MIT-<n>-<slug>` from main. A coder
+- **Branches.** Each delegated ticket gets `feature/<slug>` from main, with no Commons ID in
+  the name (older ones are `feature/MIT-<n>-<slug>`). A coder
   branches `feat/|fix/|chore/|docs/<ticket ID>` from it and opens a PR back into it. The
   orchestrator squash-merges after CI passes and the reviewer returns PASS. Zach gets one PR
-  from the feature branch into main, and only Zach merges into main.
+  into main from `final/<slug>`, cut from the feature branch, and only Zach merges into main.
 - **Roles** (`.claude/agents/`): `commons-orchestrator` (run it with
   `claude --agent commons-orchestrator`), `planner`, `researcher`, `coder` (own worktree, no
   Linear), `reviewer`.
 - **Guards** (`.claude/settings.json`; logic and tests in `tools/agent_hooks/`): `linear_guard`
   keeps Linear writes in the agent project and on agent-created issues (`.agents/owned-issues.txt`,
   kept by `record_issue`). `bash_guard` blocks merges into anything but `feature/`, pushes to
-  main, force pushes, hook bypasses, settings-changing `gh` calls, and reads of live Commons
-  credentials. A denial is final: never look for another route to the same action.
+  main, force pushes, hook bypasses, settings-changing `gh` calls, reads of live Commons
+  credentials, git aliases it can't expand, and issue IDs agents don't own in commit messages,
+  PR text and new or pushed branch names (plus message text it can't read: shell substitution,
+  stdin without a heredoc, `gh pr create --fill`). A denial is final: never look for another route to the same action.
   GitHub rulesets on `main` and `feature/**` require a PR, the `check` status and an
   up-to-date branch, and refuse force pushes, for everyone.
 
 ## Data isolation
 
-- Agent shells load `.env.agent` (`set -a; . ./.env.agent; set +a`). It points at the local
+- Agent commands take their settings from `.env.agent`. Worktree shells can't source
+  `.env.agent`; pass the variables inline (`COMMONS_DATABASE_URL=... uv run commons status`)
+  or use `scripts/test-db.sh`, which loads it itself. It points at the local
   throwaway Postgres from `db/compose.yml` and keeps the CLI off this machine's real identity
   and keys. `.worktreeinclude` copies it into every agent worktree. Only `.env.agent.example`
   is committed.
@@ -181,3 +187,32 @@ Things past sessions found that the next one needs. The orchestrator's docs code
 from the Learned sections of merged PRs.
 
 - `make check` needs local Postgres running (`make db`).
+- In a linked worktree, git sets `GIT_DIR` (and related variables) for its hooks, and they override `git -C`. Any code or test that runs git against another repo from inside a hook must drop them (`tools/agent_hooks/state.py` `git_environment()`).
+- Agent worktrees refuse compound git commands (`&&`, `;`, `$(...)` around git), bare `git stash` (the stash is shared across sessions) and sourcing `. ./.env.agent`. Run one git command per call, use `git restore --staged` or a named stash, and pass env variables inline.
+- The repository allows squash merges only. Feature branches are protected, so they are updated through a PR, never by deleting and re-creating them.
+- Linear's GitHub integration is connected: it links a PR to every issue ID in its title, body or head branch name (not its base), and moves that issue to In Progress when the PR opens and to Done when it merges. `bash_guard` denies IDs agents don't own in commits, PR text and branch names, so write that text without Commons IDs.
+- Linear turns any issue ID in agent-written text into a mention. Write Commons IDs in code spans so nothing appears on Zach's tickets.
+- Custom agent types in `.claude/agents/` load at session start only. In a session where they were added later, use the built-in `Plan` (read only) and `general-purpose` (with `isolation: worktree`) agents pointed at the role files.
+- Parallel feature branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.
+- A gap in migration numbers is harmless: the runner applies files in name order (on the commons-gaps branch, 0019 follows 0016 because 0017 and 0018 belong to another branch).
+- The worktree Bash guard also refuses any command containing the word `eval`, paths such as `tools/eval/` included. Read those files with the Read tool.
+- A ticket's expected-file list can miss files that reuse needs (the context-cost and restore-rescan tickets both touched more). Reuse wins; name the extra files in the PR.
+- Ruff S608 checks string building (`+`, `%`, `str.format()`, f-strings) and flags it when a literal part has SQL keywords on one line, such as `SELECT ... FROM`. It does not look at `.replace()` or at `psycopg.sql.SQL(...).format(...)`. Share a SQL fragment one of those two ways: a module-level constant with `.replace("{name}", FRAGMENT)` (`store/search.py` `_CANDIDATES`, `store/entries.py` `_SCANNABLE`), or `psycopg.sql` composition (`store/insights.py` `_RETRIEVALS_OF_SEARCH`; `_rows` takes `str | sql.Composed`). Splice in only module-level constants and pass every value as a parameter. A `+` passes only when no literal has SELECT and FROM on one line (`store/search.py` `_ENTRY_HITS`); that is layout, not safety, so new fragments use one of the two forms.
+- A column added to `retrievals`, `outcomes` or `searches` needs `CREATE OR REPLACE VIEW counted_<table>` in the same migration: the `SELECT *` views froze their columns in 0010. `test_schema.py` catches a missing one for `retrievals`.
+- Retrievals log the factors of their score (`relevance`, `version_factor`, `outcome_score`, migration 0019); `SearchHit.score` is their product. Older rows have them null.
+- Retrievals have no `search_id`. A search and its retrievals are written in one transaction, so they share `task_id`, `reporter_id`, the scrubbed `query` and `created_at`; `store/insights.py` `_RETRIEVALS_OF_SEARCH` joins on those. In tests every call shares the outer transaction and so the same `created_at`: give each search its own `task_id`. Exact linkage would need a `search_id` migration.
+- What `search` returns per hit is `SearchHit.as_json()` (`domain/search.py`; `_hit_json` is gone). `store.search.entry_hits()` builds an entry's hit outside a search, and `approx_tokens()` sizes it.
+- The cost columns (`outcomes.tokens_in`, `tokens_out`, `wall_clock_seconds`) are written by the Stop hook through `store.outcomes.set_cost`, which overwrites. Corrections (decision 0030) cover only `used`, `outcome` and `excluded`, so cost has no correction guard; an excluded outcome still gets its cost, and `counted_outcomes` keeps it out of counts.
+- `tokens_in` includes cache reads, which re-read the context on every call, so tens of thousands per session is normal. The token columns are int4, so sums are clamped to `MAX_TOKENS` (2^31-1, `domain/observations.py`): before the clamp an out-of-range write rolled back the whole Stop (`used` and the outcome too). A clamped value means "at least 2^31-1"; widening to bigint in a migration would remove the clamp.
+- Hooks installed before cost recording send no `cost`, and the columns stay as they were. `uv tool upgrade commons` turns it on.
+- `user_accepted` and `user_rejected` are only ever set by agent reports; no code observes them, and nothing in `server/src` detects reverts. The kill-criterion record's ±12-point interval (3 runs × 20 tasks) was taken from its ticket, not recomputed.
+- `superseded_by` alone doesn't mean "merged duplicate": the dashboard's Retire form sets it too. A merge leaves the human review reason `duplicate of <successor id>` on the duplicate.
+- The rescan's entry set is pending entries plus search's own `_SEARCHABLE`, imported (private) from `store/search.py` into `store/entries.py`; ruff's private-import rule PLC2701 is preview-only. If more modules need the condition, give it a public name. It leaves out superseded and suspended reporters' entries, but no approved entry falls outside it.
+- `purges.restore()` restores entries while their reporter is still suspended, so code inside `lifecycle.restore` that filters on `_SEARCHABLE` won't see them. `store.entries.scan_row` reads by id for that reason.
+- `commons.privacy.risks.scan_text` reads the module-level `RISKS` at call time, so a test can add a pattern with `monkeypatch.setattr` (`plant_pattern` in `test_safety.py`). An unknown kind shows under its raw name unless `RISK_LABELS` gets an entry.
+- To run a CLI command on the `db` fixture's rolled-back transaction, monkeypatch `commons.cli.main.connect` with a context manager that yields `db`. `test_safety.py` and `test_cli.py` each have this as `cli_on_db`; it could move to `conftest.py`.
+- The CLI `commons search` takes no `environment`. A test that needs a retired entry with a fix version in its results calls `service.search.preview` or the MCP `search` tool with `libraries` older than the fix.
+- `tests/factories.py` `outcome()` is at ruff's 6-argument limit (PLR0913) and returns the outcome id: to set another column, update the row by that id. Dashboard tests scope their rows with a unique model name, since `factories.entry` takes the model.
+- The Edit tool writes a `"​"`-style escape in a Python string as the real character, and ruff then fails with PLE2515. `ruff check --fix` puts the escape back.
+- Mypy rejects `tools.agent_eval.runner` as an attribute because it isn't explicitly exported. To monkeypatch the eval runner, import `tools.eval.runner` directly.
+- Command-line admin actions other than key management wrote no event line before `commons admin rescan`, which follows the dashboard's `admin_action` shape.

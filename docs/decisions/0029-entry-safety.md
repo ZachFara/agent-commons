@@ -68,3 +68,25 @@ Implementation notes (T50, 2026-10-31):
   the suspension rather than rejected, because a rejection can't be cleanly undone. `--restore`
   (or Restore on the People page) reverses exactly what the `purges` row recorded.
 - Provenance shows risk labels on approved entries that have findings, so agents see them.
+
+Implementation notes (MIT-604, MIT-636, MIT-642, 2026-11-07 to 2026-11-08):
+- Rescan: `commons admin rescan [--apply]` (`service/rescan.py`) reruns the scanner over the
+  current text of pending entries and every entry search can return. The set is search's own
+  condition (`store/search.py` `_SEARCHABLE`), so retired entries with a fix version are
+  covered. Without `--apply` it only prints what would change (`before -> after`).
+- Applied, it stores each changed report. An approved, provisional entry no human has reviewed
+  that gains a finding is reopened (`store.trust.reopen`: a `reopen` review, source `auto`,
+  reason "new risk finding on rescan (0029)") and goes back to the queue, as item 2's "any
+  finding blocks provisional approval" requires. Human-approved entries stay approved and gain
+  the provenance label. Retired entries are never reopened.
+- The text is never changed: invisible characters still in an old entry's text are reported,
+  not stripped. A stored `invisible_unicode` count from a write-time strip is kept, since the
+  text can no longer show it. An entry marked `scanned: false` counts as changed, so it gets
+  marked scanned.
+- An applied run locks the rows (`FOR UPDATE`) in one transaction and writes one
+  `admin_action` event line (`action: "rescan"`, the counts, the acting key).
+- Restore rescan: a rescan skips entries out of search, so `lifecycle.restore` (and with it
+  `purges.restore`) rescans the entry it restores in the same transaction, through
+  `rescan.rescan_entry`: the same scan, stored report and reopen rule. It reads the entry by
+  id (`store.entries.scan_row`), because a purge restore runs while the reporter is still
+  suspended, so search's condition would not see it.
