@@ -117,6 +117,7 @@ class Dashboard:
         data = await self._load(
             lambda conn: {
                 "totals": insights.search_totals(conn),
+                "by_rank": insights.use_by_rank(conn),
                 "missed": insights.missed_queries(conn),
                 "recent": insights.recent_searches(conn),
             }
