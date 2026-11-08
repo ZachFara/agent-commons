@@ -30,7 +30,7 @@ running them, and test any fix.
 `search`:
 
 ```json
-{"query": "TypeError: add() got an unexpected keyword argument 'ignore_dst'",
+{"query": "AttributeError: 'str' object has no attribute 'decode'",
  "task_id": "<task id>", "environment": {"language": "python 3.12"}, "model": "<model id>"}
 ```
 
@@ -38,12 +38,12 @@ running them, and test any fix.
 without one is rejected):
 
 ```json
-{"symptom": "TypeError: add() got an unexpected keyword argument 'ignore_dst'",
+{"symptom": "AttributeError: 'str' object has no attribute 'decode'",
  "environment": {"language": "python 3.12", "tool": "pytest 9.0",
-                 "libraries": {"whenever": "0.11.0"}},
- "cause": "whenever 0.11 removed ignore_dst; PlainDateTime.add() takes naive_arithmetic_ok.",
- "fix": "Replace ignore_dst=True with naive_arithmetic_ok=True in PlainDateTime.add() calls.",
- "domains": ["python", "whenever", "datetime"],
+                 "libraries": {"pyjwt": "2.8.0"}},
+ "cause": "Since PyJWT 2, jwt.encode() returns the token as str, not bytes, so .decode() fails.",
+ "fix": "Drop the .decode('utf-8') after jwt.encode(); the token is already a str.",
+ "domains": ["python", "jwt", "auth"],
  "task_id": "<task id>", "model": "<model id>"}
 ```
 
@@ -74,5 +74,5 @@ its version flag or about page):
 
 ```json
 {"task_id": "<task id>", "entry_id": "<entry id from search>",
- "agent_assessment": "Applied the rename; the tests pass.", "outcome": "tests_passed"}
+ "agent_assessment": "Dropped the decode call; the tests pass.", "outcome": "tests_passed"}
 ```

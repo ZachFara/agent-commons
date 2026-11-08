@@ -301,20 +301,23 @@ def every_cause_word() -> set[str]:
     return words
 
 
-def added_examples() -> dict[str, str]:
-    """The worked examples added for surprises with no error text, in the drafts and the skill.
+def examples() -> dict[str, str]:
+    """The draft's added worked example and the skill's `search` and three `propose` examples.
 
-    The skill's first `propose` example is the shipped whenever one, which `baseline` keeps.
+    Exempt: the shipped worked example (the whenever `ignore_dst` case in `PROPOSE_EXAMPLES_TOOL`
+    and the texts built on it), which names a hold-out scenario's cause; `baseline` keeps it
+    byte-identical until the question on it is settled. The `report` example is left out too: its
+    field name `outcome` contains the cause word "utc".
     """
     blocks = re.findall(r"```json\n(.*?)```", SKILL.read_text(encoding="utf-8"), re.DOTALL)
-    proposals = [block for block in blocks if '"symptom"' in block]
-    assert len(proposals) == 3
-    skill = {f"skill example {n}": block for n, block in enumerate(proposals[1:], start=2)}
+    calls = [block for block in blocks if '"symptom"' in block or '"query"' in block]
+    assert len(calls) == 4
+    skill = {f"skill example {n}": block for n, block in enumerate(calls, start=1)}
     return {"propose-example": agent_text.APP_EXAMPLE, **skill}
 
 
-@pytest.mark.parametrize(("where", "example"), added_examples().items())
-def test_no_added_example_names_a_scenarios_cause(where: str, example: str) -> None:
+@pytest.mark.parametrize(("where", "example"), examples().items())
+def test_no_example_names_a_scenarios_cause(where: str, example: str) -> None:
     # An example that named a scenario's cause would fit the eval to it (decision 0023).
     assert every_cause_word() >= {"memory", "on exit", "default", "exporter"}
     named = {word for word in every_cause_word() if word in example.lower()}
