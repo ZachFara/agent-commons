@@ -395,3 +395,50 @@ done
 The bar (decision 0034): the skill beats the shipped text on both models, with no new proposals
 on the controls. `uv run python tools/agent_eval.py report --condition s-shipped-sonnet
 --condition s-skill-sonnet` (and the same for Opus) compares them.
+
+## Drafted variants: config surprises with no error text (MIT-625, 2026-11-08)
+
+Drafts from the review of real sessions where the owner had to ask agents about the commons
+(MIT-595). Those misses were configuration work with no failing test, and 3 of 4 real `propose`
+calls were rejected for an unversioned `tool`. Nothing ships: `baseline` is unchanged (same
+fingerprint), and `join` and the invite still install no skill. Each draft is one change on top
+of the shipped text, selected with `--variant <name>` (`COMMONS_INSTRUCTIONS_VARIANT`):
+
+| Variant | Surface | Change |
+|---|---|---|
+| `search-surprise` | instructions | The search rule widened the way the propose rule was (decision 0034 step 6): a dependency, tool or runtime that fails *or surprises you* (a default, a bare error page, no error text), searched "with the error or what you saw" |
+| `own-mistake` | instructions | "It counts even if you first fixed your own mistake." after the propose rule |
+| `lesson-also-propose` | instructions | "Lesson for AGENTS.md, memory or a README? Consider `propose` too." |
+| `propose-example` | `propose` description | The shipped worked example plus a second one for an app with no error text, with the app as a versioned `tool`; the shipped example only shows `pytest 9.0`, which did not stop the rejections |
+| `combined` | both | All four (instructions at 1,496 of the 1,500-character limit, so no room for more) |
+
+The skill (`client/plugin/skills/agent-commons/SKILL.md`) was refreshed in the same change: its
+description now triggers on library, tool and config surprises with or without an error, and its
+body adds worked `propose` calls for a config default (SQLite foreign keys) and an app that
+overwrites its settings (Firefox `prefs.js`). Both examples are documented behavior picked to show
+the shapes; the controls check that they don't teach proposing documented behavior. Ledger lines
+record `"skill": true` but not which skill text, so `--skill` results from before this change
+are not comparable with later ones.
+
+**Suggested conditions**, on the four no-test scenarios (MIT-597) and the five genuine controls,
+3 runs each, on both models. Verify the no-test scenarios with one real session each first (they
+are not yet counted). Start with `combined` against the shipped text: 9 scenarios × 3 runs ×
+2 conditions × 2 models = **108 sessions**. Only if `combined` passes the bar, attribute it with
+the four single drafts (another 216 sessions), so the shipped text gains only the lines that help.
+
+```
+scenarios=(--scenario config-app-overwrites --scenario config-default-wins
+  --scenario known-config-app-overwrites --scenario known-config-default-wins
+  --scenario control-typo --scenario control-arithmetic --scenario control-clear-error
+  --scenario control-documented-option --scenario control-documented-flag --runs 3)
+for model in sonnet claude-opus-5-5; do
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --condition d-baseline-$model
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --variant combined --condition d-combined-$model
+done
+# then, if combined passes: --variant search-surprise / own-mistake / lesson-also-propose / propose-example
+```
+
+Count, per model: good proposals on the two discovery scenarios, search-found-used-reported on the
+two known-entry scenarios (and no duplicate proposal there), searches and proposals on the
+controls, rejected `propose` calls, and fix rate. The bar is decision 0023's. MIT-598 holds the
+go/no-go.
