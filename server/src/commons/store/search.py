@@ -33,13 +33,13 @@ _SEARCHABLE = """(
 
 # Decision 0025, replacing 0012's ordering. Candidates share at least one stemmed word with
 # the query (OR of plainto_tsquery lexemes); `relevance` then scores each by rarity-weighted
-# coverage, drops those under MIN_RELEVANCE, and the score is relevance x the latest snapshot
-# score (0.5 prior).
+# coverage, drops those under MIN_RELEVANCE, and the score is relevance x version factor x the
+# latest snapshot score (the outcome score, 0.5 prior).
 _CANDIDATES = """
 WITH q AS (SELECT replace(plainto_tsquery('english', %(query)s)::text, '&', '|') AS text)
 SELECT
     e.id AS entry_id, e.symptom, e.environment, e.cause, e.fix, e.repro,
-    coalesce(s.score, 0.5) AS score,
+    coalesce(s.score, 0.5) AS outcome_score,
     m.name AS proposed_by_model, e.human_reviewed,
     coalesce(o.used_outcomes, 0) AS used_outcomes, coalesce(o.successes, 0) AS successes,
     o.last_confirmed, e.revision, e.fixed_in, e.status::text AS status, e.risk_report,
@@ -120,7 +120,7 @@ def find_entries(conn: Connection, request: SearchRequest) -> list[SearchHit]:
             versions = version_factor(asked_libraries, candidate["environment"].get("libraries"))
             values = {k: v for k, v in candidate.items() if k in _HIT_FIELDS}
             values["risks"] = tuple(risk_labels(candidate["risk_report"]))
-            hits.append(SearchHit(**{**values, "score": fit * versions * candidate["score"]}))
+            hits.append(SearchHit(**values, relevance=fit, version_factor=versions))
     hits.sort(key=lambda hit: hit.score, reverse=True)
     return hits[: request.limit]
 
