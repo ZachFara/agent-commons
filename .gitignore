@@ -26,3 +26,10 @@ dist/
 *.tfstate
 *.tfstate.*
 infra/terraform.tfvars
+
+# Agent workflow (AGENTS.md, "Agent workflow")
+.claude/worktrees/
+.claude/settings.local.json
+.agents/
+.env.agent
+!.env.agent.example
