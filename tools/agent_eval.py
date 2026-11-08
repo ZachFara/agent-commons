@@ -8,6 +8,7 @@ Usage:
   uv run python tools/agent_eval.py check                 # scenarios fail then pass as designed
   uv run python tools/agent_eval.py run [--scenario NAME ...] [--runs N] [--model MODEL]
                                          [--condition NAME] [--no-hooks] [--concurrency N]
+                                         [--skill]
   uv run python tools/agent_eval.py report [--condition NAME ...]
   uv run python tools/agent_eval.py search [--configs N] [--runs N] [--scenario NAME ...]
   uv run python tools/agent_eval.py effects [--condition NAME]
@@ -93,7 +94,7 @@ def run(args: argparse.Namespace) -> int:
     agent_text.resolve(args.variant)  # fail before starting sessions, not inside each one
     names = args.scenario or sorted(SCENARIOS)
     jobs = [
-        runner.Job(SCENARIOS[name], index, args.variant)
+        runner.Job(SCENARIOS[name], index, args.variant, skill=args.skill)
         for name in names
         for index in range(1, args.runs + 1)
     ]
@@ -145,7 +146,7 @@ def plan_configs(named: list[str] | None, count: int, seed: int) -> list[str]:
 
 
 def finished(transcripts: Path, condition: str, job: runner.Job) -> bool:
-    """Whether a job already has a result without an error (for `--resume`)."""
+    """Whether a job already has a result without an error, for the same text and skill."""
     path = transcripts / f"{condition}-{job.scenario.name}-{job.index}.json"
     if not path.exists():
         return False
@@ -154,6 +155,7 @@ def finished(transcripts: Path, condition: str, job: runner.Job) -> bool:
         saved.get("error") is None
         and saved.get("variant") == job.variant
         and saved.get("model", "") in {job.model, ""}
+        and saved.get("skill", False) == job.skill
     )
 
 
@@ -235,6 +237,7 @@ def append_ledger(results: list[runner.Result]) -> None:
                 "attempts": result.attempts,
                 "turns": result.turns,
                 "error": result.error,
+                "skill": result.skill,
             }
             ledger.write(json.dumps(line) + "\n")
 
@@ -249,7 +252,9 @@ def by_variant() -> int:
     rows = [row for row in lines if not row.get("invalid")]
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        groups[(row["variant"], row["text"], row["trigger"])].append(row)
+        # The text fingerprint covers the server's text only, so the skill is its own group.
+        variant = f"{row['variant']}+skill" if row.get("skill") else row["variant"]
+        groups[(variant, row["text"], row["trigger"])].append(row)
     if skipped := len(lines) - len(rows):
         print(f"({skipped} trials marked invalid are not counted)")
     print(
@@ -422,6 +427,11 @@ def main() -> int:
     run_parser.add_argument("--model", default="sonnet")
     run_parser.add_argument("--condition", default="baseline")
     run_parser.add_argument("--no-hooks", action="store_true")
+    run_parser.add_argument(
+        "--skill",
+        action="store_true",
+        help="Load client/plugin's skill (--plugin-dir), without the plugin's duplicate hooks.",
+    )
     run_parser.add_argument(
         "--resume", action="store_true", help="Skip sessions that already have a clean result."
     )
