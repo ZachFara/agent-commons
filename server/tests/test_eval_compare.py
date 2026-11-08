@@ -169,6 +169,35 @@ def test_compare_prints_each_arm_the_comparisons_the_verdict_and_herding(
     assert "herding" in out
 
 
+def test_the_verdict_counts_both_folds_of_github_arms_and_never_same_task_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Folds A and B are measured under one condition; same-task seeding has its own."""
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    equal = [3, 2, 0, 1, 3, 3, 2, 1, 0, 3]
+    fold_a = arm_runs("both", equal[:5], 3) + arm_runs("context7", equal[:5], 3)
+    fold_b = [
+        {**row, "scenario": f"fold-b-{row['scenario']}"}
+        for row in arm_runs("both", equal[5:], 3) + arm_runs("context7", equal[5:], 3)
+    ]
+    same_task = [  # seeded from their own task: a large, inflated win
+        {**row, "condition": "github-arms-same-task", "scenario": f"same-{row['scenario']}"}
+        for row in arm_runs("both", [3] * 10, 3) + arm_runs("context7", [0] * 10, 3)
+    ]
+    rows = fold_a + fold_b + same_task
+    ledger.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    assert tools.agent_eval.compare(argparse.Namespace(condition=CONDITION)) == 0
+    out = capsys.readouterr().out
+    assert f"== {CONDITION}: 60 sessions" in out
+    assert "primary: both vs context7 over 10 tasks" in out  # both folds, no same-task task
+    assert "verdict: kill" in out
+
+    assert tools.agent_eval.compare(argparse.Namespace(condition="github-arms-same-task")) == 0
+    assert "verdict: continue" in capsys.readouterr().out  # reported apart, never pooled
+
+
 def test_compare_with_no_trials_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

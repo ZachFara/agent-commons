@@ -56,17 +56,18 @@ eval-reliability:  ## Decision 0034's conditions on both models (asks nothing; c
 eval-effects:  ## Per-model results of an eval condition (EVAL_CONDITION=...)
 	uv run python tools/agent_eval.py effects --condition $(EVAL_CONDITION)
 
-# The GitHub-task arms run (the Proposed arms record in docs/decisions/): every GitHub task
-# under all four arms, EVAL_ARMS_RUNS times each, each session in a clone of the experiment
-# store EVAL_STORE, which its seed wave must have built first (docs/eval/README.md). 4 arms x
-# tasks x EVAL_ARMS_RUNS sessions; ask the owner before running (it uses the subscription).
+# The GitHub-task arms run (the Proposed arms record in docs/decisions/), one fold at a time:
+# the fold's tasks (EVAL_ARMS_TASKS, required) under all four arms, EVAL_ARMS_RUNS times each,
+# each session in a clone of EVAL_STORE (required): the store the *other* fold's seed wave
+# built, so no task is measured on entries its own sessions wrote. Same-task tasks use their
+# own store and EVAL_ARMS_CONDITION=github-arms-same-task. Per-fold commands are in
+# docs/eval/README.md. 4 arms x tasks x EVAL_ARMS_RUNS sessions; ask the owner before running
+# (it uses the subscription).
 EVAL_ARMS_CONDITION ?= github-arms
 EVAL_ARMS_RUNS ?= 3
-EVAL_STORE ?= commons_eval_store
-EVAL_ARMS_TASKS ?= $(shell uv run --quiet python -c \
-  "from tools.eval.github_tasks import GITHUB; print(' '.join(sorted(GITHUB)))")
-eval-arms:  ## The GitHub-task arms on the experiment store (asks nothing; costs usage)
-	@test -n "$(EVAL_ARMS_TASKS)" || { echo "no GitHub tasks (tools/eval/github_tasks.py)"; exit 1; }
+eval-arms:  ## One fold of the GitHub-task arms on its store (asks nothing; costs usage)
+	@test -n "$(EVAL_ARMS_TASKS)" || { echo "name the fold's tasks: EVAL_ARMS_TASKS=..."; exit 1; }
+	@test -n "$(EVAL_STORE)" || { echo "name the fold's store: EVAL_STORE=..."; exit 1; }
 	uv run python tools/agent_eval.py arms --condition $(EVAL_ARMS_CONDITION) \
 	  --runs $(EVAL_ARMS_RUNS) --store $(EVAL_STORE) \
 	  $(foreach s,$(EVAL_ARMS_TASKS),--scenario $(s)) $(if $(RESUME),--resume)

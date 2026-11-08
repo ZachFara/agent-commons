@@ -514,6 +514,12 @@ def counterfactual_pairs(
         (_arm(row), str(row["scenario"]), int(row.get("repeat") or 0), str(row.get("model"))): row
         for row in rows
     }
+    if duplicates := len(rows) - len(sessions):
+        print(
+            f"warning: {duplicates} ledger lines repeat an earlier line's arm, task, repeat and "
+            "model; only the last of each is paired",
+            file=sys.stderr,
+        )
     pairs = []
     for (arm, task, repeat, model), sighted in sorted(sessions.items()):
         without = WITHOUT_COMMONS.get(arm)

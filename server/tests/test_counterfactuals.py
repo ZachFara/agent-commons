@@ -144,6 +144,22 @@ def test_sessions_pair_only_with_the_same_task_repeat_and_model() -> None:
     assert tools.agent_eval.counterfactual_pairs([sighted, *others], CONDITION) == []
 
 
+def test_a_repeated_ledger_line_is_warned_about_and_only_the_last_is_paired(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    first, last = uuid.uuid4(), uuid.uuid4()
+    rows = [
+        line("both", passed=False, tokens=(1, 1), retrievals=[retrieval(first)]),
+        line("both", passed=True, tokens=(2, 2), retrievals=[retrieval(last)]),  # same key
+        line("context7", passed=True, tokens=(1, 1)),
+    ]
+    [(with_entry, _without)] = tools.agent_eval.counterfactual_pairs(rows, CONDITION)
+    assert with_entry.entry_id == last
+    assert "warning: 1 ledger lines repeat" in capsys.readouterr().err
+    tools.agent_eval.counterfactual_pairs(rows[1:], CONDITION)
+    assert capsys.readouterr().err == ""
+
+
 def test_a_pair_whose_entry_the_store_lacks_is_skipped_and_said(
     store: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
