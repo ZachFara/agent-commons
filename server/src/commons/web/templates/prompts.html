@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "_macros.html" import pct %}
+{% block title %}Prompts{% endblock %}
+{% macro rate(v, n) %}{{ pct(v) }} <span class="muted">n={{ n }}</span>{% endmacro %}
+{% macro when(t) %}{{ t.strftime("%b %d, %Y %H:%M") if t else "–" }}{% endmacro %}
+{% block content %}
+<header class="page"><div><h1>Prompts</h1><div class="sub">Outcomes by the server text agents were served: instructions, tool definitions and notes, hashed. A task counts under the version of its earliest search or proposal. Excluded rows don't count. All time.</div></div></header>
+<section class="card"><h2>Versions <span class="hint">oldest first</span></h2>
+  {% if versions %}<div class="table-wrap"><table>
+  <thead><tr><th>Version</th><th>First seen</th><th>Last seen</th><th class="num">Tasks</th><th class="num">Straddled a change</th><th class="num">Searches</th><th class="num">Found nothing</th><th class="num">Retrievals</th><th class="num">Agent reported</th><th class="num">Used</th><th class="num">Observed success</th><th class="num">Proposals</th><th class="num">Approved</th></tr></thead><tbody>
+  {% for v in versions %}<tr>
+    <td>{% if v.id %}<span class="mono" title="{{ v.hash }}">{{ v.short_hash }}</span><div class="muted">{{ v.label }}</div>{% else %}<span class="muted">before versioning</span>{% endif %}</td>
+    <td class="muted" style="white-space: nowrap">{{ when(v.first_seen) }}</td><td class="muted" style="white-space: nowrap">{{ when(v.last_seen) }}</td>
+    <td class="num">{{ v.tasks }}</td><td class="num">{{ v.straddled }}</td>
+    <td class="num">{{ v.searches }}</td><td class="num">{{ v.misses }}</td><td class="num">{{ v.retrievals }}</td>
+    <td class="num">{{ rate(v.reported_rate, v.retrievals) }}</td><td class="num">{{ rate(v.used_rate, v.used_n) }}</td>
+    <td class="num">{{ rate(v.observed_success_rate, v.observed_n) }}</td>
+    <td class="num">{{ v.proposals }}</td><td class="num">{{ v.approved }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <div class="muted" style="margin-top: 8px">Agent reported: share of retrievals with the agent's own report. Used: yes or partial, of outcomes where use is known. Observed success: hook-observed outcomes that worked, of those with a decisive result.</div>
+  {% else %}<div class="empty">No prompt versions recorded yet.</div>{% endif %}</section>
+{% for v in versions if v.id %}<section class="card" style="margin-top: 16px"><details><summary><span class="mono">{{ v.short_hash }}</span> {{ v.label }} <span class="muted">{{ v.surfaces | length }} surfaces</span></summary>
+  <dl class="facts" style="margin-top: 12px; grid-template-columns: minmax(120px, 240px) 1fr">{% for name, text in v.surfaces | dictsort %}<dt class="mono" style="overflow-wrap: anywhere">{{ name }}</dt><dd class="mono">{{ text }}</dd>{% endfor %}</dl>
+</details></section>{% endfor %}
+{% endblock %}

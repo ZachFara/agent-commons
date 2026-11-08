@@ -123,6 +123,11 @@ class Dashboard:
         )
         return self._render(request, "searches.html", "searches", data)
 
+    async def prompts(self, request: Request) -> Response:
+        """Render outcomes per served prompt version (decision MIT-566)."""
+        data = await self._load(lambda conn: {"versions": insights.prompt_versions(conn)})
+        return self._render(request, "prompts.html", "prompts", data)
+
     async def mine(self, request: Request) -> Response:
         """Render the caller's own entries and what happened to them (decision 0035)."""
         data = await self._load(
@@ -497,6 +502,7 @@ def web_routes(connection: ConnectionFactory, *, hosted: bool) -> list[BaseRoute
         ("/entries/{entry_id:uuid}", pages.entry, "GET", "review"),
         ("/activity", pages.activity, "GET", "admin"),
         ("/searches", pages.searches, "GET", "admin"),
+        ("/prompts", pages.prompts, "GET", "admin"),
         ("/people", pages.people, "GET", "admin"),
         ("/entries/{entry_id:uuid}/review", pages.review, "POST", "review"),
         ("/keys", pages.create_key, "POST", "admin"),

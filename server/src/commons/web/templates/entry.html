@@ -57,9 +57,10 @@
   </div>
 </div>
 <section class="card" style="margin-top: 16px"><h2>Retrievals <span class="hint">latest 50</span></h2>
-  {% if retrievals %}<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th class="num">Rank</th><th>Used</th><th>Outcome</th><th>Agent's assessment</th><th></th></tr></thead><tbody>
+  {% if retrievals %}<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th class="num">Rank</th><th>Prompt</th><th>Used</th><th>Outcome</th><th>Agent's assessment</th><th></th></tr></thead><tbody>
   {% for r in retrievals %}<tr class="{{ 'excluded' if r.excluded }}"><td class="muted" style="white-space: nowrap">{{ r.created_at.strftime("%b %d %H:%M") }}{% if r.excluded %}<div><span class="badge soft">excluded</span></div>{% endif %}</td>
     <td>{{ r.reporter }}<div class="muted">{{ r.model }}</div></td><td class="num">{{ r.rank_position }}</td>
+    <td>{% if r.prompt_hash %}<a class="mono" href="/prompts" title="{{ r.prompt_label }}">{{ r.prompt_hash }}</a>{% else %}<span class="muted">–</span>{% endif %}</td>
     <td>{{ r.used or "–" }}</td><td>{{ outcome(r.outcome, r.source) }}</td>
     <td><div class="clip" style="max-width: 360px" title="{{ r.agent_assessment or '' }}">{{ r.agent_assessment or "" }}</div></td>
     <td><details class="correct"><summary>Correct</summary>
