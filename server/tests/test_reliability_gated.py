@@ -105,7 +105,7 @@ DESCRIPTION_LIMIT = 300  # short, so it doesn't crowd the skills list (decision 
 BODY_LIMIT = 4000
 
 
-def test_the_skill_stays_inside_its_budgets_and_its_example_is_a_valid_proposal() -> None:
+def test_the_skill_stays_inside_its_budgets_and_its_examples_are_valid_proposals() -> None:
     text = SKILL.read_text(encoding="utf-8")
     front, body = text.split("---\n", 2)[1:]
     meta = dict(line.split(": ", 1) for line in front.strip().splitlines())
@@ -113,18 +113,22 @@ def test_the_skill_stays_inside_its_budgets_and_its_example_is_a_valid_proposal(
     assert len(meta["description"]) <= DESCRIPTION_LIMIT
     assert len(body) <= BODY_LIMIT
     blocks = [json.loads(b) for b in re.findall(r"```json\n(.*?)```", body, re.DOTALL)]
-    example = next(b for b in blocks if "symptom" in b)
-    validate_proposal(
-        Proposal(
-            symptom=example["symptom"],
-            environment=example["environment"],
-            cause=example["cause"],
-            fix=example["fix"],
-            domains=tuple(example["domains"]),
-            repro=None,
-            task_id=uuid.uuid4(),
+    examples = [b for b in blocks if "symptom" in b]
+    # a library version change, a config default, and an app that overwrites its settings
+    assert len(examples) == 3
+    assert any("tool" in example["environment"] for example in examples[1:])
+    for example in examples:
+        validate_proposal(
+            Proposal(
+                symptom=example["symptom"],
+                environment=example["environment"],
+                cause=example["cause"],
+                fix=example["fix"],
+                domains=tuple(example["domains"]),
+                repro=None,
+                task_id=uuid.uuid4(),
+            )
         )
-    )
 
 
 def test_the_plugin_hooks_match_what_join_installs() -> None:

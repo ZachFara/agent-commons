@@ -5,6 +5,8 @@ COMMONS_INSTRUCTIONS_VARIANT. Hooks and the MCP server both read it.
 """
 
 import dataclasses
+import json
+import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -17,6 +19,7 @@ import pytest
 from fastmcp import FastMCP
 
 import factories
+from commons.domain.entries import Proposal, validate_proposal
 from commons.domain.outcomes import ObservedRun
 from commons.mcp.server import build_server
 from commons.service import agent_text
@@ -209,3 +212,91 @@ def test_combined_variants_take_each_surface_from_their_parts(name: str, parts: 
             else getattr(baseline, field.name)
         )
         assert getattr(combined, field.name) == expected, field.name
+
+
+# Unshipped drafts (MIT-625): each changes one surface of the shipped text; `combined` has all.
+DRAFTS = {
+    "search-surprise": "instructions",
+    "own-mistake": "instructions",
+    "lesson-also-propose": "instructions",
+    "propose-example": "propose",
+}
+
+
+def differing(name: str) -> set[str]:
+    shipped, draft = agent_text.VARIANTS["baseline"], agent_text.VARIANTS[name]
+    return {
+        field.name
+        for field in dataclasses.fields(agent_text.Variant)
+        if getattr(draft, field.name) != getattr(shipped, field.name)
+    }
+
+
+@pytest.mark.parametrize("name", [*DRAFTS, "combined"])
+def test_each_draft_is_selected_by_its_name(name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("COMMONS_INSTRUCTIONS_VARIANT", name)
+    assert agent_text.variant() == agent_text.VARIANTS[name]
+
+
+@pytest.mark.parametrize(("name", "surface"), DRAFTS.items())
+def test_each_draft_changes_one_surface_of_the_shipped_text(name: str, surface: str) -> None:
+    assert differing(name) == {surface}
+
+
+def without_drafts(instructions: str) -> str:
+    """Undo every draft edit, which must give back the shipped instructions exactly."""
+    return (
+        instructions.replace(agent_text.SEARCH_RULE_SURPRISE, agent_text.SEARCH_RULES[4])
+        .replace(f" {agent_text.OWN_MISTAKE_LINE}", "")
+        .replace(f" {agent_text.LESSON_ALSO_PROPOSE_LINE}", "")
+    )
+
+
+@pytest.mark.parametrize("name", ["search-surprise", "own-mistake", "lesson-also-propose"])
+def test_an_instructions_draft_only_adds_its_line_or_swaps_the_search_rule(name: str) -> None:
+    draft, shipped = agent_text.VARIANTS[name], agent_text.VARIANTS["baseline"]
+    assert without_drafts(draft.instructions) == shipped.instructions
+
+
+def test_the_combined_draft_has_all_four_changes() -> None:
+    combined, shipped = agent_text.VARIANTS["combined"], agent_text.VARIANTS["baseline"]
+    assert differing("combined") == {"instructions", "propose"}
+    for line in (
+        agent_text.SEARCH_RULE_SURPRISE,
+        agent_text.OWN_MISTAKE_LINE,
+        agent_text.LESSON_ALSO_PROPOSE_LINE,
+    ):
+        assert line in combined.instructions
+    assert without_drafts(combined.instructions) == shipped.instructions
+    assert combined.propose == agent_text.VARIANTS["propose-example"].propose
+
+
+def test_the_search_draft_covers_surprises_with_no_error_text() -> None:
+    rule = agent_text.SEARCH_RULE_SURPRISE
+    for trigger in ("tool", "a default", "a bare error page", "no error text", "what you saw"):
+        assert trigger in rule
+    assert "Skip" not in rule  # an exemption clause becomes the default reading (round one)
+
+
+def test_the_example_draft_extends_the_shipped_example_with_a_versioned_app() -> None:
+    shipped = agent_text.VARIANTS["baseline"].propose
+    draft = agent_text.VARIANTS["propose-example"].propose
+    assert draft.startswith(shipped)
+    environments = re.findall(r"^  environment: (\{.*\})$", draft, re.MULTILINE)
+    assert len(environments) == 2
+    for environment in map(json.loads, environments):
+        validate_proposal(Proposal("s", environment, "c", "f", ("d",), None, uuid.uuid4()))
+    assert json.loads(environments[1]) == {"tool": "firefox 132.0"}
+
+
+def test_no_draft_ships() -> None:
+    shipped = agent_text.VARIANTS["baseline"]
+    assert shipped == agent_text.resolve(agent_text.SHIPPED)
+    assert agent_text.variant() == shipped
+    for text in (
+        agent_text.SEARCH_RULE_SURPRISE,
+        agent_text.OWN_MISTAKE_LINE,
+        agent_text.LESSON_ALSO_PROPOSE_LINE,
+    ):
+        assert text not in shipped.instructions
+    assert shipped.propose != agent_text.PROPOSE_EXAMPLES_APP
