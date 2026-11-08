@@ -130,7 +130,9 @@ PYDANTIC_SIGNATURE_HELPER = Upstream(
 # (checked) and fails on 2.14.0. The PR's alias test also fails at the base on 2.13.5 (a
 # non-identifier alias never worked), so it is left out.
 # The TypeError names the missing argument, so it points at a fix: not a hard-set task under
-# decision 0023. Cause words name the change, not the helper or the argument.
+# decision 0023. Cause words name the change, not the helper or the argument. Not "private" or
+# "signature": the traceback ends in `pydantic/_internal/_signature.py`, so a fix that only
+# describes the symptom would say them.
 PYDANTIC_SETTINGS = GitHubTask(
     name="gh-pydantic-settings-signature",
     repo="https://github.com/pydantic/pydantic-settings",
@@ -153,7 +155,7 @@ PYDANTIC_SETTINGS = GitHubTask(
             "validate_by_alias",
             "missing 1 required positional argument",
         ),
-        cause_words=("2.14", "private", "added a required", "new required"),
+        cause_words=("2.14", "added a required", "new required"),
         library="pydantic",
     ),
     trigger="version_specific",
