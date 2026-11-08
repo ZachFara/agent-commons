@@ -207,7 +207,8 @@ ledger and runs no session.
   model.
 - **The entry**: the first retrieval the session with the commons used (`yes` or `partial`),
   else its first retrieval. A pair whose session retrieved nothing writes no rows. A pair whose
-  entry isn't in `NAME` is skipped, and the command says so.
+  entry isn't in `NAME` is skipped, and the command says so. If two ledger lines share an arm,
+  task, repeat and model, only the last is paired, with a warning.
 - **Rows**: two per pair, `with_entry` true and false. Both share
   `task_id = uuid5(condition / task / repeat / model / pair)`, so writing a condition again
   adds nothing (`UNIQUE (task_id, entry_id, with_entry)`).
@@ -234,10 +235,53 @@ EVAL_ARMS_CONDITION=X`) reads the ledger and prints these sections:
   wrong patch (same `patch_hash`, at least two failed sessions sharing it; no patch never
   counts).
 
-`make eval-arms` runs the measured arms on the store: every GitHub task, all four arms,
-`EVAL_ARMS_RUNS` (3) times, condition `EVAL_ARMS_CONDITION` (`github-arms`), store
-`EVAL_STORE` (`commons_eval_store`). Ask the owner before running it, because it uses the
-subscription.
+`compare` reads one condition only, so seed waves and `github-arms-same-task` never enter the
+`github-arms` verdict.
+
+### The GitHub-task arms run, fold by fold
+
+The Proposed arms record (`docs/decisions/2026-11-07-MIT-565-github-task-arms.md`) fixes the
+run. No task may be measured on entries its own sessions wrote, so the tasks are split once,
+before any seed wave: within each group of siblings (same `upstream_change`), sorted by name,
+tasks alternate between fold A and fold B; a task with no sibling goes to the same-task set.
+Each fold seeds its own store and is measured on the other fold's store:
+
+| Store | Seeded by | Measured on it | Measured condition |
+|---|---|---|---|
+| `commons_eval_store_a` | fold A | fold B | `github-arms` |
+| `commons_eval_store_b` | fold B | fold A | `github-arms` |
+| `commons_eval_store_same` | the same-task set | the same-task set | `github-arms-same-task` |
+
+`<A>`, `<B>` and `<same>` below are the fold lists from the record: `--scenario T` per task in
+`arms`, space-separated in `EVAL_ARMS_TASKS`.
+
+```
+# 1. Seed waves: the commons arm, once per task, into each fold's own store.
+uv run python tools/agent_eval.py arms --store commons_eval_store_a --seed-wave \
+  --arm commons --runs 1 --condition github-arms-seed-a <A>
+uv run python tools/agent_eval.py arms --store commons_eval_store_b --seed-wave \
+  --arm commons --runs 1 --condition github-arms-seed-b <B>
+uv run python tools/agent_eval.py arms --store commons_eval_store_same --seed-wave \
+  --arm commons --runs 1 --condition github-arms-seed-same <same>
+# 2. Review each store's pending entries (commons pending, then commons review), e.g.
+COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/commons_eval_store_a \
+  uv run commons pending
+# 3. Measured runs: each fold on the other fold's store.
+make eval-arms EVAL_STORE=commons_eval_store_b EVAL_ARMS_TASKS="<A>"
+make eval-arms EVAL_STORE=commons_eval_store_a EVAL_ARMS_TASKS="<B>"
+make eval-arms EVAL_STORE=commons_eval_store_same EVAL_ARMS_TASKS="<same>" \
+  EVAL_ARMS_CONDITION=github-arms-same-task
+# 4. The verdict (both folds), then the same-task set, reported apart.
+make eval-compare EVAL_ARMS_CONDITION=github-arms
+make eval-compare EVAL_ARMS_CONDITION=github-arms-same-task
+# Counterfactual pairs: once per measured store; each writes the pairs whose entry it holds.
+uv run python tools/agent_eval.py counterfactuals --condition github-arms --store commons_eval_store_b
+uv run python tools/agent_eval.py counterfactuals --condition github-arms --store commons_eval_store_a
+```
+
+`make eval-arms` runs all four arms, `EVAL_ARMS_RUNS` (3) times, under `EVAL_ARMS_CONDITION`
+(`github-arms`), on the tasks in `EVAL_ARMS_TASKS` and the store `EVAL_STORE`. It refuses to run
+without both. Ask the owner before running it, because it uses the subscription.
 
 ## Trial ledger
 

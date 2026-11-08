@@ -27,33 +27,60 @@ Decision:
    Each task runs **3 times in each arm** (`EVAL_ARMS_RUNS=3`) on **one model, Sonnet**. That
    is 4 × 3 × tasks sessions, 240 at 20 tasks. Sessions are interleaved task × arm × repeat,
    and each records its repeat, so the same repeat of a task pairs across arms.
-3. **Store.** One experiment store, `commons_eval_store`, on the local Postgres. The harness
-   refuses any database not on `localhost` or `127.0.0.1` (the rule `scripts/test-db.sh`
-   follows). It is never the live Commons database.
-   - The **seed wave** writes every session into the store itself
-     (`arms --store commons_eval_store --seed-wave`). The store is created and migrated if it
-     doesn't exist, and is never dropped.
-   - Then the owner reviews what the wave proposed, against the store:
-     `COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/commons_eval_store uv run commons pending`,
-     then `commons review`. Search shows only approved entries, so this review is what the
-     measured run can find.
-   - In the **measured run** (`make eval-arms`), each session gets its own
-     `CREATE DATABASE ... TEMPLATE commons_eval_store`. The clone is dropped after grading.
-     Every session starts from the same reviewed store and never sees another measured
-     session's work.
+3. **Folds.** As in the kill-criterion record (§7), no task is measured on entries its own
+   sessions wrote. Siblings are tasks with the same `upstream_change`. The tasks are split
+   once, before any seed wave, by this rule: within each group of siblings, sorted by name,
+   tasks alternate between fold A and fold B (A, B, A, ...). A task with no sibling goes to the
+   **same-task** set. The three lists are written into this record (a table under this item)
+   when the task set is checked in, and are not changed after the first seed wave.
+4. **Stores.** One experiment store per fold, plus one for the same-task set, all on the local
+   Postgres. The harness refuses any database not on `localhost` or `127.0.0.1` (the rule
+   `scripts/test-db.sh` follows), so none is ever the live Commons database.
+
+   | Store | Seeded by | Measured on it | Measured condition |
+   |---|---|---|---|
+   | `commons_eval_store_a` | fold A's tasks | fold B's tasks | `github-arms` |
+   | `commons_eval_store_b` | fold B's tasks | fold A's tasks | `github-arms` |
+   | `commons_eval_store_same` | the same-task set | the same-task set | `github-arms-same-task` |
+
+   - A **seed wave** (`arms --store NAME --seed-wave`) writes every session into the store
+     itself. The store is created and migrated if it doesn't exist, and is never dropped.
+   - The owner then reviews what each wave proposed, against its store (`commons pending`,
+     then `commons review`, with `COMMONS_DATABASE_URL` set to the store). Search shows only
+     approved entries, so this review is what the measured sessions can find.
+   - In a **measured run** (`make eval-arms`), each session gets its own
+     `CREATE DATABASE ... TEMPLATE <store>`, dropped after grading. Every session of a fold
+     starts from the same reviewed store, which only the *other* fold's tasks seeded, and never
+     sees another measured session's work.
    - Grading counts a session's proposals and reports by its own task ids: the tasks its hooks
      started under its Claude session ids, plus every task id it passed to a commons tool.
      It never counts by the shared `eval-agent` pseudonym.
-4. **Seeding.** As in the kill-criterion record (§7). The wave runs the `commons` arm once on
-   sibling tasks: tasks hit by the same upstream change (the same `upstream_change`), split
-   into folds, so no task is measured on entries its own sessions wrote.
+
+   The run, in order. `<A>`, `<B>` and `<same>` are the fold lists from item 3, written as
+   `--scenario T` per task in the `arms` commands and space-separated in `EVAL_ARMS_TASKS`:
    ```
-   uv run python tools/agent_eval.py arms --store commons_eval_store --seed-wave \
-     --arm commons --runs 1 --condition github-arms-seed --scenario <each sibling task>
+   # 1. Seed waves: the commons arm, once per task, into each fold's own store.
+   uv run python tools/agent_eval.py arms --store commons_eval_store_a --seed-wave \
+     --arm commons --runs 1 --condition github-arms-seed-a <A>
+   uv run python tools/agent_eval.py arms --store commons_eval_store_b --seed-wave \
+     --arm commons --runs 1 --condition github-arms-seed-b <B>
+   uv run python tools/agent_eval.py arms --store commons_eval_store_same --seed-wave \
+     --arm commons --runs 1 --condition github-arms-seed-same <same>
+   # 2. Review each store's pending entries (repeat for _b and _same).
+   COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/commons_eval_store_a \
+     uv run commons pending
+   # 3. Measured runs: each fold on the other fold's store.
+   make eval-arms EVAL_STORE=commons_eval_store_b EVAL_ARMS_TASKS="<A>"
+   make eval-arms EVAL_STORE=commons_eval_store_a EVAL_ARMS_TASKS="<B>"
+   make eval-arms EVAL_STORE=commons_eval_store_same EVAL_ARMS_TASKS="<same>" \
+     EVAL_ARMS_CONDITION=github-arms-same-task
+   # 4. The verdict (item 9), then the same-task set, reported apart.
+   make eval-compare EVAL_ARMS_CONDITION=github-arms
+   make eval-compare EVAL_ARMS_CONDITION=github-arms-same-task
    ```
-   Some tasks have no sibling. For those, the wave runs on the same task, and they are measured
-   as their own condition, `github-arms-same-task`, so `compare` reports them apart and they
-   never enter the verdict.
+   Both folds are measured under `github-arms`, so the verdict pools them. The seed waves'
+   conditions and `github-arms-same-task` are never part of it: `compare` reads one condition.
+   `eval-arms` refuses to run without both `EVAL_ARMS_TASKS` and `EVAL_STORE`.
 5. **Pass.** A session passes when the harness's own test run after the session passes
    (`tests_pass`). Hook outcomes, the Commons' outcome rows and agent self-reports are not
    used.
@@ -82,12 +109,14 @@ Decision:
      below `PASS_MARGIN`. The tokens interval's bottom must be above `TOKEN_MARGIN`, or the
      pass-rate interval's top below `PASS_FLOOR`.
    - **Inconclusive** otherwise.
-9. **The verdict command.** After the measured run, the verdict is the `verdict:` line of
+9. **The verdict command.** After both folds' measured runs, the verdict is the `verdict:` line
+   of
    ```
    make eval-compare EVAL_ARMS_CONDITION=github-arms
    ```
    which runs `uv run python tools/agent_eval.py compare --condition github-arms`. It reads
-   only the committed ledger, `docs/eval/trials.jsonl`. Lines marked `invalid` are not
+   only the committed ledger, `docs/eval/trials.jsonl`, and only `github-arms` lines: both
+   folds, never the seed waves or `github-arms-same-task`. Lines marked `invalid` are not
    counted. Errored sessions never reach the ledger, and `RESUME=1` runs them again.
 10. **Reported, not deciding.** `compare` also prints:
     - per arm and model: sessions, the pass rate with a 95% Wilson interval, tokens per
@@ -98,17 +127,23 @@ Decision:
       and, per arm, the share of failed sessions whose patch is their task's most common wrong
       patch (by `patch_hash`, when at least two failed sessions share it).
 
-    `agent_eval.py counterfactuals --condition github-arms --store commons_eval_store` writes
-    the DESIGN.md §7 pairs to `counterfactual_runs` for the per-entry effect estimates later.
-    The pairs are `both` with `context7` and `commons` with `none`, for the same task, repeat
-    and model.
+    `agent_eval.py counterfactuals --condition github-arms --store commons_eval_store_b`, and
+    again with `--store commons_eval_store_a`, writes the DESIGN.md §7 pairs to each store's
+    `counterfactual_runs` for the per-entry effect estimates later. Each run writes the pairs
+    whose entry that store holds and skips the rest. The pairs are `both` with `context7` and
+    `commons` with `none`, for the same task, repeat and model.
 
-Consequences: Once MIT-619 is answered and this record is accepted, the run is three commands:
-the seed wave, the review, and `make eval-arms`. The verdict comes from one command that reads
-only the ledger. At 3 runs × 20 tasks the pass-rate interval is about ±12 points, wide next to
+Consequences: Once MIT-619 is answered and this record is accepted, the run is the sequence in
+item 4: three seed waves, a review of each store, and three measured runs (one per fold, one
+for the same-task set). The verdict comes from one command that reads only the ledger. Splitting
+siblings across folds keeps every measured task off entries its own sessions wrote, but a fold
+can only learn from its siblings, so the Commons arms see less than a single shared store
+would give them; that understates the benefit rather than inflating it. Tasks without a
+sibling are measured anyway, under their own condition, so their inflated result is visible but
+never decides. At 3 runs × 20 tasks the pass-rate interval is about ±12 points, wide next to
 a 10-point margin. So inconclusive is a likely and honest answer, and it calls for more tasks,
-not a looser margin. Clones keep the measured sessions independent, but every session sees
-the same seeded entries. A bad entry approved in the review can mislead every Commons session
+not a looser margin. Clones keep the measured sessions independent, but every session of a
+fold sees the same seeded entries. A bad entry approved in the review can mislead every Commons session
 at once, which the herding section is there to show. Pooling models hides a difference between
 them. The default run has one model, so pooling only matters if MIT-619 adds one. If the two
 Proposed records end up disagreeing on a margin, the kill-criterion record wins, and the
