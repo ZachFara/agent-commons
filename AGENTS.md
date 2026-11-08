@@ -101,7 +101,8 @@ by `uv run commons migrate`. Never edit a migration that has been merged.
 Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
 
 - **Tickets.** Zach's Linear project "Commons" (P-MIT-27) is read only for every agent. He
-  delegates a ticket by moving it to Delegated. Agents write only in "Commons Agent Project"
+  delegates a ticket by moving it to Delegated, and agents also act on its Backlog tickets
+  (Zach, 2026-11-07). Agents write only in "Commons Agent Project"
   (P-MIT-29): agent tickets (Next, In Progress, In Review, Done, Canceled), one "Final:
   MIT-<n>" ticket per delegated ticket, and "Question: ..." tickets in Inbox for Zach.
 - **Branches.** Each delegated ticket gets `feature/MIT-<n>-<slug>` from main. A coder
@@ -181,6 +182,12 @@ Things past sessions found that the next one needs. The orchestrator's docs code
 from the Learned sections of merged PRs.
 
 - `make check` needs local Postgres running (`make db`).
+- In a linked worktree, git sets `GIT_DIR` (and related variables) for its hooks, and they override `git -C`. Any code or test that runs git against another repo from inside a hook must drop them (`tools/agent_hooks/state.py` `git_environment()`).
+- Agent worktrees refuse compound git commands (`&&`, `;`, `$(...)` around git), bare `git stash` (the stash is shared across sessions) and sourcing `. ./.env.agent`. Run one git command per call, use `git restore --staged` or a named stash, and pass env variables inline.
+- The repository allows squash merges only. Feature branches are protected, so they are updated through a PR, never by deleting and re-creating them.
+- Linear turns any issue ID in agent-written text into a mention. Write Commons IDs in code spans so nothing appears on Zach's tickets.
+- Custom agent types in `.claude/agents/` load at session start only. In a session where they were added later, use the built-in `Plan` (read only) and `general-purpose` (with `isolation: worktree`) agents pointed at the role files.
+- Parallel feature branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.
 - Ruff S608 flags SQL built with f-strings or `+` inside `execute(...)`, but not a module-level constant built with `.replace("{name}", FRAGMENT)`. Share SQL fragments that way (`status._TOP_ENTRIES`, `store.reviews.IN_QUEUE`).
 - "Awaiting review" means `store.reviews.IN_QUEUE`, everywhere. New counts of waiting entries use it, not `NOT human_reviewed`.
 - A human review leaves `provisional` set. Filters on provisional entries must also test `NOT human_reviewed`. `factories.entry` defaults `provisional=False`, so a "human-reviewed" test entry must set `provisional=True` too, or the clause goes untested (reviewers caught this twice).
