@@ -6,6 +6,7 @@ from commons.domain.entries import EntryStatus
 from commons.domain.status import StoreStatus, TopEntry
 from commons.store.connection import Connection
 from commons.store.outcome_stats import OUTCOME_STATS, OUTCOME_STATS_PARAMS
+from commons.store.reviews import IN_QUEUE
 
 _TOP_ENTRIES = """
 SELECT e.id AS entry_id, e.symptom, o.used_outcomes, o.successes
@@ -17,12 +18,12 @@ LIMIT %(limit)s
 
 _ACTIVITY = """
 SELECT
-    (SELECT count(*) FROM entries WHERE NOT human_reviewed AND status <> 'retired'),
+    (SELECT count(*) FROM entries e WHERE {in_queue}),
     (SELECT count(*) FROM counted_retrievals WHERE created_at > now() - interval '30 days'),
     (SELECT count(DISTINCT task_id) FROM counted_retrievals
      WHERE created_at > now() - interval '30 days'),
     (SELECT count(*) FROM counted_outcomes WHERE created_at > now() - interval '30 days')
-"""
+""".replace("{in_queue}", IN_QUEUE)
 
 
 def store_status(conn: Connection, top_limit: int) -> StoreStatus:
