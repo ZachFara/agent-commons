@@ -204,62 +204,6 @@ MLODA = GitHubTask(
 )
 
 
-# Polars 2.0.0 (2026-10-06): `pl.count()` with no argument, deprecated since 0.20.5 in favour of
-# `pl.len()`, now raises TypeError. Upgrade guide: https://docs.pola.rs/releases/upgrade/2/
-# (release: https://github.com/pola-rs/polars/releases/tag/py-2.0.0)
-POLARS_COUNT = Upstream(
-    library="polars",
-    version="2.0.0",
-    released="2026-10-06",
-    changelog="https://docs.pola.rs/releases/upgrade/2/",
-    upstream_change="polars-2.0-count-needs-argument",
-)
-
-# Issue: none in the repository; the fix's pull request (opened 2026-10-15) reports it, from the
-# Dependabot bump to Polars 2.0.0 (TexasCoding/project-x-py#162): `MarketAnalytics.get_statistics`
-# returns {'error': 'Analysis failed'}, its TypeError only in the captured log.
-# Fix: https://github.com/TexasCoding/project-x-py/pull/168 (merged 2026-10-15), `pl.len()` for
-# the trade counts; the test gains assertions on those counts. The test passes at the base on
-# Polars 1.44.2 (checked) and fails on 2.0.0.
-# The TypeError, in the captured log, says to use `pl.len()`: the error names its fix, so this is
-# not a hard-set task under decision 0023. Not "2.0": the test data holds prices like 21002.0.
-# The install is about 280 MB, 169 MB of it Polars' runtime.
-PROJECT_X = GitHubTask(
-    name="gh-project-x-count",
-    repo="https://github.com/TexasCoding/project-x-py",
-    base_commit="e6c1da2e267f6506075f9e15e365ff8f49ccb3e3",
-    fix_commit="4b3d553baad090e0406ecb646674c8f90cfb7fe0",
-    issue_url="https://github.com/TexasCoding/project-x-py/pull/168",
-    fix_url="https://github.com/TexasCoding/project-x-py/pull/168",
-    test_paths=("tests/orderbook/test_orderbook_analytics.py",),
-    python="3.12",
-    pins=("polars==2.0.0",),
-    setup=(
-        f"uv pip install --quiet {EXCLUDE_NEWER} -e . "
-        "pytest==9.1.1 pytest-asyncio pytest-cov pytest-mock"
-    ),
-    test_command=tests(
-        "tests/orderbook/test_orderbook_analytics.py::TestStatisticalSummaries::test_get_statistics"
-    ),
-    upstream=POLARS_COUNT,
-    discovery=Discovery(
-        symptom_words=("Analysis failed", "TypeError", "pl.count()", "at least one argument"),
-        cause_words=(
-            "polars 2",
-            "deprecat",
-            "no longer",
-            "argument-less",
-            "without an argument",
-            "without arguments",
-            "no arguments",
-        ),
-        library="polars",
-    ),
-    trigger="version_specific",
-    license="MIT",
-)
-
-
 def scenario(task: GitHubTask) -> Scenario:
     """Return the scenario that replays a task: its project comes from the repository."""
     return Scenario(
@@ -273,6 +217,6 @@ def scenario(task: GitHubTask) -> Scenario:
     )
 
 
-TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA, PROJECT_X]
+TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
