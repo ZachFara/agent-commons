@@ -62,7 +62,11 @@ class SearchHit:
     cause: str
     fix: str
     repro: str | None
-    score: float
+    # The three factors of `score`, logged apart so a poor match and a poor entry can be told
+    # apart (decision 0025): query fit, the libraries' versions, and the entry's ranking score.
+    relevance: float
+    version_factor: float
+    outcome_score: float
     proposed_by_model: str
     human_reviewed: bool
     used_outcomes: int
@@ -73,6 +77,11 @@ class SearchHit:
     risks: tuple[str, ...] = ()  # labels from the risk scanner (decision 0029)
     confirmed: bool = False  # provisional, but confirmed by others' observed outcomes (0028)
     imported_from: dict[str, str] | None = None  # moved from a local store (decision 0031)
+
+    @property
+    def score(self) -> float:
+        """What results are ranked by: relevance x version factor x outcome score."""
+        return self.relevance * self.version_factor * self.outcome_score
 
     def provenance(self) -> str:
         """One line on where the entry came from and how it has held up."""

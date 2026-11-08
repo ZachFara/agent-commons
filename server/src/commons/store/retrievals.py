@@ -13,12 +13,12 @@ def record_retrievals(
     *,
     excluded: bool = False,
 ) -> None:
-    """Log one retrievals row per returned entry, with its rank and score at the time."""
+    """Log one retrievals row per returned entry, with its rank, score and score factors."""
     with conn.cursor() as cursor:
         cursor.executemany(
             "INSERT INTO retrievals (entry_id, reporter_id, model_id, task_id, query, "
-            "rank_position, score_at_retrieval, excluded, revision) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "rank_position, score_at_retrieval, relevance, version_factor, outcome_score, "
+            "excluded, revision) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             [
                 (
                     hit.entry_id,
@@ -28,6 +28,9 @@ def record_retrievals(
                     request.query,
                     rank,
                     hit.score,
+                    hit.relevance,
+                    hit.version_factor,
+                    hit.outcome_score,
                     excluded,
                     hit.revision,
                 )
