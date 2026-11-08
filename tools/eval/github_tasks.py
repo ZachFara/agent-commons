@@ -142,48 +142,12 @@ MLODA = GitHubTask(
     upstream=POLARS_JOIN_ORDER,
     discovery=Discovery(
         symptom_words=("order", "merge", "join"),
-        cause_words=("maintain_order", "row order", "join order"),
+        # The cause, not the symptom: the streaming engine and the join's maintain_order.
+        cause_words=("maintain_order", "streaming"),
         library="polars",
     ),
     trigger="version_specific",
     license="Apache-2.0",
-)
-
-# pandas 3.1.0 (2026-10-22; release candidate 2026-09-30): `Index.values` on a string index
-# returns a read-only StringArray, so assigning into it raises "Cannot modify read-only array".
-# Release notes: https://pandas.pydata.org/docs/whatsnew/v3.1.0.html
-# Issue: none in the repository; the fix's pull request (2026-10-26) reports it, from d3graph
-# crashing on pandas 3.1.
-# Fix: https://github.com/erdogant/ismember/pull/6 (merged 2026-10-26): fill a copy when the
-# array is read-only, with a new read-only-array test.
-ISMEMBER = GitHubTask(
-    name="gh-ismember-readonly-index",
-    repo="https://github.com/erdogant/ismember",
-    base_commit="86c6e80e19092b1cb11c393b19145f064c7f94fa",
-    fix_commit="5e8f7548b5cbdd61fb2f4f42756e3aad99fadc63",
-    issue_url="https://github.com/erdogant/ismember/pull/6",
-    fix_url="https://github.com/erdogant/ismember/pull/6",
-    test_paths=("ismember/tests/test_ismember.py",),
-    python="3.12",
-    pins=("pandas==3.1.0", "pytest==9.1.1"),
-    setup=f"uv pip install --quiet {EXCLUDE_NEWER} -e .",
-    test_command=tests(
-        "ismember/tests/test_ismember.py::TestCLUSTIMAGE::test_readonly_pandas_array"
-    ),
-    upstream=Upstream(
-        library="pandas",
-        version="3.1.0",
-        released="2026-10-22",
-        changelog="https://pandas.pydata.org/docs/whatsnew/v3.1.0.html",
-        upstream_change="pandas-3.1-readonly-index-values",
-    ),
-    discovery=Discovery(
-        symptom_words=("read-only", "assignment destination"),
-        cause_words=("read-only", "readonly", "StringArray"),
-        library="pandas",
-    ),
-    trigger="version_specific",
-    license="MIT",
 )
 
 
@@ -200,6 +164,6 @@ def scenario(task: GitHubTask) -> Scenario:
     )
 
 
-TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, MLODA, ISMEMBER]
+TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, MLODA]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
