@@ -55,7 +55,9 @@ TABLES = {
         "sampled",
         "confirmed_at",
         "imported_from",
+        "prompt_version_id",
     },
+    "prompt_versions": {"hash", "label", "surfaces"},
     "purges": {
         "reporter_id",
         "purged_by",
@@ -92,6 +94,7 @@ TABLES = {
         "score_at_retrieval",
         "excluded",
         "revision",
+        "prompt_version_id",
     },
     "searches": {
         "task_id",
@@ -105,6 +108,7 @@ TABLES = {
         "environment",
         "results",
         "excluded",
+        "prompt_version_id",
     },
     "corrections": {
         "batch_id",
@@ -208,6 +212,19 @@ def test_every_table_has_exactly_the_designed_columns(db: psycopg.Connection) ->
             (table,),
         ).fetchall()
         assert {name for (name,) in rows} == columns | COMMON, table
+
+
+@pytest.mark.parametrize(
+    ("view", "table"), [("counted_retrievals", "retrievals"), ("counted_searches", "searches")]
+)
+def test_counted_views_show_every_column_of_their_table(
+    db: psycopg.Connection, view: str, table: str
+) -> None:
+    """`SELECT *` views freeze their columns when created; 0017 re-expanded them."""
+    query = "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
+    columns = {name for (name,) in db.execute(query, (view,))}
+    assert "prompt_version_id" in columns
+    assert columns == {name for (name,) in db.execute(query, (table,))}
 
 
 def test_enum_labels_match_design(db: psycopg.Connection) -> None:

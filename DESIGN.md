@@ -57,6 +57,7 @@ entries
 - trace_id: nullable, references traces.
 - task_id: UUID, nullable. The session that proposed it; null for imported entries.
 - search_vector: tsvector, generated from symptom, cause, fix, domains.
+- prompt_version_id: nullable, references prompt_versions. The text the MCP server served when the entry was proposed; null for imports, seeds and older rows.
 
 retrievals
 - entry_id, reporter_id, model_id.
@@ -64,12 +65,20 @@ retrievals
 - query: text. What the agent searched for.
 - rank_position: int. Where the entry appeared in results.
 - score_at_retrieval: float. The ranking score at the time, so ranking changes can be evaluated later.
+- prompt_version_id: nullable, references prompt_versions. The same version as the search that returned the entry.
 
 searches
 - task_id, reporter_id, model_id, privacy_mode, created_at.
 - query: text, redacted. language, result_limit, hit_count. A hit_count of 0 is a miss: the store had nothing for it.
 - environment, results: jsonb, redacted. Only written in full_trace mode (decision 0024).
 - One row per search call, whether or not anything matched.
+- prompt_version_id: nullable, references prompt_versions. The text the MCP server served when the agent searched.
+
+prompt_versions (decision 2026-11-07-MIT-566-prompt-versions)
+- hash: text, unique, 64 lowercase hex characters (shown as the first 12). SHA-256 over canonical JSON (sorted keys) of `surfaces`.
+- label: text, up to 120 characters. The `COMMONS_INSTRUCTIONS_VARIANT` name, with the wording it stands for when it is `baseline` or `previous` (`baseline:w-...`), and `+turn-nudge`, `+record` when those are on. The first label to serve a hash keeps it.
+- surfaces: jsonb, {surface: text}. The instructions; each tool's description, input schema (JSON, sorted keys) and `_meta`; registered prompts; the untrusted note and the empty-result note; and, only when switched on, the record prompt, the turn nudge template and a session feedback marker. Templates, never formatted text, so ids and counts never make a new version.
+- `build_server` builds the version once, from the same tool and prompt objects it gives FastMCP; `search` and `propose` upsert it (insert, do nothing on conflict, then select) and point their rows at it.
 
 outcomes
 - retrieval_id.
@@ -89,7 +98,7 @@ reporters
 corrections (decision 0030)
 - target_table (outcomes, retrievals, searches), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by.
 - Raw observations are never deleted. A correction writes the new value into the row and records the old one; a standing correction of `used` or `outcome` is not overwritten by later hooks or reports.
-- retrievals, outcomes and searches carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes` and `counted_searches` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start.
+- retrievals, outcomes and searches carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes` and `counted_searches` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start. The views are `SELECT *`, whose columns are fixed when a view is created, so a migration that adds a column to one of these tables recreates its view (0017 did, for `prompt_version_id`).
 
 api_keys (hosted mode only; decision 0032)
 - reporter_id, prefix (first characters, shown in listings), key_hash (SHA-256, unique).

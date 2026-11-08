@@ -14,12 +14,13 @@ def insert_entry(
     *,
     created_by: UUID,
     created_by_model: UUID,
+    prompt_version_id: UUID | None,
 ) -> UUID:
     """Insert a pending entry and return its id."""
     cursor = conn.execute(
         "INSERT INTO entries (symptom, environment, cause, fix, repro, domains, task_id, "
-        "created_by, created_by_model, redaction_report) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        "created_by, created_by_model, redaction_report, prompt_version_id) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             proposal.symptom,
             Jsonb(proposal.environment),
@@ -31,6 +32,7 @@ def insert_entry(
             created_by,
             created_by_model,
             Jsonb(redaction_report),
+            prompt_version_id,
         ),
     )
     return returned_id(cursor.fetchone())
