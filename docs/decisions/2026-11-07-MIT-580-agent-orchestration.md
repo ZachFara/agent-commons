@@ -4,7 +4,8 @@ Date: 2026-11-07
 
 Context: Work moves from "one session takes the next PROGRESS.md task" to an orchestrator that
 coordinates planner, researcher, coder and reviewer agents. Zach delegates a ticket in the
-Linear project "Commons" (read only for agents) by moving it to Delegated; agents track their
+Linear project "Commons" (read only for agents) by moving it to Delegated (amended 2026-11-07:
+agents act on its Backlog tickets too, never editing them); agents track their
 own work in "Commons Agent Project". Agents push as Zach, so GitHub can't tell them apart from
 him, and this machine holds credentials that can change the live Commons database
 (`~/.config/agent-commons/`, gcloud as project owner).
