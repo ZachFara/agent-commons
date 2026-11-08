@@ -99,6 +99,7 @@ SQLMODEL_NAIVE = Scenario(
 # TypeError for it. Source: https://whenever.readthedocs.io/en/latest/changelog.html (0.11.0,
 # "Removed APIs"; 0.10.0 gives the replacements: naive_arithmetic_ok for PlainDateTime).
 # The TypeError looks like a typo in the caller, not a removed feature.
+# Retired (see RETIRED below): kept so its old ledger lines and transcripts still read.
 WHENEVER_IGNORE_DST = Scenario(
     name="real-whenever-ignore-dst",
     trigger="version_specific",
@@ -128,6 +129,55 @@ WHENEVER_IGNORE_DST = Scenario(
         symptom_words=("ignore_dst", "unexpected keyword", "TypeError", "add()"),
         cause_words=("0.11", "removed", "naive_arithmetic_ok", "deprecated", "renamed"),
         library="whenever",
+    ),
+    expect=Expect(search=True, propose=True, report=False),
+)
+
+# Polars 2.0.0 (2026-10-06): `explode()` defaults to `empty_as_null=False`, so "an empty list
+# now explodes into zero rows, rather than one `null` row". No error and no warning: a group
+# with an empty list silently disappears. Run 2026-11-08: both tests fail on 2.0.0 and pass with
+# `explode("members", empty_as_null=True)`; on 1.44.2 they pass as shipped, with a
+# DeprecationWarning announcing the change that a session on 2.0.0 never sees.
+# Source: https://docs.pola.rs/releases/upgrade/2/ ("Set `explode()` `empty_as_null=False` by
+# default"); release https://github.com/pola-rs/polars/releases/tag/py-2.0.0
+POLARS_EXPLODE_EMPTY = Scenario(
+    name="real-polars-explode-empty",
+    trigger="version_specific",
+    test_command=PROJECT_TEST_COMMAND,
+    files={
+        ".python-version": PYTHON_VERSION_FILE,
+        "pyproject.toml": pyproject("rosters", ["polars==2.0.0"]),
+        "conftest.py": PY_CONFTEST,
+        "app/__init__.py": "",
+        "app/roster.py": (
+            "import polars as pl\n\n\n"
+            "def assignments(teams):\n"
+            '    """One row per (team, member). A team with no members keeps one row, '
+            'member null."""\n'
+            '    return teams.explode("members").rename({"members": "member"})\n\n\n'
+            "def headcount(teams):\n"
+            '    """Members per team, by team name; a team with no members counts 0."""\n'
+            '    counts = assignments(teams).group_by("team").agg(pl.col("member").count())\n'
+            "    return dict(counts.iter_rows())\n"
+        ),
+        "tests/test_roster.py": (
+            "import polars as pl\n\n"
+            "from app.roster import assignments, headcount\n\n\n"
+            "def teams():\n"
+            "    return pl.DataFrame(\n"
+            '        {"team": ["data", "ops", "web"], "members": [["ana", "bo"], [], ["cy"]]}\n'
+            "    )\n\n\n"
+            "def test_every_team_keeps_a_row():\n"
+            '    assert assignments(teams())["team"].to_list() == ["data", "data", "ops", "web"]'
+            "\n\n\n"
+            "def test_headcount_counts_empty_teams_as_zero():\n"
+            '    assert headcount(teams()) == {"data": 2, "ops": 0, "web": 1}\n'
+        ),
+    },
+    discovery=Discovery(
+        symptom_words=("explode", "empty", "ops", "missing", "dropped", "rows"),
+        cause_words=("empty_as_null", "polars 2", "empty list", "zero rows"),
+        library="polars",
     ),
     expect=Expect(search=True, propose=True, report=False),
 )
@@ -509,8 +559,19 @@ HARD = {
 }
 
 # The first hold-out set (solved in 1-3 attempts; kept for comparison) plus the hard set.
+# `real-polars-explode-empty` took the retired whenever scenario's place on 2026-11-08.
 EASY = {
     s.name: s
-    for s in (SQLMODEL_NAIVE, WHENEVER_IGNORE_DST, PY314_SQLITE_PARAMS, PY314_ITERTOOLS_COPY)
+    for s in (SQLMODEL_NAIVE, POLARS_EXPLODE_EMPTY, PY314_SQLITE_PARAMS, PY314_ITERTOOLS_COPY)
 }
 HOLDOUT = {**EASY, **HARD}
+
+# Out of the measured set, with the reason. Their ledger lines and transcripts stay as they
+# were and still load; `agent_eval.py report` names the reason next to their results.
+RETIRED = {
+    WHENEVER_IGNORE_DST.name: (
+        "the shipped `propose` worked example (whenever 0.11 removing ignore_dst) is this "
+        "scenario's cause, so every session shown the shipped text was told the answer "
+        "(Question MIT-640, 2026-11-08)"
+    ),
+}

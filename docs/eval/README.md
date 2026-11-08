@@ -698,7 +698,8 @@ against every measured scenario's cause and `cause_words`; a test fails if one o
 scenario's cause word. They replace the first draft's examples,
 which shared a mechanism and cause words with the two no-test discovery scenarios (an in-memory
 overwrite, and a default that beats a setting) and the hold-out. The shipped server text still
-carries the whenever example, since `baseline` stays byte-identical.
+carries the whenever example, since `baseline` stays byte-identical; the hold-out it named is
+retired (see "Hold-out change" below).
 
 **Suggested conditions**, on the four no-test scenarios (MIT-597) and the five genuine controls,
 3 runs each, on both models. Verify the no-test scenarios with one real session each first (they
@@ -722,3 +723,44 @@ Count, per model: good proposals on the two discovery scenarios, search-found-us
 two known-entry scenarios (and no duplicate proposal there), searches and proposals on the
 controls, rejected `propose` calls, and fix rate. The bar is decision 0023's. MIT-598 holds the
 go/no-go.
+
+## Hold-out change: whenever retired, Polars added (2026-11-08)
+
+**What changed.** `real-whenever-ignore-dst` is out of the measured hold-out set, and
+`real-polars-explode-empty` takes its place in the first hold-out set (`EASY` in
+`tools/eval/holdout.py`) and in `make eval-confirm`. The hold-out set is still eight scenarios:
+SQLModel 0.0.45, Polars 2.0.0, and Python 3.14 sqlite3 and itertools (the first set), plus
+pandas 3.0 Copy-on-Write, SQLAlchemy 2.1 autoflush, SQLModel legacy rows and Python 3.14 lazy
+annotations (the hard set).
+
+**Why.** The shipped `propose` description's worked example is whenever 0.11 removing
+`ignore_dst`, the very cause of that scenario, and its `cause_words` ("0.11", "removed",
+"naive_arithmetic_ok") appear in the example. Every session shown the shipped text was told
+the answer, so its results under that text are fitted (decision 0023). The owner chose to
+replace the scenario rather than the shipped text (Question `MIT-640`), so `baseline` is
+byte-identical. The scenario stays in `holdout.py`, marked in `RETIRED` with the reason, so its
+ledger lines and transcripts still load; `agent_eval.py report` prints the reason under its
+results. It can no longer be run.
+
+**The replacement.** Polars 2.0.0 (2026-10-06) changed the `explode()` default to
+`empty_as_null=False`: an empty list explodes into zero rows instead of one null row
+([upgrade guide](https://docs.pola.rs/releases/upgrade/2/)). A team roster loses its empty
+team with no error or warning. The tests fail on 2.0.0, pass with `empty_as_null=True`, and
+pass as shipped on 1.44.2 (checked 2026-11-08). No other scenario touches exploding list
+columns; the nearest, pandas Copy-on-Write, is about copies and views. A test checks its `cause_words` ("empty_as_null", "polars 2", "empty
+list", "zero rows") against every surface of the shipped text, with no hits.
+
+**Comparing results across the change.** Compare per scenario, not per set. The seven hold-outs
+both sets share are comparable as before. Leave the whenever lines out of any figure for a text
+that shows the whenever example, since those are fitted: `baseline`, `previous`, the drafted
+variants built on `baseline`, `examples`, `start-all`, and every wording with `d1`; under other texts they are a valid measure of that
+scenario, just no longer collected. Report `real-polars-explode-empty` on its own until it has
+a baseline of its own; a hold-out total from before this change (four first-set scenarios
+including whenever) is not the same set as one after it.
+
+**Known limit of the grader.** `cause_words` are matched as substrings, so generic words in
+other hold-outs' lists also occur in the shipped text: "removed" (both Python 3.14 scenarios),
+"naive" (in "naive_arithmetic_ok", `real-sqlmodel-utc`), "view" (in "reviews",
+`hard-pandas-cow-subset`) and "utc" (in "outcomes", `hard-sqlmodel-legacy-rows`). None of them
+gives a cause away, but the shipped text as a whole can't be held to the example check until
+those lists change, which would change how those scenarios grade.

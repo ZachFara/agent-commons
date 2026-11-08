@@ -4,6 +4,7 @@ Production stays on `baseline`; a variant is selected per process with
 COMMONS_INSTRUCTIONS_VARIANT. Hooks and the MCP server both read it.
 """
 
+import argparse
 import dataclasses
 import json
 import re
@@ -17,6 +18,9 @@ from typing import Any
 import psycopg
 import pytest
 from fastmcp import FastMCP
+from tools import agent_eval
+from tools.eval.holdout import HOLDOUT, RETIRED, WHENEVER_IGNORE_DST
+from tools.eval.model import Scenario
 from tools.eval.scenarios import SCENARIOS
 
 import factories
@@ -309,8 +313,11 @@ def examples() -> dict[str, str]:
     "utc", and neither that name nor the enum value `tests_passed` can hint at a cause.
 
     Exempt: the shipped worked example (the whenever `ignore_dst` case in `PROPOSE_EXAMPLES_TOOL`
-    and the texts built on it), which names a hold-out scenario's cause; `baseline` keeps it
-    byte-identical until the question on it is settled.
+    and the texts built on it). The hold-out scenario whose cause it named is retired (Question
+    `MIT-640`), and the hold-out that replaced it is checked against the shipped text below. The
+    whole shipped text can't be held to this test yet: the grader's substring matching finds
+    generic cause words of other hold-outs in it ("removed", "naive", "view" in "reviews", "utc"
+    in "outcomes"). Changing their `cause_words` changes how they grade, a follow-up decision.
     """
     blocks = re.findall(r"```json\n(.*?)```", SKILL.read_text(encoding="utf-8"), re.DOTALL)
     calls = [block for block in blocks if '"symptom"' in block or '"query"' in block]
@@ -331,6 +338,50 @@ def test_no_example_names_a_scenarios_cause(where: str, example: str) -> None:
     assert every_cause_word() >= {"memory", "on exit", "default", "exporter"}
     named = {word for word in every_cause_word() if word in example.lower()}
     assert not named, where
+
+
+def shipped_text() -> str:
+    """Every surface of the shipped text, lowercased, as the fingerprint reads them."""
+    shipped = agent_text.VARIANTS["baseline"]
+    surfaces = (str(getattr(shipped, field.name) or "") for field in dataclasses.fields(shipped))
+    return "\n".join(surfaces).lower()
+
+
+def cause_words_in_shipped_text(scenario: Scenario) -> set[str]:
+    """The scenario's cause words the shipped text contains, matched the way the grader does."""
+    assert scenario.discovery is not None
+    return {word for word in scenario.discovery.cause_words if word.lower() in shipped_text()}
+
+
+def test_the_replacement_holdout_shares_no_cause_word_with_the_shipped_text() -> None:
+    assert cause_words_in_shipped_text(HOLDOUT["real-polars-explode-empty"]) == set()
+
+
+def test_the_retired_holdout_is_out_of_the_measured_set_because_the_shipped_text_names_it() -> None:
+    assert "real-whenever-ignore-dst" in RETIRED
+    assert "real-whenever-ignore-dst" not in HOLDOUT
+    assert "real-whenever-ignore-dst" not in SCENARIOS
+    assert "real-polars-explode-empty" in HOLDOUT
+    assert len(HOLDOUT) == 8  # the retired scenario was replaced, not dropped
+    # The check above, run on the retired scenario, finds its cause in the shipped example.
+    assert cause_words_in_shipped_text(WHENEVER_IGNORE_DST) == {
+        "0.11",
+        "removed",
+        "naive_arithmetic_ok",
+    }
+
+
+def test_the_retired_holdouts_old_results_still_load_and_report(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lines = agent_eval.LEDGER.read_text(encoding="utf-8").splitlines()
+    assert any(json.loads(line)["scenario"] in RETIRED for line in lines if line)
+    assert agent_eval.by_variant() == 0
+    monkeypatch.setattr(agent_eval, "RESULTS", agent_eval.REPO / "docs" / "eval")
+    assert agent_eval.report(argparse.Namespace(condition=["baseline-holdout"])) == 0
+    out = capsys.readouterr().out
+    assert "real-whenever-ignore-dst    5" in out
+    assert "real-whenever-ignore-dst is retired, not measured: the shipped `propose`" in out
 
 
 def test_no_draft_ships() -> None:
