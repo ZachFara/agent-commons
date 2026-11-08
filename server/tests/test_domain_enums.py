@@ -7,12 +7,14 @@ from psycopg import sql
 
 from commons.domain.entries import EntryStatus
 from commons.domain.outcomes import OutcomeKind
+from commons.domain.prompts import PromptKind
 from commons.domain.reporters import PRIVACY_DEFAULTS
 
 MIRRORS: dict[str, tuple[str, ...]] = {
     "privacy_default": PRIVACY_DEFAULTS,
     "entry_status": get_args(EntryStatus),
     "outcome_kind": get_args(OutcomeKind),
+    "prompt_kind": get_args(PromptKind),
 }
 
 
