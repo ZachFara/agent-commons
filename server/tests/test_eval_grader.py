@@ -257,7 +257,18 @@ def test_the_cause_words_grader_v2_skips_are_exactly_the_versions() -> None:
         for word in discovery.cause_words
         if is_version_word(word, discovery.library)
     }
-    assert skipped == {"9.2", "2.14", "0.0.45", "0.11", "polars 2", "3.14", "3.0", "2.1", "2.0"}
+    assert skipped == {
+        "9.2",
+        "2.14",
+        "0.0.45",
+        "0.11",
+        "polars 2",
+        "3.14",
+        "3.0",
+        "2.1",
+        "2.0",
+        "8.5",
+    }
 
 
 # A recorded session (2026-10-25, hard-sqlalchemy-autoflush), trimmed to what grading reads.
