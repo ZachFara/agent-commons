@@ -40,6 +40,8 @@ from tools.eval.scenarios import SCENARIOS  # noqa: E402
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tools.eval.model import Scenario
+
 RESULTS = REPO / ".scratch" / "eval"
 
 
@@ -47,6 +49,9 @@ def check() -> int:
     """Confirm each scenario's tests fail as shipped; report what's broken."""
     broken = 0
     for name, scenario in sorted(SCENARIOS.items()):
+        if scenario.outcome is not None:
+            broken += not check_outcome(name, scenario)
+            continue
         with tempfile.TemporaryDirectory() as tmp:
             project, site = Path(tmp) / "project", Path(tmp) / "site"
             runner.write_files(project, scenario.files)
@@ -68,6 +73,19 @@ def check() -> int:
         )
         print(f"{name:<26} {outcome}: {last}")
     return 1 if broken else 0
+
+
+def check_outcome(name: str, scenario: "Scenario") -> bool:
+    """Confirm a task with no tests is not done as shipped, with its app run and stopped."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project, site = Path(tmp) / "project", Path(tmp) / "site"
+        runner.write_files(project, scenario.files)
+        runner.write_files(site, scenario.libraries)
+        with runner.app_running(scenario, project, site):
+            pass
+        done = runner.outcome_holds(scenario, project, site)
+    print(f"{name:<26} {'UNEXPECTED: done as shipped' if done else 'not done as designed'}")
+    return not done
 
 
 def run(args: argparse.Namespace) -> int:
