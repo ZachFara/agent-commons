@@ -167,12 +167,121 @@ Each result and ledger line also records, in every arm and in `run` and `search`
 | `retrievals` | per retrieval under the session's task ids: `entry_id`, `rank`, `used`, `observed_outcome` (hook-observed), `reported`; empty without the commons |
 | `patch` | the agent's unified diff of non-test files against a pristine copy of the project made before the session |
 | `patch_hash` | 16 hex digits of sha256 over the same diff taken with whitespace removed and blank lines dropped, so whitespace-only differences share a hash |
+| `repeat` | which of `--runs` repeats of its task, arm and model the session was (1 to N); 0 outside `arms`. Unlike `run`, the same repeat pairs across arms |
 
 Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
 `conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:
 `.venv`, `node_modules`, `__pycache__`, the pytest, mypy, ruff and hypothesis caches, `build/`,
 `dist/`, `*.egg-info`, `*.pyc`, `.coverage*`, and `uv.lock` (which `uv run` creates). `trials` groups by arm too, and `effects` counts only
 `commons`-arm lines.
+
+### The experiment store
+
+Without `--store`, every session gets a fresh, empty database of its own. `arms --store NAME`
+builds on an experiment store instead: one database `NAME` on the local Postgres. The harness
+refuses a server that isn't `localhost` or `127.0.0.1` (the rule `scripts/test-db.sh` follows),
+so the store is never the live Commons database. The server is `COMMONS_EVAL_ADMIN_URL`
+(default `postgresql://commons:commons@localhost:5432/commons`).
+
+- **`--seed-wave`**: every session writes into `NAME` itself. The store is created if it
+  doesn't exist, migrated once per batch, and never dropped. A scenario's seeded entries are
+  added once, not once per session.
+- **Without `--seed-wave`** (the measured run): `NAME` must already exist. Each session runs in
+  `CREATE DATABASE <session db> TEMPLATE NAME`, which is dropped after grading. Every session
+  starts from what the seed wave left and the owner approved, and never sees another
+  session's work. Approve the wave's entries against the store first:
+  `COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/NAME uv run commons pending`,
+  then `commons review`.
+
+A store holds many sessions' work under the one `eval-agent` pseudonym. So grading counts a
+session's proposals, reports and retrievals by its own task ids: the tasks its hooks started
+under its Claude session ids, plus every task id it passed to a commons tool.
+
+### Counterfactuals
+
+`uv run python tools/agent_eval.py counterfactuals --condition X --store NAME` writes the
+DESIGN.md §7 pairs of an arms condition to `NAME`'s `counterfactual_runs`. It reads only the
+ledger and runs no session.
+
+- **Pairs**: `both` with `context7`, and `commons` with `none`, for the same task, repeat and
+  model.
+- **The entry**: the first retrieval the session with the commons used (`yes` or `partial`),
+  else its first retrieval. A pair whose session retrieved nothing writes no rows. A pair whose
+  entry isn't in `NAME` is skipped, and the command says so. If two ledger lines share an arm,
+  task, repeat and model, only the last is paired, with a warning.
+- **Rows**: two per pair, `with_entry` true and false. Both share
+  `task_id = uuid5(condition / task / repeat / model / pair)`, so writing a condition again
+  adds nothing (`UNIQUE (task_id, entry_id, with_entry)`).
+- **Fields**: `outcome` is `tests_passed` or `tests_failed`, from the harness's own test run
+  after the session. Tokens and wall clock come from each session's line.
+
+### The compare report
+
+`uv run python tools/agent_eval.py compare --condition X` (`make eval-compare
+EVAL_ARMS_CONDITION=X`) reads the ledger and prints these sections:
+
+- **Per arm and model**: sessions; pass rate with a 95% Wilson interval; tokens per success
+  (all `tokens_in + tokens_out` over passed sessions); median tokens; median wall clock; and,
+  for the Commons arms, how many sessions searched, found, used and proposed.
+- **The primary comparison**: `both` against `context7`, over the tasks both ran. This is the
+  pass-rate difference and the tokens-per-success ratio, each with a 95% paired-bootstrap
+  interval: tasks resampled with replacement, 10,000 resamples, seed 20261107.
+- **The verdict**: continue, kill or inconclusive, from `PASS_MARGIN`, `TOKEN_MARGIN` and
+  `PASS_FLOOR` in `tools/agent_eval.py`. The rule is in the Proposed arms record,
+  `docs/decisions/2026-11-07-MIT-565-github-task-arms.md`.
+- **Secondary comparisons**: `commons` against `none`, and `context7` against `none`.
+- **Herding**: per arm, the failed sessions, and for the Commons arms how many of them used a
+  retrieved entry. Also, the share of failed sessions whose patch is their task's most common
+  wrong patch (same `patch_hash`, at least two failed sessions sharing it; no patch never
+  counts).
+
+`compare` reads one condition only, so seed waves and `github-arms-same-task` never enter the
+`github-arms` verdict.
+
+### The GitHub-task arms run, fold by fold
+
+The Proposed arms record (`docs/decisions/2026-11-07-MIT-565-github-task-arms.md`) fixes the
+run. No task may be measured on entries its own sessions wrote, so the tasks are split once,
+before any seed wave: within each group of siblings (same `upstream_change`), sorted by name,
+tasks alternate between fold A and fold B; a task with no sibling goes to the same-task set.
+Each fold seeds its own store and is measured on the other fold's store:
+
+| Store | Seeded by | Measured on it | Measured condition |
+|---|---|---|---|
+| `commons_eval_store_a` | fold A | fold B | `github-arms` |
+| `commons_eval_store_b` | fold B | fold A | `github-arms` |
+| `commons_eval_store_same` | the same-task set | the same-task set | `github-arms-same-task` |
+
+`<A>`, `<B>` and `<same>` below are the fold lists from the record: `--scenario T` per task in
+`arms`, space-separated in `EVAL_ARMS_TASKS`.
+
+```
+# 1. Seed waves: the commons arm, once per task, into each fold's own store.
+uv run python tools/agent_eval.py arms --store commons_eval_store_a --seed-wave \
+  --arm commons --runs 1 --condition github-arms-seed-a <A>
+uv run python tools/agent_eval.py arms --store commons_eval_store_b --seed-wave \
+  --arm commons --runs 1 --condition github-arms-seed-b <B>
+uv run python tools/agent_eval.py arms --store commons_eval_store_same --seed-wave \
+  --arm commons --runs 1 --condition github-arms-seed-same <same>
+# 2. Review each store's pending entries (commons pending, then commons review), e.g.
+COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/commons_eval_store_a \
+  uv run commons pending
+# 3. Measured runs: each fold on the other fold's store.
+make eval-arms EVAL_STORE=commons_eval_store_b EVAL_ARMS_TASKS="<A>"
+make eval-arms EVAL_STORE=commons_eval_store_a EVAL_ARMS_TASKS="<B>"
+make eval-arms EVAL_STORE=commons_eval_store_same EVAL_ARMS_TASKS="<same>" \
+  EVAL_ARMS_CONDITION=github-arms-same-task
+# 4. The verdict (both folds), then the same-task set, reported apart.
+make eval-compare EVAL_ARMS_CONDITION=github-arms
+make eval-compare EVAL_ARMS_CONDITION=github-arms-same-task
+# Counterfactual pairs: once per measured store; each writes the pairs whose entry it holds.
+uv run python tools/agent_eval.py counterfactuals --condition github-arms --store commons_eval_store_b
+uv run python tools/agent_eval.py counterfactuals --condition github-arms --store commons_eval_store_a
+```
+
+`make eval-arms` runs all four arms, `EVAL_ARMS_RUNS` (3) times, under `EVAL_ARMS_CONDITION`
+(`github-arms`), on the tasks in `EVAL_ARMS_TASKS` and the store `EVAL_STORE`. It refuses to run
+without both. Ask the owner before running it, because it uses the subscription.
 
 ## Trial ledger
 
