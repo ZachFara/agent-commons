@@ -263,6 +263,58 @@ PIP_TOOLS = GitHubTask(
 )
 
 
+# Mistune 3.4.0 (2026-10-19) rewrote link parsing ("Refactor link and emphasis parsing",
+# lepture/mistune@bde6ad7, authored 2026-07-22, committed 2026-08-21): it parses a link's or an
+# image's label before it knows the text is a label, so inline plugins no longer see
+# `state.in_link` or `state.in_image` set while they run on it.
+# Release notes: https://github.com/lepture/mistune/releases/tag/v3.4.0
+MISTUNE_LINK_LABELS = Upstream(
+    library="mistune",
+    version="3.4.0",
+    released="2026-10-19",
+    changelog="https://github.com/lepture/mistune/releases/tag/v3.4.0",
+    upstream_change="mistune-3.4-label-parsed-first",
+)
+
+# Issue: none in the repository; the fix's pull request reports it: on mistune 3.4 a Jira
+# mention in link text or image alt text becomes a real mention node.
+# Fix: https://github.com/mbroton/marklassian-py/pull/26 (merged 2026-10-30): the converter, not
+# the mention plugin, decides link and image context. A merge commit: the base is its first
+# parent. The laid-over file's new test and five existing ones fail at the base on mistune 3.4.0;
+# the whole file passes at the base on 3.3.4 (checked). The file has no comments or docstrings
+# about mistune. Not `in_link` or `in_image`: the base's plugin reads them.
+MARKLASSIAN = GitHubTask(
+    name="gh-marklassian-link-labels",
+    repo="https://github.com/mbroton/marklassian-py",
+    base_commit="3ebadd312f4a3782512efb6bd9de8e75391cdf39",
+    fix_commit="89437cdbe9a74bac63535618f76ae5418aa6ae99",
+    issue_url="https://github.com/mbroton/marklassian-py/pull/26",
+    fix_url="https://github.com/mbroton/marklassian-py/pull/26",
+    test_paths=("tests/test_mentions.py",),
+    python="3.12",
+    pins=("mistune==3.4.0",),
+    setup=f"uv pip install --quiet {EXCLUDE_NEWER} -e . pytest==9.1.1 jsonschema",
+    test_command=tests("tests/test_mentions.py"),
+    upstream=MISTUNE_LINK_LABELS,
+    discovery=Discovery(
+        symptom_words=("mention", "link text", "alt text"),
+        # No phrase built on a bare "before" or "label" ("labels before", "parsed before"): a fix
+        # that only treats the symptom says them too ("strip mentions from the label before
+        # building the link mark"). Nothing with `in_link` or `in_image`: the base reads them.
+        cause_words=(
+            "parses link labels",
+            "parses link and image labels",
+            "before it knows",
+            "new link parser",
+            "3.4",
+        ),
+        library="mistune",
+    ),
+    trigger="version_specific",
+    license="MIT",
+)
+
+
 def scenario(task: GitHubTask) -> Scenario:
     """Return the scenario that replays a task: its project comes from the repository."""
     return Scenario(
@@ -276,6 +328,6 @@ def scenario(task: GitHubTask) -> Scenario:
     )
 
 
-TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA, PIP_TOOLS]
+TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA, PIP_TOOLS, MARKLASSIAN]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
