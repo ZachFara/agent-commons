@@ -503,9 +503,25 @@ SHIPPED = WIDER_TRIGGER
 VARIANTS["baseline"] = resolve(SHIPPED)
 
 
+def _variant_name() -> str:
+    return os.environ.get("COMMONS_INSTRUCTIONS_VARIANT", "baseline")
+
+
 def variant() -> Variant:
     """Return the variant named by COMMONS_INSTRUCTIONS_VARIANT, or the baseline."""
-    return resolve(os.environ.get("COMMONS_INSTRUCTIONS_VARIANT", "baseline"))
+    return resolve(_variant_name())
+
+
+def variant_label(*, turn_nudge: bool, record: bool) -> str:
+    """Name what the server serves, for its prompt version (decision MIT-566).
+
+    The variant name, the wording `baseline` or `previous` stands for (the alias moves when a
+    new text ships), and the extras switched on: `baseline:w-a0b4c7d1e0f1g1h0n0s1+record`.
+    """
+    name = _variant_name()
+    wording_of = {"baseline": SHIPPED, "previous": PREVIOUS_SHIPPED}.get(name)
+    label = name if wording_of is None else f"{name}:{wording_of}"
+    return label + ("+turn-nudge" if turn_nudge else "") + ("+record" if record else "")
 
 
 def fingerprint(shown: Variant) -> str:
