@@ -6,6 +6,7 @@ repository on disk); `gh` is a stub on PATH, since GitHub can't run locally.
 
 import io
 import json
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -588,6 +589,208 @@ def test_bash_guard_reads_message_files_from_disk(
     message.unlink()
     assert bash(command, repo, monkeypatch) == 2
     assert "can't read" in capsys.readouterr().err
+
+
+@pytest.fixture
+def other_repo(tmp_path: Path) -> Path:
+    """A second repository whose config holds an alias the working repo doesn't have."""
+    other = tmp_path / "other"
+    for directory in ("objects", "refs/heads"):
+        (other / ".git" / directory).mkdir(parents=True)
+    (other / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (other / ".git" / "config").write_text(
+        "[alias]\n\tup = !git push --force origin HEAD\n", encoding="utf-8"
+    )
+    return other
+
+
+@pytest.mark.usefixtures("agent_ticket", "other_repo")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c include.path=../other/.git/config up",
+        "git -c includeIf.gitdir:/.path=../other/.git/config up",
+        "git -c include.path=../other/.git/config status",  # it may set core.hooksPath
+        "git --config-env=include.path=CONFIG commit -m 'feat: x'",
+        "git config include.path ../other/.git/config",
+        "git config --add includeIf.onbranch:feat/x.path ../other/.git/config",
+        "git config set include.path ../other/.git/config",
+        "git --git-dir=../other/.git up",
+        "git --git-dir ../other/.git up",
+        "git --work-tree=../other up",
+        "git --bare up",
+        "GIT_DIR=../other/.git git up",
+        "GIT_CONFIG_PARAMETERS=\"'alias.up=!git push --force origin HEAD'\" git up",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.up GIT_CONFIG_VALUE_0='!sh' git up",
+        "GIT_CONFIG_GLOBAL=../other/.git/config git up",
+        "env HOME=../other git up",
+        "export GIT_CONFIG_GLOBAL=../other/.git/config; git up",
+        "GIT_DIR=../other/.git bash -c 'git up'",
+        "XDG_CONFIG_HOME=../other git -C . up",
+    ],
+)
+def test_bash_guard_denies_aliases_from_config_it_cant_read(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert capsys.readouterr().err.startswith("Blocked: ")
+
+
+@pytest.mark.usefixtures("agent_ticket", "other_repo")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git --git-dir=../other/.git log --oneline -5",  # builtins: no alias can shadow them
+        "GIT_DIR=../other/.git git status",
+        "HOME=../other git diff",
+        "git -c user.name=x commit -m 'feat: x'",
+        "git config --get include.path",
+        "git config --unset include.path",
+    ],
+)
+def test_bash_guard_allows_builtins_and_reading_includes(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'gh api graphql -f query="$Q"',
+        "gh api graphql -f query=$(cat .scratch/q.graphql)",
+        "gh api graphql -F query=`cat .scratch/q.graphql`",
+        "gh api graphql -fquery=${Q}",
+        "gh api graphql -f query='{ viewer { login } }' -f login=$LOGIN",
+    ],
+)
+def test_bash_guard_denies_substitution_in_graphql(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert bash(command, repo, monkeypatch) == 2
+    assert "gh api graphql uses shell substitution" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A heredoc elsewhere on the line doesn't feed this command.
+        "cat <<'EOF' > /dev/null\nfeat: x\nEOF\ncat .scratch/x.md | git commit -F -",
+        "cat <<'EOF'\nfeat: x\nEOF\ngh pr edit 12 --body-file - < .scratch/x.md",
+        # The heredoc feeds cat; git commit reads the pipe.
+        "cat <<'EOF' | git commit -F -\nfeat: x\nEOF",
+        # A pipe feeds the command, or a later redirection replaces the heredoc.
+        "printf 'feat: x' | git commit -F - <<'EOF'\nfeat: x\nEOF",
+        "git commit -F - <<'EOF' < .scratch/x.md\nfeat: x\nEOF",
+        # A typed `<<heredoc` with no end isn't a heredoc the guard has read.
+        "cat <<'EOF'\nx\nEOF\ngit commit -F - <<heredoc\nfeat: x",
+    ],
+)
+def test_bash_guard_wants_the_heredoc_on_the_command_that_reads_stdin(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "pass --body-file <path> or a heredoc" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_checks_the_rest_of_a_heredoc_line(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    body = "--body-file - <<'EOF'\nAdds the badge.\nEOF"
+    assert bash(f"gh pr create --base main --title x {body}", repo, monkeypatch) == 0
+    for rest in ("&& git push origin main", "; git push --force origin feat/x"):
+        assert bash(f"git commit -F - <<'EOF' {rest}\nfeat: x\nEOF", repo, monkeypatch) == 2
+        assert "push" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        'gh pr create --base main --head "$BRANCH" --title x --body y',
+        "gh pr create --base main --title x --body y --head=$(git branch --show-current)",
+        "gh pr create --base main -t x -b y -H `git branch --show-current`",
+        'git push origin "$BRANCH"',
+        "git push -u origin feat/x:$TARGET",
+        "git push origin HEAD:$(echo main)",
+        "git push origin `echo main`",
+        "git push $REMOTE",
+        "git commit -m `cat .scratch/x.md`",
+        "gh pr edit 12 --title=x`cat .scratch/x.md`",
+    ],
+)
+def test_bash_guard_denies_substitution_in_heads_and_pushes(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "shell substitution" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_allows_backticks_outside_checked_text(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash("echo `git rev-parse --show-toplevel`", repo, monkeypatch) == 0
+    assert bash("echo `git rev-parse HEAD`; git push -u origin HEAD", repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "path",
+    ["/dev/null", "/dev/zero", ".scratch", ".scratch/fifo", ".scratch/zero", "~no-such-user/x.md"],
+)
+@pytest.mark.parametrize("template", ["git commit -F {path}", "gh pr edit 12 --body-file {path}"])
+def test_bash_guard_reads_only_regular_message_files(
+    template: str,
+    path: str,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scratch = repo / ".scratch"
+    scratch.mkdir()
+    os.mkfifo(scratch / "fifo")  # nothing writes it: a blocking read would hang the guard
+    (scratch / "zero").symlink_to("/dev/zero")
+    assert bash(template.format(path=path), repo, monkeypatch) == 2
+    assert "can't read" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_caps_the_message_file_it_reads(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    message = repo / ".scratch" / "msg.txt"
+    message.parent.mkdir()
+    message.write_text("feat: x\n" + "a" * (bash_guard.MAX_MESSAGE_BYTES - 8), encoding="utf-8")
+    assert bash("git commit -F .scratch/msg.txt", repo, monkeypatch) == 0
+    message.write_text("feat: x\n" + "a" * bash_guard.MAX_MESSAGE_BYTES, encoding="utf-8")
+    assert bash("git commit -F .scratch/msg.txt", repo, monkeypatch) == 2
+    assert "larger than 1 MiB" in capsys.readouterr().err
+
+
+def test_bash_guard_denies_a_nul_byte(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert bash("git commit -m 'feat: x\0'", repo, monkeypatch) == 2
+
+
+@pytest.mark.parametrize(("stdin", "error"), [("not json", ValueError), ("[]", TypeError)])
+def test_bash_guard_crashes_rather_than_allowing(
+    stdin: str, error: type[Exception], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash never returns 0: python exits 1, which the entry script turns into a block.
+
+    test_settings_wire_each_hook_to_an_entry_script checks that `|| exit 2`.
+    """
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+    with pytest.raises(error):
+        bash_guard.main()
 
 
 # ------------------------------------------------------------------------------- wiring
