@@ -6,6 +6,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -272,3 +273,106 @@ def test_a_long_test_command_is_still_observed(app: Starlette, db: psycopg.Conne
         (task_id,),
     ).fetchall()
     assert runs == [(2000,)]
+
+
+def assistant(message_id: str, at: datetime, tokens_in: int, tokens_out: int) -> str:
+    """A transcript line with usage; the input is split as Claude Code records it."""
+    usage = {
+        "input_tokens": 1,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": tokens_in - 1,
+        "output_tokens": tokens_out,
+    }
+    message = {"id": message_id, "model": "claude-remote-1", "usage": usage}
+    return json.dumps({"type": "assistant", "timestamp": at.isoformat(), "message": message}) + "\n"
+
+
+def retrieved_session(
+    app: Starlette, db: psycopg.Connection, pseudonym: str
+) -> tuple[RemoteBackend, str, str, uuid.UUID, datetime]:
+    """A remote session that retrieved one entry: backend, key, session, retrieval, when."""
+    key = create_key(db, pseudonym, admin=False)
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None)
+    reporter = find_reporter(db, pseudonym)
+    assert reporter is not None
+    word = f"cost{uuid.uuid4().hex[:8]}"
+    factories.entry(db, reporter, symptom=word, fix=FIX)
+    with acting_as(reporter):
+        search_service.search(db, SearchRequest(word, task_id, None, 5), "claude-x")
+    (item,) = backend.retrievals(session)
+    return backend, key, session, item.retrieval_id, item.retrieved_at
+
+
+def stored_cost(db: psycopg.Connection, retrieval_id: uuid.UUID) -> tuple[Any, ...] | None:
+    return db.execute(
+        "SELECT tokens_in, tokens_out, wall_clock_seconds FROM outcomes WHERE retrieval_id = %s",
+        (retrieval_id,),
+    ).fetchone()
+
+
+@pytest.mark.usefixtures("state")
+def test_the_cost_after_a_retrieval_crosses_the_wire_as_numbers(
+    app: Starlette, db: psycopg.Connection, tmp_path: Path
+) -> None:
+    backend, _key, session, retrieval_id, at = retrieved_session(app, db, "cost-remote")
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        assistant("msg_old", at - timedelta(minutes=1), 999, 999)
+        + assistant("msg_a", at + timedelta(seconds=5), 100, 7)
+        + assistant("msg_a", at + timedelta(seconds=6), 100, 7)  # same message, streamed
+        + assistant("msg_b", at + timedelta(seconds=20), 50, 3),
+        encoding="utf-8",
+    )
+
+    hook_client.on_stop(backend, session, str(transcript))
+
+    assert stored_cost(db, retrieval_id) == (150, 10, 20.0)
+
+    hook_client.on_stop(backend, session, None)  # no transcript: the cost is kept, not cleared
+    assert stored_cost(db, retrieval_id) == (150, 10, 20.0)
+
+
+@pytest.mark.usefixtures("state")
+def test_a_stop_without_cost_leaves_it_untouched(app: Starlette, db: psycopg.Connection) -> None:
+    _backend, key, session, retrieval_id, _at = retrieved_session(app, db, "cost-old-hooks")
+    cost = {"tokens_in": 12, "tokens_out": 3, "wall_clock_seconds": 4.5}
+    used = {str(retrieval_id): "no"}
+    body = {
+        "session_id": session,
+        "used": used,
+        "matched_at": {},
+        "cost": {str(retrieval_id): cost},
+    }
+    assert post(app, key, "stop", body).status_code == 200
+    assert stored_cost(db, retrieval_id) == (12, 3, 4.5)
+
+    assert post(app, key, "stop", {"session_id": session, "used": used}).status_code == 200
+    assert stored_cost(db, retrieval_id) == (12, 3, 4.5)
+
+
+@pytest.mark.parametrize(
+    "cost",
+    [
+        {"tokens_in": -1, "tokens_out": 0, "wall_clock_seconds": 0},
+        {"tokens_in": 1.5, "tokens_out": 0, "wall_clock_seconds": 0},
+        {"tokens_in": True, "tokens_out": 0, "wall_clock_seconds": 0},
+        {"tokens_in": 2**31, "tokens_out": 0, "wall_clock_seconds": 0},
+        {"tokens_in": 0, "tokens_out": 0, "wall_clock_seconds": -0.5},
+        {"tokens_in": 0, "tokens_out": 0, "wall_clock_seconds": "1"},
+        {"tokens_in": 0, "tokens_out": 0},
+        {"tokens_in": 0, "tokens_out": 0, "wall_clock_seconds": 0, "transcript": "text"},
+        [1, 2, 3],
+    ],
+)
+def test_only_numeric_costs_are_accepted(
+    app: Starlette, db: psycopg.Connection, cost: object
+) -> None:
+    key = create_key(db, "strict-cost", admin=False)
+    session = str(uuid.uuid4())
+    post(app, key, "session-start", {"session_id": session})
+    body = {"session_id": session, "used": {}, "cost": {str(uuid.uuid4()): cost}}
+    response = post(app, key, "stop", body)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_input"
