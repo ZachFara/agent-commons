@@ -111,6 +111,58 @@ TEKORE = GitHubTask(
 )
 
 
+# Pydantic 2.14.0 (2026-10-08) added a required `validate_by_alias` argument to the private
+# helper `pydantic._internal._signature._field_name_for_signature`: pydantic/pydantic#13730,
+# merged 2026-08-29. Release notes: https://github.com/pydantic/pydantic/releases/tag/v2.14.0
+PYDANTIC_SIGNATURE_HELPER = Upstream(
+    library="pydantic",
+    version="2.14.0",
+    released="2026-10-08",
+    changelog="https://github.com/pydantic/pydantic/releases/tag/v2.14.0",
+    upstream_change="pydantic-2.14-field-name-for-signature",
+)
+
+# Issue: https://github.com/pydantic/pydantic-settings/issues/1023 (2026-10-09): `CliApp.run`
+# raises TypeError for any plain BaseModel command.
+# Fix: https://github.com/pydantic/pydantic-settings/pull/1029 (squash-merged 2026-10-13):
+# `CliApp.run` maps fields to init kwargs itself instead of calling the private helper.
+# Only the new `validate_by_name_only` test runs: it passes at the base on Pydantic 2.13.5
+# (checked) and fails on 2.14.0. The PR's alias test also fails at the base on 2.13.5 (a
+# non-identifier alias never worked), so it is left out.
+# The TypeError names the missing argument, so it points at a fix: not a hard-set task under
+# decision 0023. Cause words name the change, not the helper or the argument. Not "private" or
+# "signature": the traceback ends in `pydantic/_internal/_signature.py`, so a fix that only
+# describes the symptom would say them.
+PYDANTIC_SETTINGS = GitHubTask(
+    name="gh-pydantic-settings-signature",
+    repo="https://github.com/pydantic/pydantic-settings",
+    base_commit="10dc635dc3160f4414e4c50b65605729274c9afc",
+    fix_commit="f0dd3824b3cdacd65a4bda730a9754a1cfdcda13",
+    issue_url="https://github.com/pydantic/pydantic-settings/issues/1023",
+    fix_url="https://github.com/pydantic/pydantic-settings/pull/1029",
+    test_paths=("tests/test_source_cli.py",),
+    python="3.12",
+    pins=("pydantic==2.14.0",),
+    setup=f"uv pip install --quiet {EXCLUDE_NEWER} -e . pytest==9.1.1",
+    test_command=tests(
+        "tests/test_source_cli.py::test_cli_app_run_base_model_validate_by_name_only"
+    ),
+    upstream=PYDANTIC_SIGNATURE_HELPER,
+    discovery=Discovery(
+        symptom_words=(
+            "TypeError",
+            "_field_name_for_signature",
+            "validate_by_alias",
+            "missing 1 required positional argument",
+        ),
+        cause_words=("2.14", "added a required", "new required"),
+        library="pydantic",
+    ),
+    trigger="version_specific",
+    license="MIT",
+)
+
+
 # Polars 2.0.0 (2026-10-06; first release candidate 2026-09-02): a lazy query's collect now
 # runs on the streaming engine, which doesn't keep a join's row order unless the join passes
 # `maintain_order`. Upgrade guide, "The Lazy API defaults to the streaming engine":
@@ -167,6 +219,6 @@ def scenario(task: GitHubTask) -> Scenario:
     )
 
 
-TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, MLODA]
+TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
