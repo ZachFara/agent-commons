@@ -1,0 +1,115 @@
+# GitHub-task arms: the run, fixed before it starts
+Status: Proposed (MIT-617 for Commons ticket MIT-565; the run waits for question MIT-619)
+Date: 2026-11-07
+
+Context: The Proposed kill-criterion record (`2026-11-07-MIT-567-kill-criterion.md`, on its
+own branch) defines when to stop building agent-facing features. Its recommended option (a)
+compares a Commons arm with a Context7 arm on real GitHub tasks. The harness for that run is
+built on `feature/MIT-565-github-tasks`. It has the GitHub task records, four arms with their
+tokens, retrievals and patches, an experiment store, counterfactual pairs, and the `compare`
+report. This record fixes everything the verdict depends on before any session runs, so no
+number can be argued after it is seen. Question MIT-619, on the task-set size and the store,
+is still open. **The run waits for its answer.** The run counts below are the recommended
+defaults until then.
+
+Decision:
+1. **Arms.** All four (`tools/eval/runner.py`, `ARM_SERVERS`):
+   - `both`: the Commons plus Context7 (the kill-criterion record's Commons arm);
+   - `context7`: Context7 alone (its Context7 arm);
+   - `commons`: the Commons alone;
+   - `none`: blind, no MCP server.
+
+   The **primary comparison**, the only one that decides, is `both` against `context7`. The
+   secondary comparisons, `commons` against `none` and `context7` against `none`, are
+   reported and decide nothing.
+2. **Tasks and run counts (recommended defaults, pending MIT-619).** Every task in
+   `tools/eval/github_tasks.py`: 10-20 accepted tasks (`docs/eval/README.md`, "GitHub tasks").
+   Each task runs **3 times in each arm** (`EVAL_ARMS_RUNS=3`) on **one model, Sonnet**. That
+   is 4 × 3 × tasks sessions, 240 at 20 tasks. Sessions are interleaved task × arm × repeat,
+   and each records its repeat, so the same repeat of a task pairs across arms.
+3. **Store.** One experiment store, `commons_eval_store`, on the local Postgres. The harness
+   refuses any database not on `localhost` or `127.0.0.1` (the rule `scripts/test-db.sh`
+   follows). It is never the live Commons database.
+   - The **seed wave** writes every session into the store itself
+     (`arms --store commons_eval_store --seed-wave`). The store is created and migrated if it
+     doesn't exist, and is never dropped.
+   - Then the owner reviews what the wave proposed, against the store:
+     `COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/commons_eval_store uv run commons pending`,
+     then `commons review`. Search shows only approved entries, so this review is what the
+     measured run can find.
+   - In the **measured run** (`make eval-arms`), each session gets its own
+     `CREATE DATABASE ... TEMPLATE commons_eval_store`. The clone is dropped after grading.
+     Every session starts from the same reviewed store and never sees another measured
+     session's work.
+   - Grading counts a session's proposals and reports by its own task ids: the tasks its hooks
+     started under its Claude session ids, plus every task id it passed to a commons tool.
+     It never counts by the shared `eval-agent` pseudonym.
+4. **Seeding.** As in the kill-criterion record (§7). The wave runs the `commons` arm once on
+   sibling tasks: tasks hit by the same upstream change (the same `upstream_change`), split
+   into folds, so no task is measured on entries its own sessions wrote.
+   ```
+   uv run python tools/agent_eval.py arms --store commons_eval_store --seed-wave \
+     --arm commons --runs 1 --condition github-arms-seed --scenario <each sibling task>
+   ```
+   Some tasks have no sibling. For those, the wave runs on the same task, and they are measured
+   as their own condition, `github-arms-same-task`, so `compare` reports them apart and they
+   never enter the verdict.
+5. **Pass.** A session passes when the harness's own test run after the session passes
+   (`tests_pass`). Hook outcomes, the Commons' outcome rows and agent self-reports are not
+   used.
+6. **Tokens.** A session's tokens are `tokens_in + tokens_out`: input, cache creation, cache
+   read and output tokens, summed over every result event (one per turn). **Tokens per
+   success** is all the tokens an arm spent on the compared tasks, divided by its passed
+   sessions.
+7. **Interval.** A paired bootstrap over tasks. Only tasks that both arms ran are compared.
+   Each resample draws that many tasks with replacement and keeps every session of a drawn
+   task, in both arms, together. Then it recomputes the pass-rate difference and the
+   tokens-per-success ratio. There are 10,000 resamples (`BOOTSTRAP_RESAMPLES`) with seed
+   20261107 (`BOOTSTRAP_SEED`), so the same ledger always gives the same interval. The
+   interval is the 2.5th to 97.5th percentile. If more than one model ran, models are pooled
+   and tasks stay the resampling unit.
+8. **Margins.** These are the kill-criterion record's option (a), as named constants in
+   `tools/agent_eval.py`:
+   - `PASS_MARGIN = 0.10`: a pass rate at least 10 points higher;
+   - `TOKEN_MARGIN = 0.80`: tokens per success at least 20% lower;
+   - `PASS_FLOOR = -0.05`: and in that case, a pass rate no more than 5 points lower.
+
+   The verdict is one of three:
+   - **Continue** if the pass-rate difference is at least `PASS_MARGIN` and its interval
+     lies above zero. Or if the tokens ratio is at most `TOKEN_MARGIN`, its interval lies
+     below 1, and the pass-rate difference is at least `PASS_FLOOR`.
+   - **Kill** if the intervals rule out both margins. The pass-rate interval's top must be
+     below `PASS_MARGIN`. The tokens interval's bottom must be above `TOKEN_MARGIN`, or the
+     pass-rate interval's top below `PASS_FLOOR`.
+   - **Inconclusive** otherwise.
+9. **The verdict command.** After the measured run, the verdict is the `verdict:` line of
+   ```
+   make eval-compare EVAL_ARMS_CONDITION=github-arms
+   ```
+   which runs `uv run python tools/agent_eval.py compare --condition github-arms`. It reads
+   only the committed ledger, `docs/eval/trials.jsonl`. Lines marked `invalid` are not
+   counted. Errored sessions never reach the ledger, and `RESUME=1` runs them again.
+10. **Reported, not deciding.** `compare` also prints:
+    - per arm and model: sessions, the pass rate with a 95% Wilson interval, tokens per
+      success, median tokens and median wall clock, and, for the Commons arms, how many
+      sessions searched, found, used and proposed;
+    - the two secondary comparisons;
+    - herding. That is the failed sessions with the Commons whose retrieved entry was used,
+      and, per arm, the share of failed sessions whose patch is their task's most common wrong
+      patch (by `patch_hash`, when at least two failed sessions share it).
+
+    `agent_eval.py counterfactuals --condition github-arms --store commons_eval_store` writes
+    the DESIGN.md §7 pairs to `counterfactual_runs` for the per-entry effect estimates later.
+    The pairs are `both` with `context7` and `commons` with `none`, for the same task, repeat
+    and model.
+
+Consequences: Once MIT-619 is answered and this record is accepted, the run is three commands:
+the seed wave, the review, and `make eval-arms`. The verdict comes from one command that reads
+only the ledger. At 3 runs × 20 tasks the pass-rate interval is about ±12 points, wide next to
+a 10-point margin. So inconclusive is a likely and honest answer, and it calls for more tasks,
+not a looser margin. Clones keep the measured sessions independent, but every session sees
+the same seeded entries. A bad entry approved in the review can mislead every Commons session
+at once, which the herding section is there to show. Pooling models hides a difference between
+them. The default run has one model, so pooling only matters if MIT-619 adds one. If the two
+Proposed records end up disagreeing on a margin, the kill-criterion record wins, and the
+constants change before the run, never after.
