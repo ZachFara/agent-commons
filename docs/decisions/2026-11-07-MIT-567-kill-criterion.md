@@ -30,6 +30,8 @@ Decision:
    - (b) The same rule at +5 points / 10% lower tokens.
    - (c) Tokens only. Continue if the Commons arm's tokens per passed task are at least
      15-20% lower, with the interval excluding zero. Pass rate does not decide.
+   - (d) Continue on any improvement in either metric whose 95% paired-bootstrap interval
+     excludes zero.
 6. **Sample size.** At 3 runs × 20 tasks per arm, the pass-rate interval is about ±12 points.
    That is wide next to a 10-point margin. There is also a ceiling: in decision 0023 agents
    fixed every bug, so both arms may pass nearly everything. If so, tokens per passed task
@@ -50,7 +52,8 @@ Decision:
 Consequences: The run has a fixed rule before any number is seen, so a result cannot be argued
 after the fact. Option (a) can return inconclusive at this sample size; that is the honest
 answer, and it calls for more tasks, not a looser margin. Option (c) bets on the ceiling: it
-ignores pass rate, so it could continue even if the Commons arm passed fewer tasks. Cross-fold seeding needs tasks that share an
-upstream change; if few do, most results carry the seeded-from-the-same-task label, which
+ignores pass rate, so it could continue even if the Commons arm passed fewer tasks. Option
+(d) is the most permissive: it could keep a feature line alive on a trivial gain. Cross-fold
+seeding needs tasks that share an upstream change; if few do, most results carry the seeded-from-the-same-task label, which
 overstates the benefit. We'd revisit the margin if the task set grows past 20 or the ceiling
 makes pass rate useless.
