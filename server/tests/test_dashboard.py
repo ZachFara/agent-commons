@@ -12,12 +12,17 @@ from starlette.testclient import TestClient
 
 import factories
 from commons.domain import prompts
+from commons.domain.entries import Proposal
 from commons.service import agent_text
+from commons.service.keys import issue_key
 from commons.service.ranking import rank
+from commons.service.seeds import SEED_MODEL, SEED_REPORTER
 from commons.store import insights
 from commons.store.connection import Connection
+from commons.store.models import model_id
 from commons.store.prompt_versions import prompt_version_id
 from commons.store.reporters import upsert_reporter
+from commons.store.seeds import insert_seed_entry
 from commons.store.tasks import start_task
 from commons.web import app as web
 from mcp_client import call
@@ -238,6 +243,14 @@ FIGURES = (
 )
 
 
+def hosted_client(db: psycopg.Connection) -> TestClient:
+    @contextmanager
+    def test_connection() -> Iterator[Connection]:
+        yield db
+
+    return TestClient(web.build_app(test_connection, hosted=True), base_url=BASE)
+
+
 def by_version(db: psycopg.Connection) -> dict[uuid.UUID | None, dict[str, Any]]:
     return {row["id"]: row for row in insights.prompt_versions(db)}
 
@@ -322,6 +335,64 @@ def test_rows_from_before_versioning_share_one_line(
     assert after["tasks"] == before["tasks"] + 1
     assert after["short_hash"] is None
     assert client.get("/prompts").text.count("before versioning") == 1
+
+
+def test_seeded_and_imported_entries_leave_every_prompt_version_row_alone(
+    db: psycopg.Connection,
+) -> None:
+    before = by_version(db)
+    seed = insert_seed_entry(
+        db,
+        uuid.uuid4(),
+        Proposal(
+            symptom="ModuleNotFoundError: prompts-seed",
+            environment={"language": "python 3.12"},
+            cause="A seed.",
+            fix="Install it.",
+            domains=("test",),
+            repro=None,
+            task_id=uuid.UUID(int=0),
+        ),
+        upsert_reporter(db, SEED_REPORTER, "entry"),
+        model_id(db, SEED_MODEL),
+    )
+    assert seed
+    key = issue_key(db, f"importer-{uuid.uuid4().hex[:6]}", "agent").key
+    imported = hosted_client(db).post(
+        "/api/hooks/import",
+        json={
+            "entry": {
+                "symptom": "RuntimeError: prompts-import lost its event loop",
+                "environment": {"language": "python 3.12"},
+                "cause": "The loop closed first.",
+                "fix": "Keep the loop open.",
+                "domains": ["test"],
+            },
+            "imported_from": {
+                "local_entry_id": str(uuid.uuid4()),
+                "model": "claude-opus-5-5",
+                "created_at": "2026-01-02T03:04:05+00:00",
+            },
+        },
+        headers={"authorization": f"Bearer {key}"},
+    )
+    assert imported.status_code == 200
+    # The import's fresh task_id is on the entry only: no tasks row exists for it.
+    row = db.execute(
+        "SELECT e.task_id, EXISTS (SELECT 1 FROM tasks t WHERE t.id = e.task_id) FROM entries e "
+        "WHERE e.id = %s",
+        (imported.json()["entry_id"],),
+    ).fetchone()
+    assert row
+    assert row[0] is not None
+    assert not row[1]
+    # Later than anything else in the store, so last_seen would move if they counted.
+    db.execute(
+        "UPDATE entries SET created_at = now() + interval '1 day' "
+        "WHERE symptom LIKE '%%prompts-seed' OR symptom LIKE '%%prompts-import%%'"
+    )
+
+    assert by_version(db) == before
 
 
 def test_hook_versions_are_listed_apart_with_tasks_and_reporters(

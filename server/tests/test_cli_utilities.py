@@ -1,6 +1,6 @@
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,12 +8,14 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
+from starlette.testclient import TestClient
 
 import factories
 from commons.cli.main import main
 from commons.domain.errors import StoreUnavailableError
 from commons.service import doctor
 from commons.service.hook_install import install_hooks
+from commons.service.keys import issue_key
 from commons.store.connection import Connection
 from commons.store.migrate import apply_migrations
 from commons.store.reporters import upsert_reporter
@@ -164,9 +166,10 @@ def test_prompts_prints_one_line_per_version(
     assert "no prompt versions recorded yet" not in out
 
 
-def test_prompts_with_no_versions_says_so(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+@pytest.fixture
+def fresh_store(home: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """A migrated database of its own, empty, that the CLI on `home` points at."""
+    del home
     name = f"commons_prompts_{uuid.uuid4().hex[:10]}"
     with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
@@ -175,11 +178,59 @@ def test_prompts_with_no_versions_says_so(
         with psycopg.connect(url) as conn:
             apply_migrations(conn)
         monkeypatch.setenv("COMMONS_DATABASE_URL", url)
-        assert main(["prompts"]) == 0
-        assert capsys.readouterr().out == "no prompt versions recorded yet\n"
+        yield url
     finally:
         with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
             admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+
+
+def test_prompts_with_no_versions_says_so(
+    fresh_store: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    del fresh_store
+    assert main(["prompts"]) == 0
+    assert capsys.readouterr().out == "no prompt versions recorded yet\n"
+
+
+def test_prompts_leaves_seeded_and_imported_entries_out(
+    fresh_store: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    old = datetime(2026, 1, 2, tzinfo=UTC)
+    with psycopg.connect(fresh_store) as conn:
+        reporter = upsert_reporter(conn, "prompts-agent", "entry")
+        version = factories.prompt_version(conn, "cli-before-seeds")
+        factories.entry(conn, reporter, status="pending", task_id=uuid.uuid4(), created_at=old)
+        factories.search(conn, reporter, uuid.uuid4(), prompt_version_id=version, created_at=old)
+        key = issue_key(conn, "prompts-importer", "agent").key
+    assert main(["prompts"]) == 0
+    before = capsys.readouterr().out
+    assert before.startswith("before versioning  2026-01-02 to 2026-01-02  tasks 1 ")
+    assert "proposals 1 (0 approved)\n" in before
+
+    assert main(["init", "--pseudonym", "prompts-seeder"]) == 0
+    assert "seed entries" in capsys.readouterr().out
+    imported = TestClient(web.build_app(hosted=True)).post(
+        "/api/hooks/import",
+        json={
+            "entry": {
+                "symptom": "RuntimeError: prompts-import lost its event loop",
+                "environment": {"language": "python 3.12"},
+                "cause": "The loop closed first.",
+                "fix": "Keep the loop open.",
+                "domains": ["test"],
+            },
+            "imported_from": {
+                "local_entry_id": str(uuid.uuid4()),
+                "model": "claude-opus-5-5",
+                "created_at": old.isoformat(),
+            },
+        },
+        headers={"authorization": f"Bearer {key}"},
+    )
+    assert imported.status_code == 200
+
+    assert main(["prompts"]) == 0
+    assert capsys.readouterr().out == before
 
 
 class ImmediateTimer:
