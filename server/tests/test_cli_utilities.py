@@ -6,6 +6,8 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 import factories
 from commons.cli.main import main
@@ -13,8 +15,10 @@ from commons.domain.errors import StoreUnavailableError
 from commons.service import doctor
 from commons.service.hook_install import install_hooks
 from commons.store.connection import Connection
+from commons.store.migrate import apply_migrations
 from commons.store.reporters import upsert_reporter
 from commons.web import app as web
+from conftest import ADMIN_URL
 
 
 def unreachable() -> Connection:
@@ -123,6 +127,57 @@ def test_show_prints_an_entry_and_unknown_ids_fail(
     assert any("repro:       python -c 'x'" in line for line in out)
     assert main(["show", str(uuid.uuid4())]) == 1
     assert "No entry" in capsys.readouterr().err
+
+
+def test_prompts_prints_one_line_per_version(
+    home: Path, database_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    del home
+    label = f"cli-{uuid.uuid4().hex[:6]}"
+    task_id = uuid.uuid4()
+    with psycopg.connect(database_url) as conn:
+        reporter = upsert_reporter(conn, f"prompts-{uuid.uuid4().hex[:6]}", "entry")
+        version = factories.prompt_version(conn, label)
+        other = factories.prompt_version(conn, f"{label}-next")
+        entry_id = factories.entry(conn, reporter)
+        factories.search(conn, reporter, task_id, prompt_version_id=version, hit_count=0)
+        factories.retrieval(
+            conn, entry_id, reporter, task_id, {"used": "partial"}, prompt_version_id=version
+        )
+        factories.search(conn, reporter, task_id, prompt_version_id=other)
+        rows = conn.execute(
+            "SELECT label, left(hash, 12) FROM prompt_versions WHERE label LIKE %s",
+            (f"{label}%",),
+        ).fetchall()
+        hashes: dict[str, str] = dict(rows)
+    assert main(["prompts"]) == 0
+    out = lines(capsys)
+    (line,) = [line for line in out if line.startswith(f"{hashes[label]}  {label}  ")]
+    assert "tasks 1 (1 straddled a change)" in line
+    assert "searches 1 (1 found nothing)" in line
+    assert "retrievals 1  reported 0% of 1  used 100% of 1  observed success - of 0" in line
+    assert line.endswith("proposals 0 (0 approved)")
+    (line,) = [line for line in out if line.startswith(hashes[f"{label}-next"])]
+    assert "tasks 0 (0 straddled a change)  searches 1 (0 found nothing)" in line
+    assert "no prompt versions recorded yet" not in out
+
+
+def test_prompts_with_no_versions_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    name = f"commons_prompts_{uuid.uuid4().hex[:10]}"
+    with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    try:
+        url = make_conninfo(ADMIN_URL, dbname=name)
+        with psycopg.connect(url) as conn:
+            apply_migrations(conn)
+        monkeypatch.setenv("COMMONS_DATABASE_URL", url)
+        assert main(["prompts"]) == 0
+        assert capsys.readouterr().out == "no prompt versions recorded yet\n"
+    finally:
+        with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
 class ImmediateTimer:

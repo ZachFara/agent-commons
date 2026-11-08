@@ -475,6 +475,34 @@ def _mine(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _prompts(_args: argparse.Namespace) -> int:
+    with connect() as conn:
+        versions = insights.prompt_versions(conn)
+    for v in versions:
+        name = f"{v['short_hash']}  {v['label']}" if v["id"] else "before versioning"
+        seen = f"{_day(v['first_seen'])} to {_day(v['last_seen'])}"
+        sys.stdout.write(
+            f"{name}  {seen}  tasks {v['tasks']} ({v['straddled']} straddled a change)  "
+            f"searches {v['searches']} ({v['misses']} found nothing)  "
+            f"retrievals {v['retrievals']}  "
+            f"reported {_rate(v['reported_rate'], v['retrievals'])}  "
+            f"used {_rate(v['used_rate'], v['used_n'])}  "
+            f"observed success {_rate(v['observed_success_rate'], v['observed_n'])}  "
+            f"proposals {v['proposals']} ({v['approved']} approved)\n"
+        )
+    if not any(v["id"] for v in versions):
+        sys.stdout.write("no prompt versions recorded yet\n")
+    return 0
+
+
+def _day(when: datetime | None) -> str:
+    return "-" if when is None else f"{when:%Y-%m-%d}"
+
+
+def _rate(rate: float | None, n: int) -> str:
+    return f"- of {n}" if rate is None else f"{rate:.0%} of {n}"
+
+
 def _rank(_args: argparse.Namespace) -> int:
     with connect() as conn:
         count = ranking.rank(conn)
@@ -551,6 +579,7 @@ COMMANDS: dict[str, Command] = {
     "search": Command("Preview search results (no retrieval logged).", _search, _search_arguments),
     "show": Command("Show one entry.", _show, _show_arguments),
     "mine": Command("Show your own entries and what happened to them.", _mine),
+    "prompts": Command("Show outcomes per served prompt version.", _prompts),
     "rank": Command("Write ranking snapshots (runs daily on its own).", _rank),
     "queue-check": Command(
         "Exit 1 if the review queue's oldest item is too old.", _queue_check, _queue_check_arguments
