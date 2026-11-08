@@ -52,7 +52,8 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
     """Build the server. `connection` opens a database connection per tool call.
 
     Hosted servers require an API key on every request (decision 0018). `search` and `propose`
-    record the prompt version hashed below from the same objects FastMCP serves (MIT-566).
+    record the prompt version hashed below from the same objects FastMCP serves (MIT-566),
+    and every tool call's log line and span carry its short hash (MIT-608).
     """
     shown = agent_text.variant()
     empty_note = shown.invite_note or UNTRUSTED_NOTE
@@ -190,7 +191,7 @@ def build_server(connection: ConnectionFactory = connect, *, hosted: bool = Fals
     server = FastMCP(
         "commons",
         instructions=shown.instructions,
-        middleware=[CallLog(), StructuredValidationErrors()],
+        middleware=[CallLog(version.hash), StructuredValidationErrors()],
         mask_error_details=True,
         auth=ApiKeyVerifier(connection) if hosted else None,
         tools=tools,
