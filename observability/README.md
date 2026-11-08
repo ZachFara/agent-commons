@@ -74,7 +74,7 @@ back after the fact:
 
 | `event` | When | Fields |
 |---|---|---|
-| `tool_call` | every MCP tool call | tool, reporter id, task id, model, ok, error code, result count, ms |
+| `tool_call` | every MCP tool call | tool, reporter id, task id, model, prompt (the served prompt version's hash, first 12 characters), ok, error code, result count, ms |
 | `hook_call` | every hook API call from a session | hook, key handle, status, error code, task id, ms |
 | `key_refused` | a presented key was revoked, expired, unknown or lacked the scope | where, problem, key handle |
 | `admin_action` | a review, edit, retirement, merge, correction, exclusion, purge, key minted or revoked | action, ok, result or error, acting key id |

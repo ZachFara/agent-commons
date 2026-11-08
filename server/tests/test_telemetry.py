@@ -34,6 +34,7 @@ from commons.store.connection import Connection
 from commons.web.app import build_app
 from commons.web.telemetry import REDACTED
 from mcp_client import call
+from test_call_log import recorded_prompt
 from test_hosted_server import mcp_status
 
 QUERY = "zyxwvut frobnicator exploded in qwertyuiop"
@@ -167,7 +168,7 @@ def test_an_endpoint_turns_on_the_otlp_exporters(monkeypatch: pytest.MonkeyPatch
 
 
 def test_a_tool_call_leaves_a_span_a_sample_and_a_line_that_share_a_trace(
-    server: FastMCP, reporter: uuid.UUID, captured: Captured
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID, captured: Captured
 ) -> None:
     del reporter
     task_id = str(uuid.uuid4())
@@ -181,6 +182,7 @@ def test_a_tool_call_leaves_a_span_a_sample_and_a_line_that_share_a_trace(
         TOOL_NAME: "search",
         "commons.task_id": task_id,
         "commons.model": "claude-opus-5-5",
+        "commons.prompt": recorded_prompt(db, task_id),
         "commons.results": 0,
     }
     assert span.status.status_code is StatusCode.UNSET
@@ -222,6 +224,21 @@ def test_a_refused_call_is_marked_with_its_error_code(
     assert attributes_of(captured.call_span("search"))["commons.error"] == "invalid_input"
     failed = {TOOL_NAME: "search", "error.type": "invalid_input"}
     assert any(dict(p.attributes or {}) == failed for p in captured.points(TOOL_HISTOGRAM))
+
+
+def test_a_call_rejected_on_argument_shape_carries_the_prompt_version(
+    server: FastMCP, db: psycopg.Connection, reporter: uuid.UUID, captured: Captured
+) -> None:
+    del reporter
+    task_id = str(uuid.uuid4())
+    call(server, "search", {"query": QUERY, "task_id": task_id})
+    captured.clear()
+    result = call(server, "propose", {"symptom": QUERY, "task_id": task_id})
+    assert result["error"]["code"] == "invalid_input"
+
+    attributes = attributes_of(captured.call_span("propose"))
+    assert attributes["commons.error"] == "invalid_input"
+    assert attributes["commons.prompt"] == recorded_prompt(db, task_id)
 
 
 def test_http_spans_are_named_by_route_and_carry_no_query_string(
