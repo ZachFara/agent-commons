@@ -153,12 +153,14 @@ def test_prompts_prints_one_line_per_version(
     assert main(["prompts"]) == 0
     out = lines(capsys)
     (line,) = [line for line in out if line.startswith(f"{hashes[label]}  {label}  ")]
+    # The task began under `version`, so its later search counts there too.
     assert "tasks 1 (1 straddled a change)" in line
-    assert "searches 1 (1 found nothing)" in line
+    assert "searches 2 (1 found nothing)" in line
     assert "retrievals 1  reported 0% of 1  used 100% of 1  observed success - of 0" in line
     assert line.endswith("proposals 0 (0 approved)")
     (line,) = [line for line in out if line.startswith(hashes[f"{label}-next"])]
-    assert "tasks 0 (0 straddled a change)  searches 1 (0 found nothing)" in line
+    assert "tasks 0 (0 straddled a change)  searches 0 (0 found nothing)" in line
+    assert out[-1].startswith("every figure counts under the version of its task's earliest")
     assert "no prompt versions recorded yet" not in out
 
 

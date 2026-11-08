@@ -4,7 +4,7 @@
 {% macro rate(v, n) %}{{ pct(v) }} <span class="muted">n={{ n }}</span>{% endmacro %}
 {% macro when(t) %}{{ t.strftime("%b %d, %Y %H:%M") if t else "–" }}{% endmacro %}
 {% block content %}
-<header class="page"><div><h1>Prompts</h1><div class="sub">Outcomes by the server text agents were served: instructions, tool definitions and notes, hashed. A task counts under the version of its earliest search or proposal. Excluded rows don't count. All time.</div></div></header>
+<header class="page"><div><h1>Prompts</h1><div class="sub">Outcomes by the server text agents were served: instructions, tool definitions and notes, hashed. Every figure follows the task: a task and all of its searches, retrievals, outcomes and proposals count under the version of its earliest search or proposal, since a session keeps reading the text it started with. Rows with no task count under their own version. First and last seen use each row's own version. Excluded rows don't count. All time.</div></div></header>
 <section class="card"><h2>Versions <span class="hint">oldest first</span></h2>
   {% if versions %}<div class="table-wrap"><table>
   <thead><tr><th>Version</th><th>First seen</th><th>Last seen</th><th class="num">Tasks</th><th class="num">Straddled a change</th><th class="num">Searches</th><th class="num">Found nothing</th><th class="num">Retrievals</th><th class="num">Agent reported</th><th class="num">Used</th><th class="num">Observed success</th><th class="num">Proposals</th><th class="num">Approved</th></tr></thead><tbody>

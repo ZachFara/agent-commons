@@ -248,7 +248,8 @@ def test_prompts_page_breaks_outcomes_down_by_version(
     old = factories.prompt_version(db, f"old-{uuid.uuid4().hex[:6]}", "<script>alert(1)</script>")
     new = factories.prompt_version(db, f"new-{uuid.uuid4().hex[:6]}")
     straddler, plain, proposer, dropped = (uuid.uuid4() for _ in range(4))
-    # A task that began under `old` and searched again after a change counts once, under `old`.
+    # A task that began under `old` and went on after a change counts once, under `old`, with
+    # all of its rows: the agent kept reading the text it started with.
     entry_id = factories.entry(
         db, reporter, task_id=straddler, prompt_version_id=old, created_at=at(0)
     )
@@ -262,7 +263,14 @@ def test_prompts_page_breaks_outcomes_down_by_version(
     factories.retrieval(
         db, entry_id, reporter, straddler, worked, prompt_version_id=old, created_at=at(1)
     )
-    factories.search(db, reporter, straddler, prompt_version_id=new, hit_count=0, created_at=at(2))
+    later = {"prompt_version_id": new, "created_at": at(2)}
+    factories.search(db, reporter, straddler, hit_count=0, **later)
+    factories.retrieval(db, entry_id, reporter, straddler, {"used": "partial"}, **later)
+    factories.entry(
+        db, reporter, status="pending", task_id=straddler, prompt_version_id=new, created_at=at(2)
+    )
+    # A proposal with no task counts under its own stamp.
+    factories.entry(db, reporter, status="pending", prompt_version_id=new, created_at=at(5))
     factories.search(db, reporter, plain, prompt_version_id=new, created_at=at(3))
     factories.retrieval(
         db, entry_id, reporter, plain, {"used": "no"}, prompt_version_id=new, created_at=at(3)
@@ -277,8 +285,8 @@ def test_prompts_page_breaks_outcomes_down_by_version(
     factories.retrieval(db, entry_id, reporter, dropped, worked, **gone)
 
     rows = by_version(db)
-    assert [rows[old][k] for k in FIGURES] == [1, 1, 1, 0, 1, 1.0, 1.0, 1, 1.0, 1, 1, 1]
-    assert [rows[new][k] for k in FIGURES] == [2, 0, 2, 1, 2, 0.0, 0.0, 1, None, 0, 1, 0]
+    assert [rows[old][k] for k in FIGURES] == [1, 1, 2, 1, 2, 0.5, 1.0, 2, 1.0, 1, 2, 1]
+    assert [rows[new][k] for k in FIGURES] == [2, 0, 1, 0, 2, 0.0, 0.0, 1, None, 0, 2, 0]
     assert (rows[old]["first_seen"], rows[old]["last_seen"]) == (at(0), at(1))
     assert (rows[new]["first_seen"], rows[new]["last_seen"]) == (at(2), at(5))
 

@@ -492,6 +492,11 @@ def _prompts(_args: argparse.Namespace) -> int:
         )
     if not any(v["id"] for v in versions):
         sys.stdout.write("no prompt versions recorded yet\n")
+    else:
+        sys.stdout.write(
+            "every figure counts under the version of its task's earliest search or proposal; "
+            "first and last seen use each row's own version\n"
+        )
     return 0
 
 
@@ -579,7 +584,7 @@ COMMANDS: dict[str, Command] = {
     "search": Command("Preview search results (no retrieval logged).", _search, _search_arguments),
     "show": Command("Show one entry.", _show, _show_arguments),
     "mine": Command("Show your own entries and what happened to them.", _mine),
-    "prompts": Command("Show outcomes per served prompt version.", _prompts),
+    "prompts": Command("Show outcomes per served prompt version, attributed by task.", _prompts),
     "rank": Command("Write ranking snapshots (runs daily on its own).", _rank),
     "queue-check": Command(
         "Exit 1 if the review queue's oldest item is too old.", _queue_check, _queue_check_arguments
