@@ -57,12 +57,16 @@ Implementation notes (T48, 2026-10-31):
 Amendment (owner, 2026-11-08): human-approved entries that keep failing are reopened.
 - Decision 0028 sent back only provisional entries whose outcomes mostly failed. Now a
   human-approved entry goes back to the review queue too, when its counted outcomes in the last
-  90 days hold 3 or more failures and more failures than successes.
+  90 days hold 3 or more failures, from 2 or more distinct reporters, and more failures than
+  successes.
 - The outcomes counted are those ranking weighs (decision 0017): used yes or partial, with a
-  known result (not unknown or abandoned), split on the success outcomes. Excluded rows, and so
-  test-key rows (0030), drop out through the `counted_*` views. Only outcomes since the entry's
-  latest reopen count, so evidence that reopened it once can't reopen it again after a human
-  approves it.
+  known result (not unknown or abandoned), split on the success outcomes. On top of that, as
+  0028's provisional rule does, only hook-observed outcomes count, and the author's own
+  retrievals are left out. The rule overrides a human, so self-reported outcomes, the author's
+  outcomes, or a single reporter's outcomes can't pull an entry from search. Excluded rows,
+  and so test-key rows (0030), drop out through the `counted_*` views. Only outcomes since the
+  entry's latest reopen count, so evidence that reopened it once can't reopen it again after a
+  human approves it.
 - It reuses 0028's reopen: a `reopen` review with source `auto` and reason "kept failing when
   used, after human approval (0026)". The entry becomes pending, leaves search, and waits in
   the queue as unreviewed. A human approve puts it back in search.
