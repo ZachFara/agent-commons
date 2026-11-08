@@ -1160,6 +1160,8 @@ def test_bash_guard_denies_when_it_cant_read_the_current_branch(
         'echo "$(echo \'a" # b\')"; git push origin main',
         'echo "${x:-$(echo " #")}"; git push origin main',
         "echo \"$(date)\" # '\ngit push origin main\n# '",
+        "echo \"$(date)\";# '\ngit push origin main\necho \\'",
+        'echo "$(#\'\ngit push origin main\n)"',
         'echo "a # b"; git push origin main',
     ],
 )
@@ -1180,6 +1182,7 @@ def test_bash_guard_drops_only_real_comments(
         "git push -u origin HEAD # don't force it",
         "make check  # run tests\ngit commit -m 'feat: x'",
         "git commit -m \"$(cat <<'EOF'\nfix: thing\nEOF\n)\"",
+        "git commit -m \"$(cat <<'EOF'\nfix: thing\n\n## Learned\nNothing.\nEOF\n)\"",
     ],
 )
 def test_bash_guard_ignores_comments(

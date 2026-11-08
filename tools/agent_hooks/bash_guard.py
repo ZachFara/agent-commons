@@ -96,7 +96,6 @@ QUOTE_OPENERS: dict[str, tuple[str, ...]] = {
     "`": (),
 }
 QUOTE_CLOSERS = {"'": "'", "$'": "'", '"': '"', "`": "`", "${": "}"}
-WORD_START_HASH = re.compile(r"(?<!\S)#")  # a `#` at the start or after whitespace
 SEPARATORS = ";&|()`\n"
 PUNCTUATION = SEPARATORS + "<>"
 WRAPPERS = frozenset(
@@ -260,10 +259,10 @@ def opening(text: str, index: int, context: str) -> str:
 def rest_after_substitution(rest: str) -> str:
     """Return the text from a `$(` inside quotes on, which bash re-parses: kept as it is.
 
-    Raise ValueError if a `#` starts a word in it: that may be a comment, and kept, it may hide
-    a command inside what reads as a quote.
+    Raise ValueError if it holds any `#`: that may start a comment (after a space, `;`, a
+    backtick, `$(`...), and kept, it may hide a command inside what reads as a quote.
     """
-    if WORD_START_HASH.search(rest):
+    if "#" in rest:
         msg = "can't tell where a comment starts after $( inside quotes; simplify the command"
         raise ValueError(msg)
     return rest
