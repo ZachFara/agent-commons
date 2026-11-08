@@ -302,18 +302,27 @@ def every_cause_word() -> set[str]:
 
 
 def examples() -> dict[str, str]:
-    """The draft's added worked example and the skill's `search` and three `propose` examples.
+    """The draft's added worked example and the skill's `search`, `propose` and `report` examples.
+
+    The `search` and three `propose` blocks are checked whole. Of the `report` block only its
+    free text, `agent_assessment`, is checked: its field name `outcome` contains the cause word
+    "utc", and neither that name nor the enum value `tests_passed` can hint at a cause.
 
     Exempt: the shipped worked example (the whenever `ignore_dst` case in `PROPOSE_EXAMPLES_TOOL`
     and the texts built on it), which names a hold-out scenario's cause; `baseline` keeps it
-    byte-identical until the question on it is settled. The `report` example is left out too: its
-    field name `outcome` contains the cause word "utc".
+    byte-identical until the question on it is settled.
     """
     blocks = re.findall(r"```json\n(.*?)```", SKILL.read_text(encoding="utf-8"), re.DOTALL)
     calls = [block for block in blocks if '"symptom"' in block or '"query"' in block]
     assert len(calls) == 4
+    reports = [json.loads(block) for block in blocks if '"agent_assessment"' in block]
+    assert len(reports) == 1
     skill = {f"skill example {n}": block for n, block in enumerate(calls, start=1)}
-    return {"propose-example": agent_text.APP_EXAMPLE, **skill}
+    return {
+        "propose-example": agent_text.APP_EXAMPLE,
+        **skill,
+        "skill report example": reports[0]["agent_assessment"],
+    }
 
 
 @pytest.mark.parametrize(("where", "example"), examples().items())

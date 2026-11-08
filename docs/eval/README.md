@@ -422,9 +422,10 @@ comparable with later ones.
 
 The skill's version-change example is PyJWT 2 returning `jwt.encode()` as str, not bytes,
 instead of the shipped whenever `ignore_dst` case, which is the cause of the hold-out scenario
-`real-whenever-ignore-dst`. The skill's `search` and three `propose` examples and the one in
-`propose-example` were checked against every measured scenario's cause and `cause_words`; a test
-fails if one of them names any scenario's cause word. They replace the first draft's examples,
+`real-whenever-ignore-dst`. The skill's `search` and three `propose` examples, the free text of
+its `report` example (`agent_assessment`), and the example in `propose-example` were checked
+against every measured scenario's cause and `cause_words`; a test fails if one of them names any
+scenario's cause word. They replace the first draft's examples,
 which shared a mechanism and cause words with the two no-test discovery scenarios (an in-memory
 overwrite, and a default that beats a setting) and the hold-out. The shipped server text still
 carries the whenever example, since `baseline` stays byte-identical.
