@@ -102,7 +102,7 @@ def check_output(
     task: GitHubTask, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> tuple[int, str]:
     monkeypatch.setattr(tools.agent_eval, "SCENARIOS", {task.name: scenario(task)})
-    status = tools.agent_eval.check()
+    status = tools.agent_eval.check(on_host=True)  # the container runner: test_eval_container.py
     return status, capsys.readouterr().out
 
 
@@ -219,8 +219,8 @@ def test_setup_and_the_test_command_run_without_credentials(
     task = replace(task, setup=CREDENTIAL_SETUP)
     project = tmp_path / "project"
     repos.materialize(task, project)
-    repos.prepare(task, project)
-    tests = repos.run_tests(task, project)
+    repos.prepare(task, project, repos.run_on_host)
+    tests = repos.run_tests(task, project, repos.run_on_host)
     assert tests.returncode == 0, tests.stderr
 
 
@@ -239,7 +239,7 @@ def test_run_one_writes_the_materialized_tree(
         return []
 
     def fake_grade(session: runner.Session, _events: object) -> runner.Result:
-        tests = repos.run_tests(task, session.project)
+        tests = repos.run_tests(task, session.project, repos.run_on_host)
         return replace(graded(session.scenario.name), tests_pass=tests.returncode == 0)
 
     monkeypatch.setattr(runner, "run_session", fake_session)

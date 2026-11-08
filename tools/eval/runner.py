@@ -881,7 +881,7 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
     with psycopg.connect(url) as conn:
         activity = session_activity(conn, session_ids, used_ids)
     tests = (
-        repos.run_tests(scenario.repo, project)
+        repos.graded_tests(scenario.repo, project)
         if scenario.repo is not None
         else subprocess.run(
             scenario.test_command.split(),
@@ -1009,7 +1009,9 @@ def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: b
             write_files(workdir / "site", scenario.libraries)
             if scenario.repo is not None:
                 repos.materialize(scenario.repo, project)
-                repos.prepare(scenario.repo, project)
+                # The agent works on this machine, so its .venv is set up here; the graded run
+                # sets up its own in a container (`repos.graded_tests`).
+                repos.prepare(scenario.repo, project, repos.run_on_host)
             pristine = Path(tmp) / "pristine"
             shutil.copytree(  # symlinks are copied as symlinks, never followed
                 project,

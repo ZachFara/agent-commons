@@ -5,18 +5,27 @@ Both commits are fetched once, shallow and by sha, into a bare cache under
 fix's versions of the task's test paths laid over it: the base-to-fix diff of those paths,
 applied to the base. It holds no `.git` and no remote, so the agent can't read the fix from
 history or push anywhere. The fix commit has to be in the cache to supply those test files.
+
+A task's install and tests run through an `Execute`: `container.run` (a throwaway container,
+which `check` and grading use) or `run_on_host` (this machine, as this user: `check --on-host`,
+and the setup a session's agent works in).
 """
 
 import io
+import os
 import re
 import shlex
+import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
 from tools.agent_hooks.state import GIT_REPO_VARIABLES, git_environment
+from tools.eval import container
 from tools.eval.model import GitHubTask
 
 CACHE = Path.home() / ".cache" / "agent-commons-eval" / "repos"
@@ -38,6 +47,8 @@ DISALLOWED_TOOLS = ("Bash(git push*)", "Bash(gh *)", "Bash(uv run git*)", "Bash(
 SHA = re.compile(r"[0-9a-f]{40}")
 PIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\],-]*==[^=\s]+")
 PYTHON = re.compile(r"\d+\.\d+(\.\d+)?")
+# Runs a command in a project, in an install or a test phase, and returns how it went.
+Execute = Callable[[list[str], Path, container.Phase], "subprocess.CompletedProcess[str]"]
 
 
 def _locked(env: dict[str, str], gh_config: Path) -> dict[str, str]:
@@ -112,25 +123,68 @@ def materialize(task: GitHubTask, project: Path) -> None:
     _extract(bare, task.fix_commit, project, task.test_paths)
 
 
-def prepare(task: GitHubTask, project: Path) -> None:
-    """Create the project's .venv on the pinned Python, run the setup, then install the pins."""
+def run_on_host(
+    command: list[str], project: Path, _phase: container.Phase
+) -> "subprocess.CompletedProcess[str]":
+    """Run a command in project on this machine, as this user, without credentials."""
+    return subprocess.run(
+        command, cwd=project, env=environment(), capture_output=True, text=True, check=False
+    )
+
+
+def prepare(task: GitHubTask, project: Path, execute: Execute) -> None:
+    """Create the project's .venv on the pinned Python, run the setup, then install the pins.
+
+    Raises `CalledProcessError` (with its stderr) for the first step that fails.
+    """
     commands = [["uv", "venv", "--quiet", "--python", task.python], shlex.split(task.setup)]
     if task.pins:
         commands.append(["uv", "pip", "install", "--quiet", *task.pins])
     for command in commands:
-        run(command, project)
+        done = execute(command, project, "install")
+        if done.returncode != 0:
+            raise subprocess.CalledProcessError(done.returncode, command, done.stdout, done.stderr)
 
 
-def run_tests(task: GitHubTask, project: Path) -> "subprocess.CompletedProcess[str]":
+def run_tests(
+    task: GitHubTask, project: Path, execute: Execute
+) -> "subprocess.CompletedProcess[str]":
     """Run the task's test command in project."""
-    return subprocess.run(
-        shlex.split(task.test_command),
-        cwd=project,
-        env=environment(),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    return execute(shlex.split(task.test_command), project, "test")
+
+
+def graded_tests(task: GitHubTask, project: Path) -> "subprocess.CompletedProcess[str]":
+    """Run the task's tests on the project an agent edited, in a container: the graded run.
+
+    A copy of the project, without the .venv the agent worked in on this machine, is set up
+    afresh and tested. A setup that fails counts as failing tests.
+    """
+    with tempfile.TemporaryDirectory(prefix=f"commons-eval-grade-{task.name}-") as tmp:
+        copy = Path(tmp) / "project"
+        # Symlinks are copied as symlinks: in the container they point at nothing of this machine.
+        shutil.copytree(project, copy, symlinks=True, ignore=_left_out)
+        try:
+            prepare(task, copy, container.run)
+        except subprocess.CalledProcessError as error:
+            return subprocess.CompletedProcess(
+                error.cmd, error.returncode, error.stdout, error.stderr
+            )
+        return run_tests(task, copy, container.run)
+
+
+def _left_out(directory: str, names: list[str]) -> set[str]:
+    """Return what the graded copy leaves out: the agent's .venv, and anything odd.
+
+    Anything not a file, directory, or symlink is left out: copying a FIFO the agent left
+    would wait on it forever.
+    """
+    kept = (stat.S_ISREG, stat.S_ISDIR, stat.S_ISLNK)
+    return {
+        name
+        for name in names
+        if name == ".venv"
+        or not any(kind(os.lstat(Path(directory) / name).st_mode) for kind in kept)
+    }
 
 
 def problems(task: GitHubTask) -> list[str]:
@@ -166,12 +220,12 @@ def _is_date(text: str) -> bool:
     return True
 
 
-def check(task: GitHubTask) -> tuple[bool, str]:
+def check(task: GitHubTask, execute: Execute) -> tuple[bool, str]:
     """Confirm the task's tests fail on the agent's project and pass on the fix's tree."""
     if found := problems(task):
         return False, "BROKEN record: " + "; ".join(found)
     try:
-        failing, passing = _before_and_after(task)
+        failing, passing = _before_and_after(task, execute)
     except subprocess.CalledProcessError as error:
         return False, f"BROKEN: `{shlex.join(error.cmd)}` failed: {_last(error.stderr)}"
     verdicts = [
@@ -183,16 +237,16 @@ def check(task: GitHubTask) -> tuple[bool, str]:
 
 
 def _before_and_after(
-    task: GitHubTask,
+    task: GitHubTask, execute: Execute
 ) -> "tuple[subprocess.CompletedProcess[str], subprocess.CompletedProcess[str]]":
     """Run the tests on the materialized project and on the fix's whole tree."""
     with tempfile.TemporaryDirectory(prefix=f"commons-eval-check-{task.name}-") as tmp:
         before, after = Path(tmp) / "before", Path(tmp) / "after"
         materialize(task, before)
         _extract(fetch(task), task.fix_commit, after)
-        prepare(task, before)
-        prepare(task, after)
-        return run_tests(task, before), run_tests(task, after)
+        prepare(task, before, execute)
+        prepare(task, after, execute)
+        return run_tests(task, before, execute), run_tests(task, after, execute)
 
 
 def _last(output: object) -> str:
