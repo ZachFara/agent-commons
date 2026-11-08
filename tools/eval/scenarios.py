@@ -654,18 +654,18 @@ CONTROL_DOCUMENTED_FLAG = Scenario(
 
 VAULTAPP_README = """# vaultapp 1.4
 
-A local, plain-text notes app. A vault is a folder of Markdown notes; vaultapp keeps its own
-files in `.vaultapp/` inside it.
+A local, plain-text notes app. It opens a folder of Markdown notes and keeps its own files in
+`.vaultapp/` inside that folder.
 
-    python3 -m vaultapp serve       # open the vault in the current folder
-    python3 -m vaultapp status      # is the app open on this vault?
+    python3 -m vaultapp serve       # open the notes in the current folder
+    python3 -m vaultapp status      # is the app open on this folder?
 
 ## Plugins
 
-Each plugin lives in `.vaultapp/plugins/<id>/`: `manifest.json` describes it and `data.json`
-holds its settings.
+Each plugin has its own folder under `.vaultapp/plugins/`, with a manifest and a JSON file of
+its settings.
 
-Change a plugin's settings in Settings > Community plugins, or from a shell:
+Change a plugin's settings in the app's settings window, or from a shell:
 
     python3 -m vaultapp config get <plugin> <key>
     python3 -m vaultapp config set <plugin> <key> <value>
