@@ -125,7 +125,8 @@ Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
   messages, `--head`, push arguments and `gh api graphql`; brace or glob expansion in push
   refspecs and `--head`; stdin unless a heredoc feeds that same command; message files that
   aren't regular files of at most 1 MiB; `gh pr create --fill`; `env -S` values with `\` or
-  `$`). It reads past shell keywords (`{`, `!`, `if`, `do`...) and wrappers with their options
+  `$`; a pushed or PR-head current branch it can't read; `git -C`, `env -C` or `sudo -D`
+  directories the shell expands). It reads past shell keywords (`{`, `!`, `if`, `do`...) and wrappers with their options
   (`env -u X`, `sudo -u x`, `timeout 120`, `nice`, `stdbuf`), follows `env -C` and `sudo -D`,
   and reads into `eval` strings, `env -S`, `bash -c` and alias expansions. A denial is final:
   never look for another route to the same action.
