@@ -6,7 +6,8 @@
   <form class="filters" method="get" action="/entries">
     <input type="search" name="q" value="{{ query or '' }}" placeholder="Search entries or a domain" aria-label="Search">
     <select name="status" aria-label="Status"><option value="">Any status</option>
-      {% for s in ["approved", "pending", "rejected", "retired"] %}<option value="{{ s }}" {{ "selected" if s == status_filter }}>{{ s }}</option>{% endfor %}</select>
+      {% for s in ["approved", "pending", "rejected", "retired"] %}<option value="{{ s }}" {{ "selected" if s == status_filter }}>{{ s }}</option>{% endfor %}
+      <option value="provisional" {{ "selected" if status_filter == "provisional" }}>live without review</option></select>
     <select name="order" aria-label="Order">{% for value, label in [("score", "Best score"), ("used", "Most retrieved"), ("newest", "Newest")] %}<option value="{{ value }}" {{ "selected" if value == order }}>{{ label }}</option>{% endfor %}</select>
     <button class="primary">Apply</button>
   </form></header>

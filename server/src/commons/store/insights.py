@@ -60,6 +60,15 @@ LEFT JOIN LATERAL (
 ) s ON true
 """
 
+_LIVE_UNREVIEWED = (
+    "e.status = 'approved' AND e.provisional AND NOT e.human_reviewed AND NOT e.sampled"
+)
+"""Entries that went live provisionally without review, as a condition on `entries e`.
+
+A trusted contributor's entry is approved at once; only a sampled one waits in the queue
+(`IN_QUEUE`, decision 0028). These are the rest, findable with the `provisional` filter.
+"""
+
 _ENTRIES = (
     """
 SELECT e.id, e.created_at, e.status::text AS status, e.human_reviewed, e.symptom, e.domains,
@@ -70,13 +79,14 @@ JOIN reporters rp ON rp.id = e.created_by
 """
     + _LATEST_SNAPSHOT
     + """
-WHERE (%(status)s::text IS NULL OR e.status::text = %(status)s)
+WHERE (%(status)s::text IS NULL OR e.status::text = %(status)s
+       OR (%(status)s = 'provisional' AND {live_unreviewed}))
   AND (%(query)s::text IS NULL OR e.symptom ILIKE %(like)s OR e.cause ILIKE %(like)s
        OR e.fix ILIKE %(like)s OR %(query)s = ANY(e.domains))
 ORDER BY {order} NULLS LAST, e.created_at DESC
 LIMIT %(limit)s
 """
-)
+).replace("{live_unreviewed}", _LIVE_UNREVIEWED)
 
 _ORDERS = {
     "score": "s.score DESC",
@@ -101,10 +111,19 @@ def outcome_mix(conn: Connection) -> list[Row]:
     return _rows(conn, _OUTCOME_MIX, {})
 
 
+def live_unreviewed(conn: Connection) -> int:
+    """Count the entries that went live provisionally without review."""
+    query = "SELECT count(*) AS n FROM entries e WHERE {live}".replace("{live}", _LIVE_UNREVIEWED)
+    return int(_rows(conn, query, {})[0]["n"])
+
+
 def entries(
     conn: Connection, *, status: str | None, query: str | None, order: str, limit: int = 200
 ) -> list[Row]:
-    """Entries with their latest ranking snapshot, filtered and ordered."""
+    """Entries with their latest ranking snapshot, filtered and ordered.
+
+    `status` is an entry status, or `provisional` for those that went live without review.
+    """
     text = _ENTRIES.replace("{order}", _ORDERS.get(order, _ORDERS["score"]))
     params = {"status": status, "query": query, "like": f"%{query}%", "limit": limit}
     return _rows(conn, text, params)
