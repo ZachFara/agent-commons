@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from commons.cli.main import main
+from commons.service import agent_text
 from commons.service.hooks import StopResult
 from hook_env import HookEnv
 
@@ -63,3 +64,47 @@ def test_stop_reason_is_unchanged(monkeypatch: pytest.MonkeyPatch, case: str) ->
     monkeypatch.setattr("commons.service.hook_client.on_stop", lambda *_args: result)
     payload = {"session_id": str(uuid.uuid4()), "stop_hook_active": False}
     assert hook_stdout(monkeypatch, "stop", payload) == FIXTURES["stop"][case]
+
+
+def every_hook_text() -> list[agent_text.Variant]:
+    """Every named variant, and the shipped wording with each SessionStart line."""
+    wordings = (
+        agent_text.resolve(agent_text.SHIPPED.replace("g1", f"g{option}"))
+        for option in range(len(agent_text.START_LINES))
+    )
+    return [*agent_text.VARIANTS.values(), *wordings]
+
+
+def test_a_server_recognizes_every_hook_version_this_code_ships() -> None:
+    for shown in every_hook_text():
+        version = agent_text.hook_version(shown)
+        assert version.kind == "hooks"
+        assert agent_text.reported_hook_version(version.hash[:12]) == version
+        assert len(version.label) <= 120
+
+
+def test_only_the_start_line_and_nudge_make_a_new_hook_version() -> None:
+    versions = {
+        name: agent_text.hook_version(agent_text.VARIANTS[name]) for name in START_VARIANTS[:4]
+    }
+    nudge = agent_text.hook_version(agent_text.VARIANTS["nudge"])
+    assert agent_text.hook_version(agent_text.VARIANTS["examples"]) == versions["original"]
+    assert versions["baseline"] == versions["previous"]
+    hashes = {versions["baseline"].hash, versions["original"].hash, versions["start"].hash}
+    assert len(hashes | {nudge.hash}) == 4
+    assert nudge.surfaces == {
+        "session_start": agent_text.SESSION_START,
+        "report_reminder": agent_text.REPORT_REMINDER,
+        "nudge": agent_text.NUDGE,
+    }
+    assert versions["original"].label == "original, examples, rule, invite"
+
+
+def test_a_hash_no_release_shows_is_unrecognized() -> None:
+    version = agent_text.reported_hook_version("0123456789ab")
+    assert (version.label, version.surfaces, version.hash, version.kind) == (
+        "unrecognized",
+        None,
+        "0123456789ab",
+        "hooks",
+    )

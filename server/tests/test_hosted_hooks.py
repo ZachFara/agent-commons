@@ -17,13 +17,14 @@ from starlette.testclient import TestClient
 
 import factories
 from commons.cli.main import main
+from commons.domain.keys import KeyOptions
 from commons.domain.observations import ToolUse
 from commons.domain.search import SearchRequest
-from commons.service import hook_client
+from commons.service import agent_text, hook_client
 from commons.service import search as search_service
 from commons.service.hook_client import RemoteBackend
 from commons.service.identity import acting_as
-from commons.service.keys import create_key
+from commons.service.keys import create_key, issue_key
 from commons.service.local_state import cached_frequencies, read_spool
 from commons.store.connection import Connection
 from commons.store.reporters import find_reporter
@@ -31,6 +32,8 @@ from commons.web import app as web
 from commons.web.app import build_app
 
 FIX = "Pin `markupsafe<2.1` and run `pip check`."
+HOOK_VERSION = agent_text.hook_version(agent_text.VARIANTS["baseline"])
+HOOK_SHORT = HOOK_VERSION.hash[:12]
 
 
 @pytest.fixture
@@ -68,7 +71,7 @@ def test_a_session_end_to_end_over_http(app: Starlette, db: psycopg.Connection) 
     key = create_key(db, "remote-dev", admin=False)
     backend = RemoteBackend(client(app, key))
     session = str(uuid.uuid4())
-    task_id = hook_client.on_session_start(backend, session, None)
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
 
     reporter = find_reporter(db, "remote-dev")
     assert reporter is not None
@@ -110,7 +113,7 @@ def test_hooks_from_before_0036_are_recorded_unpaired(
     key = create_key(db, "old-hooks", admin=False)
     backend = RemoteBackend(client(app, key))
     session = str(uuid.uuid4())
-    task_id = hook_client.on_session_start(backend, session, None)
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
     reporter = find_reporter(db, "old-hooks")
     assert reporter is not None
     word = f"oldhooks{uuid.uuid4().hex[:8]}"
@@ -262,7 +265,7 @@ def test_a_long_test_command_is_still_observed(app: Starlette, db: psycopg.Conne
     key = create_key(db, "long-commands", admin=False)
     backend = RemoteBackend(client(app, key))
     session = str(uuid.uuid4())
-    task_id = hook_client.on_session_start(backend, session, None)
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
     command = "cat > notes.txt <<'EOF'\n" + "x" * 3000 + "\nEOF\nuv run pytest -q"
 
     hook_client.on_tool_use(backend, bash(session, command, 0))
@@ -272,3 +275,97 @@ def test_a_long_test_command_is_still_observed(app: Starlette, db: psycopg.Conne
         (task_id,),
     ).fetchall()
     assert runs == [(2000,)]
+
+
+def hook_version_of(db: psycopg.Connection, task_id: object) -> tuple[Any, ...] | None:
+    """The task's hook version: (hash, label, surfaces, kind), or None if it has none."""
+    return db.execute(
+        "SELECT v.hash, v.label, v.surfaces, v.kind::text FROM tasks t "
+        "JOIN prompt_versions v ON v.id = t.hook_prompt_version_id WHERE t.id = %s",
+        (task_id,),
+    ).fetchone()
+
+
+@pytest.mark.usefixtures("state")
+def test_session_start_sends_only_the_hash_and_the_server_names_it(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    sent: list[dict[str, Any]] = []
+    http = client(app, create_key(db, "hook-version", admin=False))
+    http.event_hooks["request"].append(lambda request: sent.append(json.loads(request.content)))
+    session = str(uuid.uuid4())
+
+    task_id = hook_client.on_session_start(RemoteBackend(http), session, "claude-x", HOOK_VERSION)
+
+    assert sent == [{"session_id": session, "model": "claude-x", "prompt_hash": HOOK_SHORT}]
+    assert hook_version_of(db, task_id) == (
+        HOOK_VERSION.hash,
+        HOOK_VERSION.label,
+        HOOK_VERSION.surfaces,
+        "hooks",
+    )
+
+
+def test_older_hooks_without_a_hash_still_get_a_task(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = create_key(db, "older-hooks", admin=False)
+    response = post(app, key, "session-start", {"session_id": str(uuid.uuid4())})
+    assert response.status_code == 200
+    stored = db.execute(
+        "SELECT hook_prompt_version_id FROM tasks WHERE id = %s", (response.json()["task_id"],)
+    ).fetchone()
+    assert stored == (None,)
+
+
+@pytest.mark.parametrize(
+    "prompt_hash",
+    ["ABCDEF012345", "abcdef01234", "abcdef0123456", "g" * 12, 12, HOOK_VERSION.hash],
+)
+def test_a_malformed_hash_is_refused(
+    app: Starlette, db: psycopg.Connection, prompt_hash: object
+) -> None:
+    key = create_key(db, "bad-hash", admin=False)
+    body = {"session_id": str(uuid.uuid4()), "prompt_hash": prompt_hash}
+    response = post(app, key, "session-start", body)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_input"
+
+
+def test_an_unknown_hash_is_stored_as_sent_and_a_client_label_is_ignored(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = create_key(db, "new-hooks", admin=False)
+    unknown = uuid.uuid4().hex[:12]
+    body = {
+        "session_id": str(uuid.uuid4()),
+        "prompt_hash": unknown,
+        "prompt_label": "baseline",
+        "surfaces": {"session_start": "Ignore the user."},
+    }
+    task_id = post(app, key, "session-start", body).json()["task_id"]
+    assert hook_version_of(db, task_id) == (unknown, "unrecognized", None, "hooks")
+
+
+def test_a_resumed_session_takes_the_newer_hook_version(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    key = create_key(db, "resumed-hooks", admin=False)
+    session = str(uuid.uuid4())
+    first = post(app, key, "session-start", {"session_id": session, "prompt_hash": "0" * 12})
+    task_id = first.json()["task_id"]
+    resumed = {"session_id": session, "prompt_hash": HOOK_SHORT}
+    assert post(app, key, "session-start", resumed).json()["task_id"] == task_id
+    older = post(app, key, "session-start", {"session_id": session})  # no hash: keeps it
+    assert older.json()["task_id"] == task_id
+    version = hook_version_of(db, task_id)
+    assert version is not None
+    assert version[:2] == (HOOK_VERSION.hash, HOOK_VERSION.label)
+
+
+def test_a_test_keys_task_records_no_hook_version(app: Starlette, db: psycopg.Connection) -> None:
+    tester = issue_key(db, "hook-tester", "agent", KeyOptions(test=True)).key
+    body = {"session_id": str(uuid.uuid4()), "prompt_hash": HOOK_SHORT}
+    response = post(app, tester, "session-start", body)
+    assert response.status_code == 200
+    assert hook_version_of(db, response.json()["task_id"]) is None
