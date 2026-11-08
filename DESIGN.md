@@ -71,7 +71,11 @@ searches
 - environment, results: jsonb, redacted. Only written in full_trace mode (decision 0024).
 - One row per search call, whether or not anything matched.
 
-doc_lookups: one row per Context7 `query-docs` call hooks saw: task_id, reporter_id, the task's model_id, privacy_mode, library_id, version, excluded, and the redacted query only in full_trace mode; counts read `counted_doc_lookups`. Lookups older than 180 days are folded into doc_lookup_months (month, library_id, version, lookups), then deleted.
+doc_lookups (migration 0020)
+- task_id, reporter_id, model_id (the task's, null until hooks see one), privacy_mode, created_at, excluded.
+- library_id, version: a pointer split from the Context7 id (`/vercel/next.js/v16.2.9` is `/vercel/next.js` and `v16.2.9`; version is `''` when the id has none). No doc text is stored.
+- query: text, redacted. Only written in full_trace mode; a CHECK keeps it null otherwise.
+- One row per Context7 `query-docs` call the hooks saw. Counts read `counted_doc_lookups`. Lookups older than 180 days fold into doc_lookup_months (month, library_id, version, lookups) and are deleted, as searches fold into monthly counts (decision 0033). Whether lookups change anything an agent sees is proposed, not built (`docs/decisions/2026-11-07-MIT-564-context7-fallback.md`).
 
 outcomes
 - retrieval_id.
@@ -89,7 +93,7 @@ reporters
 - trust_level: 0-2, recomputed with `commons rank` from the reporter's own record (decision 0028). suspended_at: set by a purge (decision 0029).
 
 corrections (decision 0030)
-- target_table (outcomes, retrievals, searches, doc_lookups), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by.
+- target_table (outcomes, retrievals, searches, doc_lookups; migration 0021 adds doc_lookups), target_id, field (used, outcome, excluded), old_value, new_value, reason, corrected_by, batch_id; undone_at, undone_by. Retrievals, searches and doc_lookups take only `excluded`; excluding a task reaches all three.
 - Raw observations are never deleted. A correction writes the new value into the row and records the old one; a standing correction of `used` or `outcome` is not overwritten by later hooks or reports.
 - retrievals, outcomes, searches and doc_lookups carry `excluded`. Every count, rate and score reads the `counted_retrievals`, `counted_outcomes`, `counted_searches` and `counted_doc_lookups` views, which leave excluded rows out (an outcome also drops out when its retrieval is excluded). Rows written with a test key are excluded from the start.
 
@@ -160,9 +164,9 @@ Observed outcomes come from hooks, not from the agent:
 
 - PostToolUse on Bash: when the command matches a test runner (pytest, npm test, cargo test, go test, and a configurable list), record command, exit code, and timestamp against the current task_id.
 - PostToolUse on Edit and Write: record a hash of the touched file so `used` can be computed from the diff at task end.
-- PostToolUse on Context7 `query-docs` (`mcp__*__query-docs`): record the library id and version from the tool input; the response is never read.
+- PostToolUse on Context7 `query-docs` (`mcp__<server>__query-docs`, under any server or plugin name): store a pointer in doc_lookups, the library id and version from the tool input, and the redacted query only in full_trace. The response is never read and nothing is spooled; a failed call or a malformed id records nothing.
 - Stop: compute `used` by matching entry fix text against the session diff, assemble the evidence, and write the outcome. Prompt the agent to file its assessment if it hasn't.
-- SessionStart: mint task_id, set privacy mode from the reporter's default.
+- SessionStart: mint task_id, set privacy mode from the reporter's default. Hosted, `session-start` returns the task's `privacy_mode`; the client keeps it with the session's binding and sends a lookup's query only when it is full_trace (no stored mode counts as entry). The server also drops the query outside full_trace.
 
 Hook details, including what stays on the user's machine, are in decision 0016. Hooks are Claude Code's hook system (settings.json). The installed hooks only call `commons hook <event>`; the logic lives in the server package so it is typed and tested. Other clients (Codex, Cursor, OpenCode) get the MCP tools and the self-report path only, with `used` and `outcome` marked unknown unless they add equivalent hooks.
 
@@ -181,6 +185,7 @@ Rules that apply in every mode:
 - A reporter can consent for their own work only. The server's instructions tell the agent to downgrade full_trace to entry when the session touches code with another author in git blame.
 - Traces are evidence for analysis and are never returned by search or included in exports by default.
 - A search is logged under its task's privacy mode, falling back to the reporter's default (decision 0024). Server logs record which tool ran, for whom, and how it went, never queries or entry text.
+- A doc lookup follows the same rules as a search: logged under the same privacy mode, excluded for test keys and by corrections, folded after 180 days. Unlike a search, its redacted query is kept only in full_trace; entry mode keeps the library and version alone.
 
 ## 7. Ranking and attribution
 
@@ -201,7 +206,7 @@ A `commons export` CLI command produces a dataset containing entries (approved o
 
 A `commons report` command renders the status page: top entries, decaying entries, per-model failure map, self-report accuracy, and cost savings.
 
-An admin dashboard, a small read-only-first web page served by the server, shows incoming proposals, the review queue, recent retrievals and outcomes, and lets an admin file human reviews.
+An admin dashboard, a small read-only-first web page served by the server, shows incoming proposals, the review queue, recent retrievals and outcomes, and lets an admin file human reviews. Its Searches page shows Commons misses next to doc lookups from the last 30 days, counted rows only: tasks where a miss was followed by a lookup, that looked up docs without searching, or that hit and still looked up; each miss in a task with lookups; and each library and version looked up, with the share of its tasks Commons hit.
 
 ## 9. Installation
 
