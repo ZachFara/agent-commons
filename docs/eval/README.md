@@ -62,6 +62,68 @@ Everything needed to measure the agent-facing text again is in the repo: the har
   `--setting-sources project --strict-mcp-config` so no hooks or servers run. Ask what led to the
   decision, not for its reasoning: asking a model to quote its own reasoning trips a safeguard.
 
+## GitHub tasks
+
+A GitHub task replays a real issue from a real repository: the agent gets the project at the
+fix's parent, with the fix's tests added, and must make them pass. Tasks are `GitHubTask`
+records (`tools/eval/model.py`) in `tools/eval/github_tasks.py`, each with a comment citing the
+issue, the fix, and the upstream release notes, as `holdout.py` does. Each becomes a `Scenario`
+with a `repo`, so `run`, grading, and the ledger work as for every other scenario.
+
+| Field | What it holds |
+|---|---|
+| `name` | the scenario name |
+| `repo` | https URL of the repository |
+| `base_commit` | full sha of the fix's parent: the tree the agent starts from |
+| `fix_commit` | full sha of the fix; used only by `check`, never shown to the agent |
+| `issue_url`, `fix_url` | the issue, and the pull request or commit that fixed it |
+| `test_paths` | the test files the fix added or changed, laid over the base so the tests fail |
+| `python` | the interpreter version, e.g. `"3.12"` |
+| `pins` | exact dependency versions (`name==version`), installed after `setup` |
+| `setup` | one command, run in the project's `.venv` (e.g. `uv pip install -e .`) |
+| `test_command` | the specific test ids, run from the project (e.g. `uv run --no-sync pytest tests/test_x.py::test_y`) |
+| `upstream` | `library`, `version`, `released` (ISO date), `changelog` URL, and `upstream_change`, a key shared by tasks hit by the same change |
+| `discovery` | what a good proposal names, as for other scenarios |
+| `trigger` | `version_specific` |
+| `license` | the repository's SPDX license identifier |
+
+**Materializing** (`tools/eval/repos.py`): both commits are fetched once, shallow and by sha,
+into a bare cache at `~/.cache/agent-commons-eval/repos/`. The project is `git archive` of the
+base with the fix's versions of `test_paths` laid over it, which is the base-to-fix diff of
+those paths. The cache's `info/attributes` turns off `export-ignore`, which some repositories
+set on their tests. The project has no `.git` and no remote. Then `uv venv --python <python>`,
+`setup`, and `uv pip install <pins>` run in it.
+
+**The session** of a repo task, and every command run on its project (setup, the pins'
+install, the tests, and the grading run of the project the agent edited), runs without
+`GH_TOKEN`, `GITHUB_TOKEN`, and `SSH_AUTH_SOCK`. It also runs with `GH_CONFIG_DIR` set to an
+empty directory, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` (Homebrew's system
+gitconfig sets `credential.helper=osxkeychain`), and `GIT_TERMINAL_PROMPT=0`. The session also
+gets `--disallowedTools "Bash(git push*)" "Bash(gh *)" "Bash(uv run git*)" "Bash(uv run gh*)"`.
+The deny list is a best-effort guard, not isolation. `sh -c` or a Python subprocess can still
+run git. Everything runs as this machine's user, with that user's home directory and keychain.
+
+**`agent_eval.py check`** materializes each task and also exports the whole fix tree, sets both
+up, and runs `test_command` in each. It prints "fails before, passes after", or reports the task
+as broken when the tests already pass at the base or still fail with the fix.
+
+**A task is accepted only if:**
+
+- the repository is public and under an OSI-approved license;
+- the upstream release it depends on came out after the eval models' training cutoff;
+- the issue was opened, and the fix made, after that release;
+- the fix changes code, not only a version pin;
+- a test fails at the base and passes with the fix (`check` proves it);
+- it needs no services, GPU, or Docker; the checkout is under about 200 MB; the tests run in
+  under 2 minutes;
+- the prompt doesn't reveal the fix (it is the neutral "fix the failing tests" prompt).
+
+Records are reviewed like code: `check` and `run` execute the record's `setup` and the
+repository's code on this machine.
+
+The fix commit stays in the cache during `run`, because the project's test files come from it.
+An agent that reads `~/.cache/agent-commons-eval/` could find the fix there.
+
 ## Trial ledger
 
 `trials.jsonl` is append-only: one line per session, stamped with the **variant** name and a

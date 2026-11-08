@@ -26,6 +26,7 @@ from commons.service.hook_install import commons_executable, commons_hooks
 from commons.store.migrate import apply_migrations
 from commons.store.models import model_id
 from commons.store.reporters import upsert_reporter
+from tools.eval import repos
 from tools.eval.model import CANARY, Discovery, Scenario
 
 REPO = Path(__file__).resolve().parents[2]
@@ -222,6 +223,8 @@ def run_session(
     Retries with backoff when the session ends in a rate-limit error.
     """
     env, settings, mcp = session_files(workdir, session.url, session.variant, hooks=hooks)
+    if session.scenario.repo is not None:
+        env = repos.session_environment(env, workdir)
     prompt = resume[1] if resume else session.scenario.prompt
     command = [
         "claude",
@@ -244,6 +247,7 @@ def run_session(
         "--verbose",
         "--allowedTools",
         *allowed_tools(session.variant),
+        *disallowed_tools(session.scenario),
     ]
     for attempt in range(RATE_LIMIT_RETRIES + 1):
         completed = subprocess.run(
@@ -277,6 +281,11 @@ def allowed_tools(variant: str) -> list[str]:
         "mcp__commons__propose": f"mcp__commons__{shown.propose_name}",
     }
     return [renamed.get(tool, tool) for tool in ALLOWED_TOOLS]
+
+
+def disallowed_tools(scenario: Scenario) -> list[str]:
+    """Return `--disallowedTools` for a real repository's task: no pushing, no `gh`."""
+    return ["--disallowedTools", *repos.DISALLOWED_TOOLS] if scenario.repo is not None else []
 
 
 def _events(stdout: str) -> list[dict[str, Any]]:
@@ -430,13 +439,17 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
             "ORDER BY o.created_at LIMIT 1"
         ).fetchone()
         task_ids = {str(row[0]) for row in conn.execute("SELECT id FROM tasks").fetchall()}
-    tests = subprocess.run(
-        scenario.test_command.split(),
-        cwd=project,
-        env={**os.environ, "PYTHONPATH": str(site), "NODE_PATH": str(site)},
-        capture_output=True,
-        text=True,
-        check=False,
+    tests = (
+        repos.run_tests(scenario.repo, project)
+        if scenario.repo is not None
+        else subprocess.run(
+            scenario.test_command.split(),
+            cwd=project,
+            env={**os.environ, "PYTHONPATH": str(site), "NODE_PATH": str(site)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     )
     finals = [e for e in events if e.get("type") == "result"]
     result_event = finals[-1] if finals else {}
@@ -486,6 +499,9 @@ def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: b
             workdir.mkdir()
             write_files(project, scenario.files)
             write_files(workdir / "site", scenario.libraries)
+            if scenario.repo is not None:
+                repos.materialize(scenario.repo, project)
+                repos.prepare(scenario.repo, project)
             session = Session(
                 scenario, condition, index, project, workdir / "site", url, job.variant
             )

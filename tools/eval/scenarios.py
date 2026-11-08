@@ -9,6 +9,7 @@ Libraries are vendored under a site directory (offline, deterministic) with inve
 model memory can't shortcut them.
 """
 
+from tools.eval.github_tasks import GITHUB
 from tools.eval.holdout import HOLDOUT
 from tools.eval.model import Discovery, Expect, Scenario, Seed
 
@@ -682,4 +683,4 @@ MULTI_TURN = [
     # the second surprise is a changed default the docs still describe the old way
     _two_turns("multi-turn-retry-then-timezone", DOCS_RETRY, DOCS_TIMEZONE),
 ]
-SCENARIOS = {**DEVELOPMENT, **HOLDOUT, **{s.name: s for s in MULTI_TURN}}
+SCENARIOS = {**DEVELOPMENT, **HOLDOUT, **GITHUB, **{s.name: s for s in MULTI_TURN}}
