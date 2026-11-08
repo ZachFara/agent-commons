@@ -5,7 +5,7 @@ isolated from the user's setup, and grades what the agent did from the database 
 transcript. Results and transcripts land in .scratch/eval/<condition>/.
 
 Usage:
-  uv run python tools/agent_eval.py check                 # scenarios fail then pass as designed
+  uv run python tools/agent_eval.py check [--on-host]     # scenarios fail then pass as designed
   uv run python tools/agent_eval.py run [--scenario NAME ...] [--runs N] [--model MODEL]
                                          [--condition NAME] [--no-hooks] [--concurrency N]
                                          [--skill]
@@ -46,7 +46,7 @@ from commons.store.counterfactuals import CounterfactualRun, known_entries, reco
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
-from tools.eval import repos, runner  # noqa: E402
+from tools.eval import container, repos, runner  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
 
 if TYPE_CHECKING:
@@ -57,12 +57,26 @@ if TYPE_CHECKING:
 RESULTS = REPO / ".scratch" / "eval"
 
 
-def check() -> int:
-    """Confirm each scenario's tests fail as shipped (a GitHub task's: and pass with the fix)."""
+ON_HOST_WARNING = (
+    "warning: --on-host runs each GitHub task's install and tests on this machine, as you, "
+    "with your home directory and network: only for repositories you trust"
+)
+
+
+def check(*, on_host: bool = False) -> int:
+    """Confirm each scenario's tests fail as shipped (a GitHub task's: and pass with the fix).
+
+    A GitHub task's install and tests run in throwaway containers, or with `on_host` (the
+    `--on-host` flag, which warns) on this machine.
+    """
+    execute: repos.Execute = container.run
+    if on_host:
+        print(ON_HOST_WARNING, file=sys.stderr)
+        execute = repos.run_on_host
     broken = 0
     for name, scenario in sorted(SCENARIOS.items()):
         if scenario.repo:
-            ok, outcome = repos.check(scenario.repo)
+            ok, outcome = repos.check(scenario.repo, execute)
         elif scenario.outcome is not None:
             ok, outcome = check_outcome(scenario)
         else:
@@ -874,7 +888,11 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("check")
+    commands.add_parser("check").add_argument(
+        "--on-host",
+        action="store_true",
+        help="Run GitHub tasks' install and tests on this machine, as you, not in containers.",
+    )
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--scenario", action="append", choices=sorted(SCENARIOS))
     run_parser.add_argument("--runs", type=int, default=1)
@@ -935,7 +953,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     commands_by_name: dict[str, Callable[[argparse.Namespace], int]] = {
-        "check": lambda _args: check(),
+        "check": lambda args: check(on_host=args.on_host),
         "run": run,
         "trials": lambda _args: by_variant(),
         "search": wording_search,

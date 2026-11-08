@@ -988,10 +988,10 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
     session_ids = {str(e["session_id"]) for e in events if e.get("session_id")}
     with psycopg.connect(url) as conn:
         activity = session_activity(conn, session_ids, used_ids)
-    # A GitHub task's tests run the repository's way; a written scenario's outcome check or
-    # tests run as `outcome_holds` does.
+    # A GitHub task's tests run the repository's way, in a container; a written scenario's
+    # outcome check or tests run as `outcome_holds` does.
     tests_pass = (
-        repos.run_tests(scenario.repo, project).returncode == 0
+        repos.graded_tests(scenario.repo, project).returncode == 0
         if scenario.repo is not None
         else outcome_holds(scenario, project, site)
     )
@@ -1115,7 +1115,9 @@ def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: b
             write_files(workdir / "site", scenario.libraries)
             if scenario.repo is not None:
                 repos.materialize(scenario.repo, project)
-                repos.prepare(scenario.repo, project)
+                # The agent works on this machine, so its .venv is set up here; the graded run
+                # sets up its own in a container (`repos.graded_tests`).
+                repos.prepare(scenario.repo, project, repos.run_on_host)
             pristine = Path(tmp) / "pristine"
             shutil.copytree(  # symlinks are copied as symlinks, never followed
                 project,

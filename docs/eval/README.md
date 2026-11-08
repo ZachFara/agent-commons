@@ -93,7 +93,8 @@ into a bare cache at `~/.cache/agent-commons-eval/repos/`. The project is `git a
 base with the fix's versions of `test_paths` laid over it, which is the base-to-fix diff of
 those paths. The cache's `info/attributes` turns off `export-ignore`, which some repositories
 set on their tests. The project has no `.git` and no remote. Then `uv venv --python <python>`,
-`setup`, and `uv pip install <pins>` run in it.
+`setup`, and `uv pip install <pins>` run in it: in a container for `check` and for grading,
+on this machine for the project a session's agent works in (see below).
 
 **The session** of a repo task, and every command run on its project (setup, the pins'
 install, the tests, and the grading run of the project the agent edited), runs without
@@ -102,11 +103,41 @@ empty directory, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` (Homebre
 gitconfig sets `credential.helper=osxkeychain`), and `GIT_TERMINAL_PROMPT=0`. The session also
 gets `--disallowedTools "Bash(git push*)" "Bash(gh *)" "Bash(uv run git*)" "Bash(uv run gh*)"`.
 The deny list is a best-effort guard, not isolation. `sh -c` or a Python subprocess can still
-run git. Everything runs as this machine's user, with that user's home directory and keychain.
+run git.
+
+**Not contained: the session itself.** The agent's own commands, and the setup of the project
+it works in (`uv venv`, `setup`, the pins), still run on this machine, as this machine's user,
+with that user's home directory and keychain. The agent's `.venv` has to work on this machine,
+so it can't be built in a Linux container. Only the harness's own test runs below are contained.
 
 **`agent_eval.py check`** materializes each task and also exports the whole fix tree, sets both
 up, and runs `test_command` in each. It prints "fails before, passes after", or reports the task
-as broken when the tests already pass at the base or still fail with the fix.
+as broken when the tests already pass at the base or still fail with the fix. `make eval-check`
+runs it.
+
+**Containers** (`tools/eval/container.py`; the owner chose containers, right away). `check` runs
+every install step and test run of a task in a throwaway container, and so does grading: a
+session's graded run copies the project the agent edited (without its `.venv`), sets the copy
+up, and tests it, all in containers. Each step is its own `docker run --rm`:
+
+- from one image pinned by digest: uv's `python3.12-trixie-slim` (a task on another Python has
+  uv download that interpreter while installing);
+- as this machine's uid and gid (never root: as root it runs as 65534), with `--cap-drop ALL`
+  and `no-new-privileges`;
+- with one mount, the project copy at `/project`: no home directory, no SSH agent or git
+  credentials, no Docker socket, and no environment from this machine but `HOME=/tmp`;
+- capped at `--memory 2g` (no swap beyond it), `--cpus 2`, and `--pids-limit 512`;
+- timed out by `timeout` inside the container (120 seconds for the tests, 600 for each install
+  step), and removed by the harness 30 seconds after that if it is still running;
+- with the network for the install steps, and `--network none` for the test run. So
+  `test_command` must not need the network: use `uv run --no-sync` or `.venv/bin/python`, as a
+  bare `uv run` in a project may try to sync. A task whose tests need it fails `check`.
+
+Containers run one at a time, whatever `--concurrency` a run has. `check --on-host` runs the
+installs and tests on this machine instead, as before, and prints a warning; without it `check`
+never does. `make eval-check` never passes it. Docker is required: the tests in
+`server/tests/test_eval_container.py` start containers, as the database tests need Postgres
+(`make db` runs it in Docker, and CI's runner has Docker).
 
 **A task is accepted only if:**
 
@@ -119,8 +150,8 @@ as broken when the tests already pass at the base or still fail with the fix.
   under 2 minutes;
 - the prompt doesn't reveal the fix (it is the neutral "fix the failing tests" prompt).
 
-Records are reviewed like code: `check` and `run` execute the record's `setup` and the
-repository's code on this machine.
+Records are reviewed like code: `run` still executes the record's `setup`, and the agent runs
+the repository's code, on this machine. `check` and grading run them in containers.
 
 The fix commit stays in the cache during `run`, because the project's test files come from it.
 An agent that reads `~/.cache/agent-commons-eval/` could find the fix there.
