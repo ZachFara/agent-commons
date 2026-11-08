@@ -7,6 +7,7 @@ from psycopg.types.json import Jsonb
 from commons.domain.entries import Proposal
 from commons.store.connection import Connection
 from commons.store.rows import returned_id
+from commons.store.search import _SEARCHABLE
 
 
 def insert_entry(
@@ -49,7 +50,10 @@ def set_risk_report(conn: Connection, entry_id: UUID, report: dict[str, object])
 
 
 def scannable_entries(conn: Connection, *, lock: bool) -> list[dict[str, Any]]:
-    """Approved and pending entries' current text and risk report, for a rescan (0029).
+    """Return the text and risk report of pending entries and every entry search can show.
+
+    Search shows retired entries with a fix version too, with their risk labels, so a rescan
+    (0029) covers them: the set is search's own condition, never a second list of statuses.
 
     With `lock`, the rows stay locked until the transaction ends, so no edit lands between
     reading the text and storing its report.
@@ -62,8 +66,8 @@ def scannable_entries(conn: Connection, *, lock: bool) -> list[dict[str, Any]]:
 _SCANNABLE = (
     "SELECT id, status::text AS status, symptom, environment, cause, fix, repro, domains, "
     "task_id, risk_report, provisional AND NOT human_reviewed AS unreviewed "
-    "FROM entries WHERE status IN ('approved', 'pending') ORDER BY created_at, id"
-)
+    "FROM entries e WHERE e.status = 'pending' OR {searchable} ORDER BY created_at, id"
+).replace("{searchable}", _SEARCHABLE)
 _SCANNABLE_LOCKED = _SCANNABLE + " FOR UPDATE"
 
 
