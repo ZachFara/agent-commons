@@ -1,6 +1,7 @@
 """Entry point for the `commons` command."""
 
 import argparse
+import json
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ from commons.service import (
     keys,
     purges,
     ranking,
+    relevance,
     rescan,
     retention,
     reviews,
@@ -174,6 +176,12 @@ def _admin_arguments(parser: argparse.ArgumentParser) -> None:
     rescans.add_argument(
         "--apply", action="store_true", help="Store the new reports and reopen what needs it."
     )
+    relevant = actions.add_parser(
+        "relevance-candidates", help="Print real searches to label, as JSON lines (0025)."
+    )
+    relevant.add_argument(
+        "--days", type=int, default=relevance.DEFAULT_DAYS, help="How far back to look."
+    )
 
 
 def _correct_arguments(parser: argparse.ArgumentParser) -> None:
@@ -221,6 +229,7 @@ def _admin(args: argparse.Namespace) -> int:
         "revoke": _revoke,
         "role": _role,
         "rescan": _rescan,
+        "relevance-candidates": _relevance_candidates,
     }
     if action in delegated:
         return delegated[action](args)
@@ -308,6 +317,14 @@ def _rescan(args: argparse.Namespace) -> int:
             f"{len(changed)} entr(ies) would change, {reopened} would reopen; "
             "nothing written (use --apply)\n"
         )
+    return 0
+
+
+def _relevance_candidates(args: argparse.Namespace) -> int:
+    with connect() as conn:
+        found = relevance.candidates(conn, args.days)
+    for line in found:
+        sys.stdout.write(json.dumps(line) + "\n")
     return 0
 
 
