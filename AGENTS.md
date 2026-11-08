@@ -194,3 +194,12 @@ from the Learned sections of merged PRs.
 - Linear turns any issue ID in agent-written text into a mention. Write Commons IDs in code spans so nothing appears on Zach's tickets.
 - Custom agent types in `.claude/agents/` load at session start only. In a session where they were added later, use the built-in `Plan` (read only) and `general-purpose` (with `isolation: worktree`) agents pointed at the role files.
 - Parallel feature branches each claim migration numbers up front (recorded in the run log), so two branches never add the same `NNNN_`.
+- `apply_migrations` applies by file name, so a gap in the numbers (0020 merged before 0017-0019) is fine.
+- Claude Code hook matchers: one made only of letters, digits, `_`, `-`, spaces, `,` and `|` is a list of exact tool names. Any other character makes the whole matcher an unanchored JavaScript regex, so `Edit` would also match `NotebookEdit`. Anchor regex matchers (`^(...)$`), as `POST_TOOL_USE_MATCHER` in `service/hook_install.py` does.
+- Since Claude Code 2.1.274, PostToolUse for MCP tools also carries `mcp_server: {name, source}`, and Claude Code's docs say to trust `source` over the tool-name prefix. The doc-lookup hook doesn't use it yet.
+- `environment` on `propose` accepts keys other than `language`, `libraries` and `tool`; `domain/entries.py` validates only those three.
+- A `search` miss returns `{"note": INVITE_NOTE, "data": [], "store": ...}`. That note is option `f1` of the empty-result wording surface in `agent_text.py`, so any new miss-time text is a new option of that surface and needs an eval. The `search` tool's `environment` description mentions only `language`, so agents rarely pass `libraries`; behaviour keyed on the library needs that description changed too, a second surface.
+- Retention tests with a fixed `NOW` in the future also fold rows other tests committed today. Assert on your own rows, never on the fold count.
+- Ruff's S608 flags SQL built with `+` when a fragment has SELECT and FROM on one line. To share a CTE, compose `psycopg.sql.SQL` pieces; `_rows` in `store/insights.py` takes `str | sql.Composed`.
+- To record what a `RemoteBackend` posts, set `event_hooks = {"request": [fn]}` on the Starlette `TestClient` (an `httpx2.Client`); `request.content` holds the JSON body.
+- The session binding file (`sessions/<hash>.store.json`) holds `store`, `key` and, for hosted sessions, `privacy_mode` from `session-start`, so `bound_store` may return that key too.
