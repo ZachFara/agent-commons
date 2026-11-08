@@ -6,16 +6,30 @@ the end of each feature branch.
 
 ## Last run
 
-- 2026-11-07, setup (MIT-580, `chore/agent-orchestration`): agent roles, Linear and Bash
-  guard hooks, `.env.agent` and scripts for data isolation, rulesets on `main` and
-  `feature/**`. Decision record `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
+- 2026-11-07 to 2026-11-08, the swarm-research feature (`feature/MIT-582-swarm-research`):
+  - Provenance's "success S/N when used" counts only used outcomes with a known result, as
+    ranking does; `unknown` and `abandoned` are left out (MIT-587, PR #108). The `status`
+    tool's top entries and `commons status` use the same count.
+  - Review queue: each likely duplicate shows its cause and fix beside the proposal's. An
+    entry's page lists the entries a reviewer kept distinct from it, with status and latest
+    score (MIT-586, PR #109).
+  - Searches page: a "Full result sets" figure (searches whose hits reached their limit) and a
+    "Use by rank" table (share used per result rank 1, 2, 3, 4+) (MIT-590, PR #114).
+  - Proposed decision `2026-11-07-MIT-582-evidence-counts-in-search.md`: counts in the
+    provenance line instead of a rate, behind an eval. Not built (MIT-588, PR #107).
+  - The setup branch (`chore/agent-orchestration`) merged in: guards for foreign issue IDs in
+    GitHub text, one branch scheme, `GIT_DIR` handling in hooks.
 
 ## In flight
 
-- Nothing. Phase 2 starts when Zach says so: `claude --agent commons-orchestrator`.
+- PR #121 (MIT-591), a Proposed decision record, is still open against the feature branch.
 
 ## Next
 
+- Zach decides whether to run the evidence-counts eval (condition `evidence-counts`, scenario
+  `known-wrong-entry`); nothing ships before that.
+- The two new Searches figures need a month of data before they say whether `limit=5` cuts off
+  useful entries or agents only use the top result.
 - Product state: DESIGN.md §10 Phases 1 and 2 are done; the store is collecting data before
   Phase 3 (after a month of use).
 - Open items from the old task list, to become Commons tickets if Zach wants agents on them:
