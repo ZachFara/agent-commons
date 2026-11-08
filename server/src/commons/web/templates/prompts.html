@@ -22,4 +22,17 @@
 {% for v in versions if v.id %}<section class="card" style="margin-top: 16px"><details><summary><span class="mono">{{ v.short_hash }}</span> {{ v.label }} <span class="muted">{{ v.surfaces | length }} surfaces</span></summary>
   <dl class="facts" style="margin-top: 12px; grid-template-columns: minmax(120px, 240px) 1fr">{% for name, text in v.surfaces | dictsort %}<dt class="mono" style="overflow-wrap: anywhere">{{ name }}</dt><dd class="mono">{{ text }}</dd>{% endfor %}</dl>
 </details></section>{% endfor %}
+<section class="card" style="margin-top: 16px"><h2>Hook versions <span class="hint">oldest first</span></h2>
+  <div class="muted" style="margin-bottom: 8px">The text the installed hooks show: the SessionStart sentence, the Stop report reminder, and the variant's start line and nudge, hashed on the user's machine. Each task counts under the version its SessionStart sent, apart from the server versions above. A hosted server gets only the hash and names it from the hook texts it knows; any other hash shows as unrecognized. Tasks from older hooks and from test keys record none. All time.</div>
+  {% if hooks %}<div class="table-wrap"><table>
+  <thead><tr><th>Version</th><th>First seen</th><th>Last seen</th><th class="num">Tasks</th><th class="num">Reporters</th></tr></thead><tbody>
+  {% for v in hooks %}<tr>
+    <td><span class="mono" title="{{ v.hash }}">{{ v.short_hash }}</span><div class="muted">{{ v.label }}</div></td>
+    <td class="muted" style="white-space: nowrap">{{ when(v.first_seen) }}</td><td class="muted" style="white-space: nowrap">{{ when(v.last_seen) }}</td>
+    <td class="num">{{ v.tasks }}</td><td class="num">{{ v.reporters }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="empty">No hook versions recorded yet.</div>{% endif %}</section>
+{% for v in hooks if v.surfaces %}<section class="card" style="margin-top: 16px"><details><summary><span class="mono">{{ v.short_hash }}</span> {{ v.label }} <span class="muted">{{ v.surfaces | length }} hook surfaces</span></summary>
+  <dl class="facts" style="margin-top: 12px; grid-template-columns: minmax(120px, 240px) 1fr">{% for name, text in v.surfaces | dictsort %}<dt class="mono" style="overflow-wrap: anywhere">{{ name }}</dt><dd class="mono">{{ text }}</dd>{% endfor %}</dl>
+</details></section>{% endfor %}
 {% endblock %}

@@ -15,6 +15,9 @@ import hashlib
 import os
 import re
 from dataclasses import dataclass, fields
+from functools import cache
+
+from commons.domain.prompts import PromptVersion, prompt_version
 
 INSTRUCTIONS = """\
 Agent Commons: shared debugging knowledge that records whether each entry actually helped.
@@ -131,6 +134,22 @@ NUDGE = (
     "from its docs or an earlier version), call `propose` now with task_id {task_id}: the "
     "symptom, cause, and fix. If the bug was in this codebase's own logic, finish as planned."
 )
+
+# The hooks' own text (MIT-609). The installed hook client renders these, so they are
+# templates: the hook version hashes them before the task id and entry ids are filled in.
+SESSION_START = (
+    "Agent Commons task_id for this session: {task_id}. "
+    "Pass it as task_id to every commons tool call."
+)
+REPORT_REMINDER = (
+    "Before finishing, call the commons `report` tool with task_id {task_id} for "
+    "each entry you retrieved this session but haven't reported on: {ids}. Say honestly "
+    "whether it helped."
+)
+# Every (SessionStart, report reminder) pair a released client has shown, the current one
+# last. When either changes, append the new pair and keep the old ones, so a hosted server
+# still names the hook versions older clients send.
+RELEASED_HOOK_TEXTS = ((SESSION_START, REPORT_REMINDER),)
 
 
 # Per-turn nudge (decision 0034): sent by the store, not the hooks, so one server setting
@@ -536,3 +555,57 @@ def fingerprint(shown: Variant) -> str:
         digest.update(str(getattr(shown, field.name) or "").encode())
         digest.update(b"\0")
     return digest.hexdigest()[:12]
+
+
+# Hook versions (MIT-609): the text the installed hook client shows, which no server sees.
+# The client hashes it and sends a hosted server only the first 12 characters, so the server
+# names a hash from the hook texts this code has released, and stores any other as sent.
+UNRECOGNIZED = "unrecognized"
+HookKey = tuple[str | None, str | None]  # (start_line, nudge): what a variant adds to the hooks
+
+
+def _hook_surfaces(texts: tuple[str, str], key: HookKey) -> dict[str, str]:
+    session_start, report_reminder = texts
+    surfaces = {"session_start": session_start, "report_reminder": report_reminder}
+    start_line, nudge = key
+    if start_line:
+        surfaces["start_line"] = start_line
+    if nudge:
+        surfaces["nudge"] = nudge
+    return surfaces
+
+
+def _hook_labels() -> dict[HookKey, str]:
+    """Name each start line and nudge by the named variants that show it, else its wording."""
+    names: dict[HookKey, list[str]] = {}
+    for name, shown in VARIANTS.items():
+        names.setdefault((shown.start_line, shown.nudge), []).append(name)
+    for option, line in enumerate(START_LINES):  # wording variants never nudge
+        names.setdefault((line, None), [f"wording g{option}"])
+    return {key: ", ".join(found) for key, found in names.items()}
+
+
+def hook_version(shown: Variant) -> PromptVersion:
+    """Return the hook version a client running `shown` shows the agent."""
+    key = (shown.start_line, shown.nudge)
+    surfaces = _hook_surfaces(RELEASED_HOOK_TEXTS[-1], key)
+    return prompt_version(_hook_labels()[key], surfaces, kind="hooks")
+
+
+@cache
+def _released_hook_versions() -> dict[str, PromptVersion]:
+    """Every hook version a released client can send, by the 12 characters it sends."""
+    versions = (
+        prompt_version(label, _hook_surfaces(texts, key), kind="hooks")
+        for texts in RELEASED_HOOK_TEXTS
+        for key, label in _hook_labels().items()
+    )
+    return {version.hash[:12]: version for version in versions}
+
+
+def reported_hook_version(short_hash: str) -> PromptVersion:
+    """Return the released hook version a hosted client named; any other hash, as sent."""
+    released = _released_hook_versions().get(short_hash)
+    if released is not None:
+        return released
+    return PromptVersion(label=UNRECOGNIZED, surfaces=None, hash=short_hash, kind="hooks")

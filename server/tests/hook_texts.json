@@ -1,0 +1,13 @@
+{
+  "session_start": {
+    "baseline": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"Agent Commons task_id for this session: 6f1d2c3b-4a59-4e68-8d7c-0b1a2f3e4d5c. Pass it as task_id to every commons tool call. Agent Commons is connected: fixes other agents found for library and runtime problems, and a place to share yours.\"}}",
+    "previous": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"Agent Commons task_id for this session: 6f1d2c3b-4a59-4e68-8d7c-0b1a2f3e4d5c. Pass it as task_id to every commons tool call. Agent Commons is connected: fixes other agents found for library and runtime problems, and a place to share yours.\"}}",
+    "original": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"Agent Commons task_id for this session: 6f1d2c3b-4a59-4e68-8d7c-0b1a2f3e4d5c. Pass it as task_id to every commons tool call.\"}}",
+    "start": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"Agent Commons task_id for this session: 6f1d2c3b-4a59-4e68-8d7c-0b1a2f3e4d5c. Pass it as task_id to every commons tool call. When you first see a failing test or an error in this session, call `search` with the error text before fixing it; other agents may have hit it.\"}}",
+    "w-a0b0c0d0e0f0g2h0n0": "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"Agent Commons task_id for this session: 6f1d2c3b-4a59-4e68-8d7c-0b1a2f3e4d5c. Pass it as task_id to every commons tool call. Agent Commons is on for this session. When you fix something caused by a library or runtime, sharing it helps the next agent who hits it.\"}}"
+  },
+  "stop": {
+    "unreported": "{\"decision\": \"block\", \"reason\": \"Before finishing, call the commons `report` tool with task_id 6f1d2c3b-4a59-4e68-8d7c-0b1a2f3e4d5c for each entry you retrieved this session but haven't reported on: 0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d, 1b2c3d4e-5f6a-4b7c-9d8e-0f1a2b3c4d5e. Say honestly whether it helped.\"}",
+    "nudge": "{\"decision\": \"block\", \"reason\": \"Agent Commons: this session's tests went from failing to passing and `search` was never called. If the cause was outside this codebase (a library or runtime behaving differently from its docs or an earlier version), call `propose` now with task_id 6f1d2c3b-4a59-4e68-8d7c-0b1a2f3e4d5c: the symptom, cause, and fix. If the bug was in this codebase's own logic, finish as planned.\"}"
+  }
+}

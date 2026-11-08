@@ -10,14 +10,16 @@ from uuid import UUID
 
 from commons.domain.errors import NotPermittedError
 from commons.domain.outcomes import ObservedRun, merge_observation
+from commons.domain.prompts import PromptVersion
 from commons.domain.usage import ArtifactFrequencies, UseObservation, count_artifacts
 from commons.service.agent_text import TURN_NUDGE
-from commons.service.identity import current_reporter
+from commons.service.identity import current_reporter, test_traffic
 from commons.service.ranking import rank, ranking_is_stale
 from commons.store.connection import Connection
 from commons.store.entries import approved_fixes
 from commons.store.models import model_id
 from commons.store.outcomes import locked_outcome, save_outcome, set_used
+from commons.store.prompt_versions import prompt_version_id
 from commons.store.task_events import (
     TaskRetrieval,
     acted_in_turn,
@@ -31,16 +33,21 @@ from commons.store.task_events import (
 from commons.store.tasks import start_task
 
 
-def session_start(conn: Connection, session_id: str, model: str | None) -> UUID:
+def session_start(
+    conn: Connection, session_id: str, model: str | None, *, prompt: PromptVersion | None = None
+) -> UUID:
     """Create or resume the calling reporter's task for this session; return its id.
 
+    `prompt` is the hook version the client shows (MIT-609); hosted clients older than it
+    send none. A test key's task records none, so it never counts (decision 0030).
     Re-ranks if snapshots are over a day old (decision 0017), so neither mode needs a
     scheduler; ranking is fast at this scale.
     """
     with conn.transaction():
         reporter = current_reporter(conn)
         model_row = model_id(conn, model) if model else None
-        task_id = start_task(conn, session_id, reporter, model_row)
+        hook_row = None if test_traffic() else prompt_version_id(conn, prompt)
+        task_id = start_task(conn, session_id, reporter, model_row, hook_row)
         if task_id is None:
             msg = "That session belongs to another reporter."
             raise NotPermittedError(msg)

@@ -57,7 +57,7 @@ TABLES = {
         "imported_from",
         "prompt_version_id",
     },
-    "prompt_versions": {"hash", "label", "surfaces"},
+    "prompt_versions": {"hash", "label", "surfaces", "kind"},
     "purges": {
         "reporter_id",
         "purged_by",
@@ -164,7 +164,14 @@ TABLES = {
         "wall_clock_seconds",
     },
     "traces": {"entry_id", "task_id", "content", "redaction_report"},
-    "tasks": {"session_id", "reporter_id", "model_id", "privacy_mode", "last_stop_at"},
+    "tasks": {
+        "session_id",
+        "reporter_id",
+        "model_id",
+        "privacy_mode",
+        "last_stop_at",
+        "hook_prompt_version_id",
+    },
     "ranking_snapshots": {
         "entry_id",
         "computed_at",

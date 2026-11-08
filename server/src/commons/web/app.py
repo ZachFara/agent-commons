@@ -124,8 +124,13 @@ class Dashboard:
         return self._render(request, "searches.html", "searches", data)
 
     async def prompts(self, request: Request) -> Response:
-        """Render outcomes per served prompt version (decision MIT-566)."""
-        data = await self._load(lambda conn: {"versions": insights.prompt_versions(conn)})
+        """Render outcomes per served prompt version (decision MIT-566), then hook versions."""
+        data = await self._load(
+            lambda conn: {
+                "versions": insights.prompt_versions(conn),
+                "hooks": insights.hook_prompt_versions(conn),
+            }
+        )
         return self._render(request, "prompts.html", "prompts", data)
 
     async def mine(self, request: Request) -> Response:

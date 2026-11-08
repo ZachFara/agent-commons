@@ -22,6 +22,7 @@ from commons.domain.observations import (
     is_test_command,
     observed_exit_code,
 )
+from commons.domain.prompts import PromptVersion
 from commons.domain.usage import ArtifactFrequencies, Evidence, UseObservation, observe_use
 from commons.privacy.redaction import scrub
 from commons.service import contributors, hooks
@@ -43,8 +44,8 @@ CLOCK_SKEW = timedelta(seconds=5)
 class HookBackend(Protocol):
     """Where derived observations go."""
 
-    def session_start(self, session_id: str, model: str | None) -> UUID:
-        """Create or resume the session's task."""
+    def session_start(self, session_id: str, model: str | None, prompt: PromptVersion) -> UUID:
+        """Create or resume the session's task, recording the hook version it shows."""
         ...
 
     def tool_use(
@@ -82,10 +83,10 @@ class LocalBackend:
         """Open a connection per call with `connection`."""
         self._connection = connection
 
-    def session_start(self, session_id: str, model: str | None) -> UUID:
-        """Create or resume the session's task."""
+    def session_start(self, session_id: str, model: str | None, prompt: PromptVersion) -> UUID:
+        """Create or resume the session's task; store the hook version with its surfaces."""
         with self._connection() as conn:
-            return hooks.session_start(conn, session_id, model)
+            return hooks.session_start(conn, session_id, model, prompt=prompt)
 
     def tool_use(
         self,
@@ -147,11 +148,13 @@ class RemoteBackend:
         scope = self._post("ping", {}).get("scope")
         return scope if isinstance(scope, str) else None
 
-    def session_start(self, session_id: str, model: str | None) -> UUID:
-        """Create or resume the session's task."""
-        return UUID(
-            self._post("session-start", {"session_id": session_id, "model": model})["task_id"]
-        )
+    def session_start(self, session_id: str, model: str | None, prompt: PromptVersion) -> UUID:
+        """Create or resume the session's task; send only the hook version's short hash.
+
+        The server names the hash from the hook texts it knows (MIT-609), never from us.
+        """
+        body = {"session_id": session_id, "model": model, "prompt_hash": prompt.hash[:12]}
+        return UUID(self._post("session-start", body)["task_id"])
 
     def tool_use(
         self,
@@ -247,10 +250,12 @@ def remote_client(url: str, key: str) -> httpx2.Client:
 REMOTE_TIMEOUT = 10.0
 
 
-def on_session_start(backend: HookBackend, session_id: str, model: str | None) -> UUID:
-    """Prune old spools, then create or resume the task."""
+def on_session_start(
+    backend: HookBackend, session_id: str, model: str | None, prompt: PromptVersion
+) -> UUID:
+    """Prune old spools, then create or resume the task with the hook version it shows."""
     prune_spools()
-    return backend.session_start(session_id, model)
+    return backend.session_start(session_id, model, prompt)
 
 
 def on_tool_use(backend: HookBackend, use: ToolUse) -> None:

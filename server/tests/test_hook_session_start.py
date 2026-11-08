@@ -6,7 +6,7 @@ import psycopg
 import pytest
 
 from commons.domain.errors import NotPermittedError
-from commons.service import hooks
+from commons.service import agent_text, hooks
 from commons.service.identity import acting_as
 from commons.service.local_state import bound_store
 from commons.store.reporters import upsert_reporter
@@ -60,6 +60,46 @@ def test_resume_keeps_the_task_and_records_a_model(env: HookEnv, database_url: s
     row = task_row(database_url, first)
     assert row is not None
     assert row[2] == "claude-x-1"
+
+
+def hook_version_of(database_url: str, task_id: str) -> tuple[object, ...] | None:
+    with psycopg.connect(database_url) as conn:
+        return conn.execute(
+            "SELECT v.hash, v.label, v.surfaces, v.kind::text FROM tasks t "
+            "JOIN prompt_versions v ON v.id = t.hook_prompt_version_id WHERE t.id = %s",
+            (task_id,),
+        ).fetchone()
+
+
+def test_session_start_records_the_hook_version_with_its_surfaces(
+    env: HookEnv, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COMMONS_INSTRUCTIONS_VARIANT", "baseline")
+    env.init()
+    output = env.run("session-start", {"session_id": str(uuid.uuid4()), "source": "startup"})
+    expected = agent_text.hook_version(agent_text.VARIANTS["baseline"])
+    assert expected.surfaces is not None
+    assert hook_version_of(database_url, task_id_from(output)) == (
+        expected.hash,
+        expected.label,
+        expected.surfaces,
+        "hooks",
+    )
+    assert expected.surfaces["start_line"] in json.dumps(output)
+
+
+def test_a_resumed_session_takes_the_newer_hook_version(
+    env: HookEnv, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COMMONS_INSTRUCTIONS_VARIANT", "baseline")
+    env.init()
+    session = str(uuid.uuid4())
+    first = task_id_from(env.run("session-start", {"session_id": session, "source": "startup"}))
+    monkeypatch.setenv("COMMONS_INSTRUCTIONS_VARIANT", "nudge")
+    env.run("session-start", {"session_id": session, "source": "resume"})
+    version = hook_version_of(database_url, first)
+    assert version is not None
+    assert version[0] == agent_text.hook_version(agent_text.VARIANTS["nudge"]).hash
 
 
 def test_without_identity_the_hook_is_silent(env: HookEnv) -> None:
