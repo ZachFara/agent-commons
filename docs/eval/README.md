@@ -337,3 +337,14 @@ The adopted text (`w-a0b4c5d1e0f1g1h0n0s1`) passes the bar on both models: more 
 (Opus 25/27 vs 18/27, Sonnet 18/27 vs 2/27), no proposal on any control, no lower fix rate. Both
 models now search where it matters and not on controls. Sonnet still skips the search on a known
 entry (without duplicating it).
+
+## Scenarios added: no test (MIT-597, 2026-11-07)
+
+Configuration tasks with no failing test and no exception text, after two real misses. The prompt
+is the request itself, and an outcome check judges the result after the session, out of the
+agent's sight. Not yet verified with a real session, so not counted (decision 0023).
+
+- `config-app-overwrites`: a notes app the runner starts (`vaultapp`) writes its plugin settings from memory over `data.json` on every autosave and on exit, so a direct edit is lost; `vaultapp config set` works.
+- `config-default-wins`: a router (`switchyard`) whose unlisted `exporter` default (`cloud`) beats the documented `textfile_dir`; the export prints the cloud's 401, exits 0, and writes no metrics file.
+- `known-config-app-overwrites`: `config-app-overwrites` with the answer already in the commons.
+- `known-config-default-wins`: `config-default-wins` with the answer already in the commons.

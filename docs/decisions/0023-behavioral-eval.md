@@ -150,3 +150,11 @@ round was tuned on: good proposals 25/27 vs 18/27 (Opus) and 18/27 vs 2/27 (Sonn
 future work: Claude Code defers MCP tools behind tool search by default, so before an agent
 loads our tools it sees only their names and the server instructions; the next candidate change
 is marking `search` and `propose` with `_meta["anthropic/alwaysLoad"]`, measured like any other.
+
+Addition (2026-11-07, MIT-597): two no-test scenarios, `config-app-overwrites` and
+`config-default-wins`, with known-entry variants (listed in `docs/eval/README.md`). Their tasks
+are requests, not failing tests, so a scenario can now carry its own prompt (`task`), an outcome
+check the grader runs after the session in place of the tests (`outcome`), and a local app the
+runner starts before the session and stops before grading (`app`). The surprise sits on the
+path: each task asks the agent to check its change, and the check shows it did not take (the app
+reports the old value, or the next autosave puts it back; the export prints the cloud's 401).
