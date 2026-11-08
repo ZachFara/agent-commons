@@ -37,15 +37,29 @@ def browser(app: Starlette, key: str | None) -> TestClient:
     return TestClient(app, base_url=ORIGIN, headers=headers, follow_redirects=False)
 
 
-def test_no_credentials_get_a_basic_auth_challenge(app: Starlette) -> None:
-    response = browser(app, None).get("/")
+@pytest.mark.parametrize("path", ["/", "/prompts"])
+def test_no_credentials_get_a_basic_auth_challenge(app: Starlette, path: str) -> None:
+    response = browser(app, None).get(path)
     assert response.status_code == 401
     assert response.headers["www-authenticate"].startswith("Basic ")
 
 
-def test_non_admin_keys_are_forbidden(app: Starlette, db: psycopg.Connection) -> None:
+@pytest.mark.parametrize("path", ["/", "/prompts"])
+def test_non_admin_keys_are_forbidden(app: Starlette, db: psycopg.Connection, path: str) -> None:
     key = create_key(db, "plain-member", admin=False)
-    assert browser(app, key).get("/").status_code == 403
+    assert browser(app, key).get(path).status_code == 403
+
+
+def test_admin_sees_the_prompts_page(app: Starlette, db: psycopg.Connection) -> None:
+    key = create_key(db, "prompts-admin", admin=True)
+    version = factories.prompt_version(db, f"hosted-{uuid.uuid4().hex[:6]}")
+    row = db.execute("SELECT left(hash, 12) FROM prompt_versions WHERE id = %s", (version,))
+    short = row.fetchone()
+    assert short
+    page = browser(app, key).get("/prompts")
+    assert page.status_code == 200
+    assert short[0] in page.text
+    assert "Hosted admin" in page.text
 
 
 def test_admin_sees_the_queue_and_reviews_as_themselves(
