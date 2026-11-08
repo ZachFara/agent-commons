@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 import tools.agent_eval
-from tools.eval import github_tasks, repos, runner
+from tools.eval import github_tasks, holdout, repos, runner
 from tools.eval.model import Discovery
 from tools.eval.runner import grade_proposal, is_version_word, mentions
 from tools.eval.scenarios import SCENARIOS
@@ -82,34 +82,56 @@ def test_words_match_whole(text: str, word: str, *, found: bool) -> None:
 
 
 @pytest.mark.parametrize(
-    ("word", "version"),
+    ("word", "library", "version"),
     [
-        ("9.2", True),
-        ("2.14", True),
-        ("polars 2", True),
-        ("0.11", True),
-        ("0.0.45", True),
-        ("v2", True),
-        ("python 3.14", True),
-        ("per node", False),
-        ("utc", False),
-        ("utf-8", False),
-        ("copy-on-write", False),
-        ("timezone=True", False),
-        ("text(", False),
+        ("9.2", "pytest", True),
+        ("pytest 9.2", "pytest", True),
+        ("2.14", "pydantic", True),
+        ("polars 2", "polars", True),
+        ("Polars 2", "polars", True),
+        ("0.11", "whenever", True),
+        ("0.0.45", "sqlmodel", True),
+        ("v2", "quickcache", True),
+        ("python 3.14", "python", True),
+        ("python 3.14", "sqlite3", True),  # a runtime version, whatever the library
+        # A prefix that is no library is part of the cause, not a version's label.
+        ("pep 649", "python", False),
+        ("rfc 3339", "whenever", False),
+        ("utf 8", "csvkitlite", False),
+        ("polars 2", "pytest", False),
+        ("per node", "pytest", False),
+        ("utc", "sqlmodel", False),
+        ("utf-8", "csvkitlite", False),
+        ("copy-on-write", "pandas", False),
+        ("timezone=True", "sqlmodel", False),
+        ("text(", "sqlalchemy", False),
     ],
 )
 def test_a_version_word_is_only_a_version_after_an_optional_library(
-    word: str, *, version: bool
+    word: str, library: str, *, version: bool
 ) -> None:
-    assert is_version_word(word) is version
+    assert is_version_word(word, library) is version
 
 
 PER_NODE = Discovery(
     library="pytest",
     symptom_words=("_arg2fixturedefs",),
-    cause_words=("9.2", "per node", "polars 2"),
+    cause_words=("9.2", "per node"),
 )
+
+
+def test_grading_matches_symptom_and_cause_words_from_a_words_start() -> None:
+    """Grader v1's substring hits ("view" in "reviews", "utc" in "outcomes") no longer count."""
+    discovery = Discovery(library="sqlmodel", symptom_words=("view",), cause_words=("utc",))
+    environment = {"libraries": {"sqlmodel": "0.0.45"}}
+    inside = ("the reviews page breaks", "outcomes are stored", "store the outcomes", environment)
+    graded = grade_proposal(inside, discovery)
+    assert not graded.on_topic
+    assert not graded.cause_right
+    whole = ("the view breaks", "times stored as UTC", "read them back as utc", environment)
+    graded = grade_proposal(whole, discovery)
+    assert graded.on_topic
+    assert graded.cause_right
 
 
 def test_a_proposal_whose_only_hit_is_a_version_word_has_the_cause_wrong() -> None:
@@ -222,7 +244,20 @@ def test_every_measured_scenario_and_github_task_has_a_cause_word_that_is_no_ver
     discovery: Discovery,
 ) -> None:
     """Grader v2 skips version words for `cause_right`, so a task needs at least one other."""
-    assert [word for word in discovery.cause_words if not is_version_word(word)]
+    assert [w for w in discovery.cause_words if not is_version_word(w, discovery.library)]
+
+
+def test_the_cause_words_grader_v2_skips_are_exactly_the_versions() -> None:
+    """Measured and retired scenarios alike: a change here changes how some scenario grades."""
+    retired = [holdout.WHENEVER_IGNORE_DST.discovery]
+    skipped = {
+        word
+        for discovery in [*MEASURED.values(), *retired]
+        if discovery is not None
+        for word in discovery.cause_words
+        if is_version_word(word, discovery.library)
+    }
+    assert skipped == {"9.2", "2.14", "0.0.45", "0.11", "polars 2", "3.14", "3.0", "2.1", "2.0"}
 
 
 # A recorded session (2026-10-25, hard-sqlalchemy-autoflush), trimmed to what grading reads.

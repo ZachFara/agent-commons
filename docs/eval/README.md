@@ -83,7 +83,8 @@ grader (`runner.GRADER_VERSION`):
   and plurals still match: "truncat" in "truncated", "round" in "rounding", "offset" in
   "offsets". A word starting with punctuation (".prom") needs nothing before it.
 - **Version words never make the cause right.** A cause word that is only a version, maybe after
-  a library name ("9.2", "2.14", "polars 2"), stays in the data and is skipped for
+  the discovery's `library` or "python" ("9.2", "2.14", "polars 2" for polars, "python 3.14"),
+  stays in the data and is skipped for
   `cause_right`. Every measured scenario and GitHub task must have another cause word (a test).
 - **Kept text.** Each proposal in a session's JSON keeps its `cause` and `fix`, scrubbed and cut
   like the patch excerpt, so a later grader can score it again.
@@ -232,6 +233,7 @@ Each result and ledger line also records, in every arm and in `run` and `search`
 | `patch_truncated` | true when the diff is not all of the agent's change: a changed file was over 256 KiB, or the diff over 1 MiB |
 | `patch_hash` | 16 hex digits of sha256 over the whole diff of what was read, taken with whitespace removed and blank lines dropped, so whitespace-only differences share a hash |
 | `repeat` | which of `--runs` repeats of its task, arm and model the session was (1 to N); 0 outside `arms`. Unlike `run`, the same repeat pairs across arms |
+| `grader_version` | the grader that judged the session's proposals (`runner.GRADER_VERSION`, see Grading); lines and results without it are version 1, and no report pools two versions |
 
 Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
 `conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:

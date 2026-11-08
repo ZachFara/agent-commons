@@ -138,8 +138,9 @@ EXCERPT_CUT = f"[excerpt cut at {EXCERPT_CAP} characters]"
 GRADER_VERSION = 2
 # None may come just before a word, nor just after a word that ends in a digit.
 WORD_CHARACTER = "[a-z0-9_]"
-# A cause word that names only a version, maybe after a library: "9.2", "v2", "polars 2".
-VERSION_WORD = re.compile(r"(?:[a-z][a-z0-9_.-]*\s+)?v?\d+(?:\.\d+)*")
+# A cause word that names only a version, maybe after a prefix: "9.2", "v2", "polars 2".
+# `is_version_word` accepts only the discovery's library or "python" as the prefix.
+VERSION_WORD = re.compile(r"(?:(?P<prefix>[a-z][a-z0-9_.-]*)\s+)?v?\d+(?:\.\d+)*")
 # The only hosts an experiment store may live on: scripts/test-db.sh's rule.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
 _CLONING = threading.Lock()  # one clone of the store at a time
@@ -930,7 +931,9 @@ def grade_proposal(row: tuple[Any, ...], discovery: Discovery | None) -> Proposa
         symptom=symptom,
         on_topic=any(mentions(symptom, word) for word in discovery.symptom_words),
         cause_right=any(
-            mentions(text, word) for word in discovery.cause_words if not is_version_word(word)
+            mentions(text, word)
+            for word in discovery.cause_words
+            if not is_version_word(word, discovery.library)
         ),
         pinned=pinned,
         cause=kept_cause,
@@ -954,12 +957,16 @@ def mentions(text: str, word: str) -> bool:
     return re.search(before + re.escape(word) + after, text.lower()) is not None
 
 
-def is_version_word(word: str) -> bool:
-    """Whether a cause word is only a version, maybe after a library name ("9.2", "polars 2").
+def is_version_word(word: str, library: str) -> bool:
+    """Whether a cause word is only a version, maybe after `library` or "python".
 
-    A version says when the cause arrived, not what it is, so it never makes a cause right.
+    "9.2", "polars 2" (for polars) and "python 3.14" are; "pep 649" and "rfc 3339" are not,
+    since their prefix is no library. A version says when the cause arrived, not what it is,
+    so it never makes a cause right.
     """
-    return VERSION_WORD.fullmatch(word.strip().lower()) is not None
+    match = VERSION_WORD.fullmatch(word.strip().lower())
+    prefix = match.group("prefix") if match else None
+    return match is not None and prefix in {None, library.lower(), "python"}
 
 
 def best_grade(row: tuple[Any, ...], discoveries: list[Discovery | None]) -> Proposal:
