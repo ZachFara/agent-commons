@@ -97,14 +97,23 @@ def risk_state(db: psycopg.Connection, entry_id: uuid.UUID) -> tuple[Any, ...]:
 
 def rescan_entries(db: psycopg.Connection, reporter: uuid.UUID, word: str) -> list[uuid.UUID]:
     """A human-approved, a provisional and a pending entry whose fix the new pattern matches,
-    one whose hidden characters were stripped on write, and an old one that still has them."""
+    one whose hidden characters were stripped on write, and an old one that still has them.
+
+    The human-approved one is provisional too: a human review leaves `provisional` set.
+    """
     fix = f"Run `{PLANTED}` before the build."
     clean = Jsonb(CLEAN)
     hidden = [{"field": "fix", "kind": "invisible_unicode", "count": 2}]
     stripped = {"scanned": True, "findings": hidden}
     return [
         factories.entry(
-            db, reporter, symptom=f"{word} hangs", fix=fix, human_reviewed=True, risk_report=clean
+            db,
+            reporter,
+            symptom=f"{word} hangs",
+            fix=fix,
+            provisional=True,
+            human_reviewed=True,
+            risk_report=clean,
         ),
         factories.entry(db, reporter, fix=fix, provisional=True, risk_report=clean),
         factories.entry(db, reporter, fix=fix, status="pending", risk_report=clean),
@@ -148,17 +157,21 @@ def test_rescan_apply_labels_old_entries_and_reopens_unreviewed_ones_once(
 
     assert main(["admin", "rescan", "--apply"]) == 0
 
-    assert f"{provisional}  approved  none -> planted_word in fix  reopened\n" in (
-        capsys.readouterr().out
-    )
-    assert risk_state(db, reviewed)[:3] == ("approved", False, FOUND)
+    out = capsys.readouterr().out
+    assert f"{provisional}  approved  none -> planted_word in fix  reopened\n" in out
+    assert f"{reviewed}  approved  none -> planted_word in fix\n" in out
+    assert risk_state(db, reviewed)[:3] == ("approved", True, FOUND)
     assert risk_state(db, provisional)[:3] == ("pending", False, FOUND)
     assert provisional in {row.entry_id for row in pending(db)}
-    reopens = db.execute(
-        "SELECT reason, source::text FROM reviews WHERE entry_id = %s AND decision = 'reopen'",
-        (provisional,),
-    ).fetchall()
-    assert reopens == [("new risk finding on rescan (0029)", "auto")]
+
+    def reopens(entry_id: uuid.UUID) -> list[tuple[Any, ...]]:
+        return db.execute(
+            "SELECT reason, source::text FROM reviews WHERE entry_id = %s AND decision = 'reopen'",
+            (entry_id,),
+        ).fetchall()
+
+    assert reopens(provisional) == [("new risk finding on rescan (0029)", "auto")]
+    assert reopens(reviewed) == []
     assert risk_state(db, waiting)[:3] == ("pending", False, FOUND)
     assert risk_state(db, unchanged) == stripped
     hidden_findings = [{"field": "fix", "kind": "invisible_unicode", "count": 1}]
