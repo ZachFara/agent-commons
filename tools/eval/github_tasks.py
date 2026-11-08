@@ -264,9 +264,9 @@ PIP_TOOLS = GitHubTask(
 
 
 # Mistune 3.4.0 (2026-10-19) rewrote link parsing ("Refactor link and emphasis parsing",
-# lepture/mistune@bde6ad7, committed 2026-07-22): it parses a link's or an image's label before
-# it knows the text is a label, so inline plugins no longer see `state.in_link` or
-# `state.in_image` set while they run on it.
+# lepture/mistune@bde6ad7, authored 2026-07-22, committed 2026-08-21): it parses a link's or an
+# image's label before it knows the text is a label, so inline plugins no longer see
+# `state.in_link` or `state.in_image` set while they run on it.
 # Release notes: https://github.com/lepture/mistune/releases/tag/v3.4.0
 MISTUNE_LINK_LABELS = Upstream(
     library="mistune",
@@ -298,13 +298,12 @@ MARKLASSIAN = GitHubTask(
     upstream=MISTUNE_LINK_LABELS,
     discovery=Discovery(
         symptom_words=("mention", "link text", "alt text"),
+        # No phrase built on a bare "before" or "label" ("labels before", "parsed before"): a fix
+        # that only treats the symptom says them too ("strip mentions from the label before
+        # building the link mark"). Nothing with `in_link` or `in_image`: the base reads them.
         cause_words=(
             "parses link labels",
             "parses link and image labels",
-            "parses the label",
-            "labels before",
-            "label before",
-            "parsed before",
             "before it knows",
             "new link parser",
             "3.4",
