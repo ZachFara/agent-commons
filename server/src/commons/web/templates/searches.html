@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import pct %}
 {% block title %}Searches{% endblock %}
 {% block content %}
 <header class="page"><div><h1>Searches</h1><div class="sub">What agents looked for, starting with what the store didn't have. Queries are redacted. Last 30 days unless noted.</div></div></header>
@@ -15,6 +16,32 @@
     <td class="num">{{ m.times }}</td><td class="num">{{ m.reporters }}</td>
     <td style="white-space: nowrap">{{ m.last_seen.strftime("%b %d %H:%M") }}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">Every search found something, or nobody has searched yet.</div>{% endif %}</section>
+<section class="card" style="margin-top: 16px"><h2>Docs looked up <span class="hint">Context7 lookups the hooks saw, beside Commons searches in the same task. Libraries and versions only; no doc text is stored.</span></h2>
+  {% if lookups.lookups %}<div class="grid kpis">
+    <div class="card kpi"><div class="label">Lookups</div><div class="value">{{ lookups.lookups }}</div>
+      <div class="note">in {{ lookups.tasks }} task{{ "" if lookups.tasks == 1 else "s" }}</div></div>
+    <div class="card kpi"><div class="label">Missed, then looked up</div><div class="value">{{ lookups.missed_then_looked_up }}</div>
+      <div class="note">tasks where Commons found nothing and a lookup followed</div></div>
+    <div class="card kpi"><div class="label">Looked up, never searched</div><div class="value">{{ lookups.looked_up_without_search }}</div>
+      <div class="note">tasks with a lookup and no Commons search</div></div>
+    <div class="card kpi"><div class="label">Found, still looked up</div><div class="value">{{ lookups.hit_and_looked_up }}</div>
+      <div class="note">tasks with a Commons hit that also looked up docs</div></div>
+  </div>
+  <h2>Commons found nothing, docs were looked up</h2>
+  {% if missed_lookups %}<div class="table-wrap"><table>
+  <thead><tr><th>When</th><th>Task</th><th>Missed query</th><th>Looked up</th><th>Model</th><th>Lookup</th></tr></thead><tbody>
+  {% for m in missed_lookups %}<tr><td style="white-space: nowrap">{{ m.created_at.strftime("%b %d %H:%M") }}</td>
+    <td class="mono" title="{{ m.task_id }}">{{ m.task_id | string | truncate(8, true, "") }}</td>
+    <td class="clip mono" title="{{ m.query }}">{{ m.query }}</td><td class="mono">{{ m.libraries }}</td>
+    <td>{{ m.model }}</td><td>{{ m.timing }} the search</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">No task that missed in Commons looked up docs.</div>{% endif %}
+  <h2 style="margin-top: 16px">Libraries looked up</h2>
+  <div class="table-wrap"><table>
+  <thead><tr><th>Library</th><th>Version</th><th class="num">Lookups</th><th class="num">Tasks</th><th class="num">Tasks with a Commons hit</th></tr></thead><tbody>
+  {% for l in libraries %}<tr><td class="mono">{{ l.library_id }}</td><td class="mono">{{ l.version or "–" }}</td>
+    <td class="num">{{ l.lookups }}</td><td class="num">{{ l.tasks }}</td><td class="num">{{ pct(l.hit_share) }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="empty">No doc lookups in the last 30 days. Hooks installed before lookups were recorded miss them; <code>commons doctor</code> says if yours need <code>commons install-hooks</code>.</div>{% endif %}</section>
 <section class="card" style="margin-top: 16px"><h2>Recent searches <span class="hint">newest first, all time</span></h2>
   {% if recent %}<div class="table-wrap"><table>
   <thead><tr><th>When</th><th>Reporter</th><th>Model</th><th>Query</th><th class="num">Results</th><th>Privacy</th><th></th></tr></thead><tbody>
