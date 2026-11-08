@@ -113,13 +113,14 @@ Proposed. Each item has options and a recommendation.
      - For agents: a pointer they can pass straight to `query-docs`, which saves the
        `resolve-library-id` call. They still need Context7 to read the docs, and the pointer is
        only as good as the server's resolve.
-     - Costs: the store makes outbound calls for the first time, with a Context7 key, rate
-       limits, and latency and failures on every miss. The server reads Context7's responses,
-       which the hook never does. Only library names may be sent: the query can quote the
+     - Costs: the store makes its first call to a third party while serving a request, with a
+       Context7 key, rate limits, and latency and failures on every miss. The server reads
+       Context7's responses, which the hook never does. Only library names may be sent: the query can quote the
        user's code, and Commons forwarding it to a third party goes past what
        0016-hooks-and-observed-outcomes.md lets leave the machine and what item 1 (a) keeps. A
-       `local` store (0014) sends nothing anywhere today, so it would be off there. Server-side
-       resolves are not agent lookups and stay out of `doc_lookups`.
+       `local` store (0014) calls no third party today (telemetry export is opt-in and goes
+       only to the configured endpoint), so it would be off there. Server-side resolves are
+       not agent lookups and stay out of `doc_lookups`.
      - Eval: a named condition too, since the response changes what agents see. It needs item
        7's setup, plus network access for the eval's own server.
    - Recommend (a) now, and (b) as the first fallback condition once item 7's setup exists. (b)
