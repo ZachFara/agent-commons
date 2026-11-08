@@ -96,6 +96,7 @@ QUOTE_OPENERS: dict[str, tuple[str, ...]] = {
     "`": (),
 }
 QUOTE_CLOSERS = {"'": "'", "$'": "'", '"': '"', "`": "`", "${": "}"}
+WORD_START_HASH = re.compile(r"(?<!\S)#")  # a `#` at the start or after whitespace
 SEPARATORS = ";&|()`\n"
 PUNCTUATION = SEPARATORS + "<>"
 WRAPPERS = frozenset(
@@ -256,6 +257,18 @@ def opening(text: str, index: int, context: str) -> str:
     return next((start for start in QUOTE_OPENERS[context] if text.startswith(start, index)), "")
 
 
+def rest_after_substitution(rest: str) -> str:
+    """Return the text from a `$(` inside quotes on, which bash re-parses: kept as it is.
+
+    Raise ValueError if a `#` starts a word in it: that may be a comment, and kept, it may hide
+    a command inside what reads as a quote.
+    """
+    if WORD_START_HASH.search(rest):
+        msg = "can't tell where a comment starts after $( inside quotes; simplify the command"
+        raise ValueError(msg)
+    return rest
+
+
 def strip_comments(text: str) -> str:
     """Return a command line without its comments, as bash reads them.
 
@@ -274,7 +287,7 @@ def strip_comments(text: str) -> str:
             continue
         step = 2 if text[index] == "\\" and context != "'" else 1
         if context in {'"', "${"} and text.startswith("$(", index):
-            return "".join(kept) + text[index:]  # bash re-parses inside "$(": keep the rest
+            return "".join(kept) + rest_after_substitution(text[index:])
         if step == 1 and context and text.startswith(QUOTE_CLOSERS[context], index):
             stack.pop()
         elif step == 1 and (start := opening(text, index, context)):
