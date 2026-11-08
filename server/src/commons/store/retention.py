@@ -20,3 +20,21 @@ def fold_searches_before(conn: Connection, cutoff: datetime) -> int:
         (cutoff,),
     )
     return conn.execute("DELETE FROM searches WHERE created_at < %s", (cutoff,)).rowcount
+
+
+def fold_doc_lookups_before(conn: Connection, cutoff: datetime) -> int:
+    """Fold doc lookups made before `cutoff` into monthly counts and delete them; return how many.
+
+    Months are counted by library and version. As with searches, a second run finds nothing
+    left to fold, and excluded lookups are deleted without being counted.
+    """
+    conn.execute(
+        "INSERT INTO doc_lookup_months (month, library_id, version, lookups) "
+        "SELECT date_trunc('month', created_at AT TIME ZONE 'UTC')::date, library_id, version, "
+        "  count(*) "
+        "FROM counted_doc_lookups WHERE created_at < %s GROUP BY 1, 2, 3 "
+        "ON CONFLICT (month, library_id, version) DO UPDATE SET "
+        "  lookups = doc_lookup_months.lookups + EXCLUDED.lookups",
+        (cutoff,),
+    )
+    return conn.execute("DELETE FROM doc_lookups WHERE created_at < %s", (cutoff,)).rowcount

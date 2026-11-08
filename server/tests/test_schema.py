@@ -129,6 +129,7 @@ TABLES = {
         "undone_by",
     },
     "search_months": {"month", "query", "searches", "misses"},
+    "doc_lookup_months": {"month", "library_id", "version", "lookups"},
     "outcomes": {
         "retrieval_id",
         "used",

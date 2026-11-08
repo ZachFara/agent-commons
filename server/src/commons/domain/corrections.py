@@ -7,7 +7,7 @@ from uuid import UUID
 from commons.domain.errors import InvalidInputError
 from commons.domain.outcomes import OutcomeKind, Usage
 
-CorrectionTable = Literal["outcomes", "retrievals", "searches"]
+CorrectionTable = Literal["outcomes", "retrievals", "searches", "doc_lookups"]
 CorrectionField = Literal["used", "outcome", "excluded"]
 CORRECTION_TABLES: tuple[CorrectionTable, ...] = get_args(CorrectionTable)
 CORRECTION_FIELDS: tuple[CorrectionField, ...] = get_args(CorrectionField)
@@ -17,6 +17,7 @@ _FIELDS: dict[CorrectionTable, frozenset[CorrectionField]] = {
     "outcomes": frozenset({"used", "outcome", "excluded"}),
     "retrievals": frozenset({"excluded"}),
     "searches": frozenset({"excluded"}),
+    "doc_lookups": frozenset({"excluded"}),
 }
 _USAGES: frozenset[str | None] = frozenset({*get_args(Usage), None})
 _OUTCOMES: frozenset[str] = frozenset(get_args(OutcomeKind))

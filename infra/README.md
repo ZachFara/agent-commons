@@ -107,7 +107,8 @@ Targets: lose at most a day of data (RPO 24 h), and be back within an hour (RTO 
   Secret Manager, and the backup and state buckets, whose contents Google may delete. Neon is
   outside Google Cloud and keeps running.
 - **Retention**: after each backup, `commons retain` folds searches older than 180 days into
-  `search_months` (query, searches, misses) and deletes them. Cloud Logging keeps call logs for
+  `search_months` (query, searches, misses) and doc lookups into `doc_lookup_months` (library,
+  version, lookups), and deletes them. Cloud Logging keeps call logs for
   its default 30 days; hook spools on each machine keep 30 days.
 
 ### When an alert fires

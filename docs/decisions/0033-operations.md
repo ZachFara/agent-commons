@@ -60,3 +60,9 @@ Implementation notes (T43, 2026-10-31):
   machine whose SessionStart re-ranks.
 - Each night's dump is also restored into a scratch Postgres before upload, so a broken dump
   fails that night rather than at the monthly drill.
+
+Implementation notes (MIT-623, 2026-11-07), amending the retention list as
+`2026-11-07-MIT-564-context7-fallback.md` records:
+- `doc_lookups` rows older than 180 days are folded into `doc_lookup_months` (month, library
+  and version, count), then deleted, in the same `commons retain` run as `searches`. Excluded
+  lookups are deleted without being counted, as excluded searches are.

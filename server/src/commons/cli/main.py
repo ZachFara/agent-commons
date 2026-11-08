@@ -178,7 +178,9 @@ def _correct_arguments(parser: argparse.ArgumentParser) -> None:
     change.add_argument("row_id", type=UUID)
     change.add_argument("field", choices=CORRECTION_FIELDS)
     change.add_argument("value", help="used: yes|partial|no|unknown; excluded: true|false")
-    task = actions.add_parser("exclude-task", help="Exclude a task's retrievals and searches.")
+    task = actions.add_parser(
+        "exclude-task", help="Exclude a task's retrievals, searches and lookups."
+    )
     task.add_argument("task_id", type=UUID)
     undo = actions.add_parser("undo", help="Undo a correction (and the rest of its batch).")
     undo.add_argument("correction_id", type=UUID)
@@ -485,7 +487,10 @@ def _rank(_args: argparse.Namespace) -> int:
 def _retain(_args: argparse.Namespace) -> int:
     with connect() as conn:
         folded = retention.apply_retention(conn)
-    sys.stdout.write(f"folded {folded} searches older than 180 days into monthly counts\n")
+    sys.stdout.write(
+        f"folded {folded.searches} searches and {folded.doc_lookups} doc lookups older than "
+        "180 days into monthly counts\n"
+    )
     return 0
 
 
