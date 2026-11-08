@@ -15,10 +15,12 @@ from typing import Any
 
 import pytest
 import tools.agent_eval
-from tools.eval import container, repos
+from tools.eval import container, repos, runner
 from tools.eval.github_tasks import scenario
 from tools.eval.model import GitHubTask
 
+from commons.service import agent_text
+from test_eval_grader import RECORDED
 from test_eval_repos import FIXED, NEW_TEST, fixture_task
 
 IMAGE_PYTHON = "3.12"  # the image's interpreter, so uv downloads none
@@ -127,6 +129,32 @@ def test_the_graded_run_of_an_edited_project_is_in_a_container(
     assert repos.run_tests(task, project, repos.run_on_host).returncode != 0  # no /.dockerenv
 
 
+def test_grading_a_session_runs_the_tests_in_a_container(
+    tmp_path: Path, planted: Path, database_url: str
+) -> None:
+    """`runner.grade` on a repo task passes only if its tests ran in the container."""
+    task = contained_task(tmp_path, planted)
+    project, pristine = tmp_path / "project", tmp_path / "pristine"
+    repos.materialize(task, project)
+    repos.materialize(task, pristine)
+    repos.prepare(task, project, repos.run_on_host)  # the agent's .venv, as `run_one` sets it up
+    (project / "calc.py").write_text(FIXED, encoding="utf-8")  # the agent's fix
+    session = runner.Session(
+        scenario(task),
+        "c",
+        1,
+        project,
+        tmp_path,
+        database_url,
+        agent_text.SHIPPED,
+        "commons",
+        pristine,
+    )
+    graded = runner.grade(session, RECORDED)
+    assert graded.tests_pass is True
+    assert "calc.py" in graded.patch
+
+
 def test_a_graded_run_whose_setup_fails_counts_as_failing(tmp_path: Path, planted: Path) -> None:
     task = replace(contained_task(tmp_path, planted), setup="false")  # fails, offline
     project = tmp_path / "project"
@@ -221,6 +249,7 @@ def test_a_run_past_its_time_is_removed_and_reported_as_timed_out(
     assert started["timeout"] == container.TEST_SECONDS + container.GRACE_SECONDS
     name = _value(started["command"], "--name")
     assert removed["command"] == ["docker", "rm", "--force", name]
+    assert removed["timeout"] == container.GRACE_SECONDS
     assert done.returncode == container.TIMED_OUT
     assert done.args == ["sleep", "999"]
 
@@ -228,9 +257,7 @@ def test_a_run_past_its_time_is_removed_and_reported_as_timed_out(
 # ---------------------------------------------------------------- the command line
 
 
-@pytest.mark.parametrize(
-    ("flags", "on_host"), [([], False), (["--in-container"], False), (["--on-host"], True)]
-)
+@pytest.mark.parametrize(("flags", "on_host"), [([], False), (["--on-host"], True)])
 def test_check_runs_in_a_container_unless_on_host_is_passed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -253,12 +280,6 @@ def test_check_runs_in_a_container_unless_on_host_is_passed(
     assert seen == [repos.run_on_host if on_host else container.run]
     warned = tools.agent_eval.ON_HOST_WARNING in capsys.readouterr().err
     assert warned is on_host
-
-
-def test_check_refuses_both_places_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sys, "argv", ["agent_eval.py", "check", "--in-container", "--on-host"])
-    with pytest.raises(SystemExit):
-        tools.agent_eval.main()
 
 
 def test_make_eval_check_runs_in_a_container() -> None:

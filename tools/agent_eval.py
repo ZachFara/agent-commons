@@ -841,30 +841,17 @@ def arms_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def check_options(parser: argparse.ArgumentParser) -> None:
-    """Add the `check` command's options: in a container (the default), or on the host."""
-    where = parser.add_mutually_exclusive_group()
-    where.add_argument(
-        "--in-container",
-        dest="on_host",
-        action="store_false",
-        default=False,  # store_false would default to True: on the host
-        help="Run GitHub tasks' install and tests in throwaway containers (the default).",
-    )
-    where.add_argument(
-        "--on-host",
-        action="store_true",
-        help="Run them on this machine instead, as you: refused without this flag.",
-    )
-
-
 def main() -> int:
     """Dispatch to check, run, or report."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    check_options(commands.add_parser("check"))
+    commands.add_parser("check").add_argument(
+        "--on-host",
+        action="store_true",
+        help="Run GitHub tasks' install and tests on this machine, as you, not in containers.",
+    )
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--scenario", action="append", choices=sorted(SCENARIOS))
     run_parser.add_argument("--runs", type=int, default=1)

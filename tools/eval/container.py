@@ -12,6 +12,7 @@ import os
 import subprocess
 import threading
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 
@@ -102,6 +103,8 @@ def run(command: list[str], project: Path, phase: Phase) -> "subprocess.Complete
                 timeout=limit + GRACE_SECONDS,
             )
         except subprocess.TimeoutExpired:
-            subprocess.run(["docker", "rm", "--force", name], capture_output=True, check=False)
+            remove = ["docker", "rm", "--force", name]
+            with suppress(subprocess.TimeoutExpired):  # a hung daemon doesn't hang the harness
+                subprocess.run(remove, capture_output=True, check=False, timeout=GRACE_SECONDS)
             return subprocess.CompletedProcess(command, TIMED_OUT, "", f"timed out after {limit}s")
     return subprocess.CompletedProcess(command, done.returncode, done.stdout, done.stderr)
