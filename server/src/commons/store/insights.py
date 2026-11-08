@@ -151,9 +151,11 @@ def entry_retrievals(conn: Connection, entry_id: UUID, limit: int = 50) -> list[
         "r.excluded OR coalesce(o.excluded, false) AS excluded, "
         "r.created_at, r.task_id, r.query, r.rank_position, rp.pseudonym AS reporter, "
         "m.name AS model, o.used::text AS used, o.outcome::text AS outcome, "
-        "o.evidence->>'outcome_source' AS source, o.agent_assessment "
+        "o.evidence->>'outcome_source' AS source, o.agent_assessment, "
+        "left(pv.hash, 12) AS prompt_hash, pv.label AS prompt_label "
         "FROM retrievals r JOIN reporters rp ON rp.id = r.reporter_id "
         "JOIN models m ON m.id = r.model_id LEFT JOIN outcomes o ON o.retrieval_id = r.id "
+        "LEFT JOIN prompt_versions pv ON pv.id = r.prompt_version_id "
         "WHERE r.entry_id = %(id)s ORDER BY r.created_at DESC LIMIT %(limit)s",
         {"id": entry_id, "limit": limit},
     )
@@ -257,6 +259,99 @@ def models(conn: Connection) -> list[Row]:
         "GROUP BY m.id, m.name ORDER BY retrievals DESC",
         _SUCCESS,
     )
+
+
+# One row per served prompt version, plus one for rows from before versioning (decision MIT-566).
+# Every figure follows the task: a task, its searches, retrievals, outcomes and proposals count
+# under the version of its earliest search or proposal, because a session that began before a
+# redeploy keeps reading the old text while its later rows carry the new stamp. A row with no
+# task (or whose task has no counted search or proposal) counts under its own stamp. A task
+# whose rows carry two hashes straddled a change. First and last seen use the rows' own stamps.
+# Rates come with their n, the count they are a share of.
+_PROMPT_VERSIONS = """
+WITH task_rows AS (
+    SELECT task_id, prompt_version_id, created_at FROM counted_searches
+    UNION ALL
+    SELECT task_id, prompt_version_id, created_at FROM entries WHERE task_id IS NOT NULL
+), task_first AS (
+    SELECT DISTINCT ON (task_id) task_id, prompt_version_id FROM task_rows
+    ORDER BY task_id, created_at, prompt_version_id NULLS FIRST
+), task_counts AS (
+    SELECT f.prompt_version_id, count(*) AS tasks,
+           count(*) FILTER (WHERE spread.hashes > 1) AS straddled
+    FROM task_first f JOIN (
+        SELECT task_id, count(DISTINCT prompt_version_id) AS hashes FROM task_rows
+        GROUP BY task_id
+    ) spread USING (task_id)
+    GROUP BY f.prompt_version_id
+), search_counts AS (
+    SELECT CASE WHEN f.task_id IS NULL THEN s.prompt_version_id ELSE f.prompt_version_id END
+               AS prompt_version_id,
+           count(*) AS searches,
+           count(*) FILTER (WHERE s.hit_count = 0) AS misses
+    FROM counted_searches s LEFT JOIN task_first f ON f.task_id = s.task_id
+    GROUP BY 1
+), retrieval_counts AS (
+    SELECT CASE WHEN f.task_id IS NULL THEN r.prompt_version_id ELSE f.prompt_version_id END
+               AS prompt_version_id,
+           count(*) AS retrievals,
+           count(o.id) FILTER (WHERE o.agent_assessment IS NOT NULL) AS reported,
+           count(o.id) FILTER (WHERE o.used IN ('yes', 'partial')) AS used,
+           count(o.id) FILTER (WHERE o.used IS NOT NULL) AS used_known,
+           count(o.id) FILTER (WHERE o.evidence->>'outcome_source' = 'hook'
+             AND o.outcome = ANY(%(success)s::outcome_kind[])) AS observed_successes,
+           count(o.id) FILTER (WHERE o.evidence->>'outcome_source' = 'hook'
+             AND o.outcome NOT IN ('unknown', 'abandoned')) AS observed
+    FROM counted_retrievals r LEFT JOIN counted_outcomes o ON o.retrieval_id = r.id
+    LEFT JOIN task_first f ON f.task_id = r.task_id
+    GROUP BY 1
+), proposal_counts AS (
+    SELECT CASE WHEN f.task_id IS NULL THEN e.prompt_version_id ELSE f.prompt_version_id END
+               AS prompt_version_id,
+           count(*) AS proposals,
+           count(*) FILTER (WHERE e.status = 'approved') AS approved
+    FROM entries e LEFT JOIN task_first f ON f.task_id = e.task_id
+    GROUP BY 1
+), seen AS (
+    SELECT prompt_version_id, min(created_at) AS first_seen, max(created_at) AS last_seen
+    FROM (
+        SELECT prompt_version_id, created_at FROM counted_searches
+        UNION ALL
+        SELECT prompt_version_id, created_at FROM counted_retrievals
+        UNION ALL
+        SELECT prompt_version_id, created_at FROM entries
+    ) stamped
+    GROUP BY prompt_version_id
+), versions AS (
+    SELECT id, hash, label, surfaces, created_at FROM prompt_versions
+    UNION ALL
+    SELECT NULL, NULL, NULL, NULL, NULL
+)
+SELECT v.id, v.hash, left(v.hash, 12) AS short_hash, v.label, v.surfaces,
+       coalesce(seen.first_seen, v.created_at) AS first_seen, seen.last_seen,
+       coalesce(t.tasks, 0) AS tasks, coalesce(t.straddled, 0) AS straddled,
+       coalesce(s.searches, 0) AS searches, coalesce(s.misses, 0) AS misses,
+       coalesce(r.retrievals, 0) AS retrievals,
+       r.reported::float / nullif(r.retrievals, 0) AS reported_rate,
+       r.used::float / nullif(r.used_known, 0) AS used_rate,
+       coalesce(r.used_known, 0) AS used_n,
+       r.observed_successes::float / nullif(r.observed, 0) AS observed_success_rate,
+       coalesce(r.observed, 0) AS observed_n,
+       coalesce(p.proposals, 0) AS proposals, coalesce(p.approved, 0) AS approved
+FROM versions v
+LEFT JOIN task_counts t ON t.prompt_version_id IS NOT DISTINCT FROM v.id
+LEFT JOIN search_counts s ON s.prompt_version_id IS NOT DISTINCT FROM v.id
+LEFT JOIN retrieval_counts r ON r.prompt_version_id IS NOT DISTINCT FROM v.id
+LEFT JOIN proposal_counts p ON p.prompt_version_id IS NOT DISTINCT FROM v.id
+LEFT JOIN seen ON seen.prompt_version_id IS NOT DISTINCT FROM v.id
+WHERE v.id IS NOT NULL OR seen.first_seen IS NOT NULL
+ORDER BY v.id IS NOT NULL, first_seen, v.hash
+"""
+
+
+def prompt_versions(conn: Connection) -> list[Row]:
+    """Outcomes per served prompt version, oldest first; `id` None is before versioning."""
+    return _rows(conn, _PROMPT_VERSIONS, _SUCCESS)
 
 
 def _rows(conn: Connection, query: str, params: dict[str, Any]) -> list[Row]:
