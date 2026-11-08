@@ -106,18 +106,24 @@ def _hooks() -> Check:
         settings = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         return Check("hooks", "fail", f"no readable {path}; run `commons install-hooks`")
-    events = [
-        event
+    ours = [
+        (event, str(group.get("matcher", "")))
         for event, groups in settings.get("hooks", {}).items()
         for group in groups
-        for hook in group.get("hooks", [])
-        if is_commons_hook(str(hook.get("command", "")))
+        if any(is_commons_hook(str(hook.get("command", ""))) for hook in group.get("hooks", []))
     ]
     expected = {"SessionStart", "PostToolUse", "PostToolUseFailure", "Stop"}
-    missing = expected - set(events)
+    missing = expected - {event for event, _ in ours}
     if missing:
         return Check(
             "hooks", "fail", f"missing {', '.join(sorted(missing))}; run `commons install-hooks`"
+        )
+    # Hooks installed before MIT-622 don't see Context7 lookups.
+    if not any(event == "PostToolUse" and "query-docs" in m for event, m in ours):
+        return Check(
+            "hooks",
+            "warn",
+            "PostToolUse doesn't match Context7's query-docs; run `commons install-hooks`",
         )
     return Check("hooks", "ok", f"installed in {path}")
 

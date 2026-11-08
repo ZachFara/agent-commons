@@ -78,6 +78,18 @@ def test_merge_keeps_other_tools_and_replaces_stale_commons_hooks() -> None:
     assert merge_hooks(merged, commons_hooks()) == merged
 
 
+def test_merge_replaces_an_old_matcher_post_tool_use_group() -> None:
+    """An install from before MIT-622 has a PostToolUse group that can't see query-docs."""
+    old = {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [{"type": "command", "command": '"/old/bin/commons" hook post-tool-use'}],
+    }
+    settings: dict[str, Any] = {"hooks": {"PostToolUse": [OTHER_TOOL, old]}}
+    merged = merge_hooks(settings, commons_hooks())
+    assert merged["hooks"]["PostToolUse"] == [OTHER_TOOL, *commons_hooks()["PostToolUse"]]
+    assert merged["hooks"]["PostToolUse"][1]["matcher"] == POST_TOOL_USE_MATCHER
+
+
 def test_install_hooks_command_writes_backs_up_and_is_idempotent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
