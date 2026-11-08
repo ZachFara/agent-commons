@@ -34,40 +34,46 @@ from commons.service import agent_text
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
-from tools.eval import runner  # noqa: E402
+from tools.eval import repos, runner  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tools.eval.model import Scenario
+
 RESULTS = REPO / ".scratch" / "eval"
 
 
 def check() -> int:
-    """Confirm each scenario's tests fail as shipped; report what's broken."""
+    """Confirm each scenario's tests fail as shipped (a GitHub task's: and pass with the fix)."""
     broken = 0
     for name, scenario in sorted(SCENARIOS.items()):
-        with tempfile.TemporaryDirectory() as tmp:
-            project, site = Path(tmp) / "project", Path(tmp) / "site"
-            runner.write_files(project, scenario.files)
-            runner.write_files(site, scenario.libraries)
-            tests = subprocess.run(
-                scenario.test_command.split(),
-                cwd=project,
-                env={**os.environ, "PYTHONPATH": str(site)},
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        outcome = (
-            "fails as designed" if tests.returncode == 1 else f"UNEXPECTED exit {tests.returncode}"
-        )
-        broken += tests.returncode != 1
-        last = (
-            tests.stdout.strip().splitlines()[-1] if tests.stdout.strip() else tests.stderr[-120:]
-        )
-        print(f"{name:<26} {outcome}: {last}")
+        ok, outcome = repos.check(scenario.repo) if scenario.repo else check_shipped(scenario)
+        broken += not ok
+        print(f"{name:<26} {outcome}")
     return 1 if broken else 0
+
+
+def check_shipped(scenario: "Scenario") -> tuple[bool, str]:
+    """Run a written scenario's tests as shipped; they must fail (pytest's exit 1)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project, site = Path(tmp) / "project", Path(tmp) / "site"
+        runner.write_files(project, scenario.files)
+        runner.write_files(site, scenario.libraries)
+        tests = subprocess.run(
+            scenario.test_command.split(),
+            cwd=project,
+            env={**os.environ, "PYTHONPATH": str(site)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    outcome = (
+        "fails as designed" if tests.returncode == 1 else f"UNEXPECTED exit {tests.returncode}"
+    )
+    last = tests.stdout.strip().splitlines()[-1] if tests.stdout.strip() else tests.stderr[-120:]
+    return tests.returncode == 1, f"{outcome}: {last}"
 
 
 def run(args: argparse.Namespace) -> int:
@@ -165,6 +171,9 @@ def run_jobs(jobs: list[runner.Job], args: argparse.Namespace) -> int:
     if args.resume:
         jobs = [job for job in jobs if not finished(transcripts, args.condition, job)]
         print(f"resuming: {len(jobs)} sessions without a clean result")
+    # Fetch each repository once, before parallel sessions would fetch into one cache at once.
+    for task in {job.scenario.repo for job in jobs if job.scenario.repo is not None}:
+        repos.fetch(task)
     results: list[runner.Result] = []
     # `run` takes one model; `search` names one per job, so this is only a fallback there.
     default_model = args.model if isinstance(args.model, str) else "sonnet"
