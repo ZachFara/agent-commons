@@ -350,10 +350,11 @@ def append_ledger(results: list[runner.Result]) -> None:
                 "wall_clock_seconds": result.wall_clock_seconds,
                 "retrievals": [asdict(retrieval) for retrieval in result.retrievals],
                 # Never the whole patch: it stays next to the transcript (`runner.save_result`).
-                "patch_excerpt": runner.patch_excerpt(result.patch),
+                "patch_excerpt": runner.excerpt(result.patch),
                 "patch_truncated": result.patch_truncated,
                 "patch_hash": result.patch_hash,
                 "repeat": result.repeat,
+                "grader_version": result.grader_version,
             }
             ledger.write(json.dumps(line) + "\n")
 
@@ -498,26 +499,42 @@ HEADER = (
 )
 
 
+def grader_version(row: Row) -> int:
+    """Return the grader version a result was graded by; a result without one is version 1."""
+    return int(row.get("grader_version") or 1)
+
+
+def by_grader(rows: list[Row]) -> dict[int, list[Row]]:
+    """Split results by grader version, so no figure mixes two graders."""
+    groups: dict[int, list[Row]] = defaultdict(list)
+    for row in rows:
+        groups[grader_version(row)].append(row)
+    return dict(sorted(groups.items()))
+
+
 def report(args: argparse.Namespace) -> int:
-    """Summarize saved results per scenario and condition."""
+    """Summarize saved results per condition, grader version, and scenario."""
     conditions = args.condition or sorted(p.name for p in RESULTS.iterdir() if p.is_dir())
     for condition in conditions:
         rows: list[Row] = [
             json.loads(path.read_text(encoding="utf-8"))
             for path in sorted((RESULTS / condition).glob("*.json"))
         ]
-        if not rows:
-            continue
-        print(f"\n== {condition}: {len(rows)} sessions")
-        by_scenario: dict[str, list[Row]] = defaultdict(list)
-        for row in rows:
-            by_scenario[str(row["scenario"])].append(row)
-        print(HEADER)
-        for name, group in sorted(by_scenario.items()):
-            print(f"{name:<26} {_scenario_line(group)}")
-        for name in sorted(by_scenario.keys() & holdout.RETIRED.keys()):
-            print(f"{name} is retired, not measured: {holdout.RETIRED[name]}")
+        for version, graded in by_grader(rows).items():
+            print(f"\n== {condition}: {len(graded)} sessions, grader v{version}")
+            _report_scenarios(graded)
     return 0
+
+
+def _report_scenarios(rows: list[Row]) -> None:
+    by_scenario: dict[str, list[Row]] = defaultdict(list)
+    for row in rows:
+        by_scenario[str(row["scenario"])].append(row)
+    print(HEADER)
+    for name, group in sorted(by_scenario.items()):
+        print(f"{name:<26} {_scenario_line(group)}")
+    for name in sorted(by_scenario.keys() & holdout.RETIRED.keys()):
+        print(f"{name} is retired, not measured: {holdout.RETIRED[name]}")
 
 
 def _scenario_line(group: list[Row]) -> str:
@@ -811,12 +828,29 @@ def _comparison_lines(label: str, comparison: Comparison | None) -> list[str]:
 
 
 def compare(args: argparse.Namespace) -> int:
-    """Print the arms report of one condition: per arm, the comparisons, verdict, and herding."""
+    """Print the arms report of one condition: per arm, the comparisons, verdict, and herding.
+
+    Each grader version gets a report of its own, verdict included, and none is pooled.
+    """
     rows = condition_rows(args.condition)
     if not rows:
         print(f"no trials for condition {args.condition}")
         return 0
-    print(f"== {args.condition}: {len(rows)} sessions")
+    groups = by_grader(rows)
+    if len(groups) > 1:
+        versions = ", ".join(f"v{version}" for version in groups)
+        print(
+            f"{args.condition} holds results of graders {versions}: each is reported on its "
+            "own, with its own verdict, and never pooled"
+        )
+    for version, graded in groups.items():
+        _compare_one(args.condition, version, graded)
+    return 0
+
+
+def _compare_one(condition: str, version: int, rows: list[Row]) -> None:
+    """Print the arms report of one condition's results of one grader version."""
+    print(f"== {condition}: {len(rows)} sessions, grader v{version}")
     print(
         f"{'arm':<9} {'model':<16} {'n':>4} {'pass (95%)':<18} {'tok/success':>12} "
         f"{'median tok':>11} {'median s':>9}  {'search':>7} {'found':>7} {'used':>7} "
@@ -841,7 +875,6 @@ def compare(args: argparse.Namespace) -> int:
     print("\nherding")
     for line in herding_lines(rows):
         print(line)
-    return 0
 
 
 def herding_lines(rows: list[Row]) -> list[str]:

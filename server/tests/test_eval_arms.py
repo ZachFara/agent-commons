@@ -356,5 +356,9 @@ def test_herding_reads_a_lines_excerpt_and_an_older_lines_whole_patch_by_hash(
     assert "patch" not in rows[1]
     assert rows[1]["patch_excerpt"] == "-x\n+ y"
     assert tools.agent_eval.herded(rows) == 2
+    # The older line is grader v1 and the new ones v2, and `compare` reports graders apart.
     assert tools.agent_eval.compare(argparse.Namespace(condition="arms")) == 0
-    assert "share their task's top wrong patch 2/3" in capsys.readouterr().out
+    first, second = capsys.readouterr().out.split("== arms: 2 sessions, grader v2")
+    assert "== arms: 1 sessions, grader v1" in first
+    assert "share their task's top wrong patch 0/1" in first
+    assert "share their task's top wrong patch 0/2" in second
