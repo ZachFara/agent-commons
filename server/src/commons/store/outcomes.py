@@ -3,6 +3,7 @@ from uuid import UUID
 from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 
+from commons.domain.observations import TaskCost
 from commons.domain.outcomes import OutcomeRecord, Usage
 from commons.store.connection import Connection
 from commons.store.rows import returned_id
@@ -48,6 +49,19 @@ def save_outcome(conn: Connection, retrieval_id: UUID, record: OutcomeRecord) ->
         (retrieval_id, record.outcome, Jsonb(record.evidence), record.agent_assessment),
     )
     return returned_id(cursor.fetchone())
+
+
+def set_cost(conn: Connection, retrieval_id: UUID, cost: TaskCost) -> None:
+    """Record what the task cost after the retrieval (observed by hooks).
+
+    Each Stop recomputes the whole cost, so this overwrites. Corrections (decision 0030) cover
+    only `used`, `outcome` and `excluded`, so there is no corrected cost to keep.
+    """
+    conn.execute(
+        "UPDATE outcomes SET tokens_in = %s, tokens_out = %s, wall_clock_seconds = %s "
+        "WHERE retrieval_id = %s",
+        (cost.tokens_in, cost.tokens_out, cost.wall_clock_seconds, retrieval_id),
+    )
 
 
 def set_used(conn: Connection, retrieval_id: UUID, used: Usage | None) -> None:

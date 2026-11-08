@@ -69,10 +69,12 @@ class Session:
         }
         assert "error" not in call(build_server(), "report", arguments)
 
-    def stop(self, *, active: bool = False) -> dict[str, Any] | None:
+    def stop(
+        self, *, active: bool = False, transcript: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any] | None:
+        lines = transcript or [{"type": "assistant", "message": {"model": "claude-observed-1"}}]
         self.transcript.write_text(
-            json.dumps({"type": "assistant", "message": {"model": "claude-observed-1"}}) + "\n",
-            encoding="utf-8",
+            "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
         )
         payload = {
             "session_id": self.session_id,
@@ -91,6 +93,48 @@ class Session:
             ).fetchone()
         assert row is not None
         return tuple(row)
+
+    def retrieved_at(self) -> datetime:
+        with psycopg.connect(self.database_url) as conn:
+            row = conn.execute(
+                "SELECT created_at FROM retrievals WHERE task_id = %s AND entry_id = %s",
+                (self.task_id, self.entry_id),
+            ).fetchone()
+        assert row is not None
+        retrieved_at: datetime = row[0]
+        return retrieved_at
+
+    def cost(self) -> tuple[Any, ...]:
+        with psycopg.connect(self.database_url) as conn:
+            row = conn.execute(
+                "SELECT o.tokens_in, o.tokens_out, o.wall_clock_seconds FROM retrievals r "
+                "JOIN outcomes o ON o.retrieval_id = r.id "
+                "WHERE r.task_id = %s AND r.entry_id = %s",
+                (self.task_id, self.entry_id),
+            ).fetchone()
+        assert row is not None
+        return tuple(row)
+
+
+def assistant(message_id: str, at: datetime, tokens: tuple[int, int, int, int]) -> dict[str, Any]:
+    """A transcript line: input, cache creation, cache read and output tokens, at `at`."""
+    usage = dict(
+        zip(
+            (
+                "input_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+                "output_tokens",
+            ),
+            tokens,
+            strict=True,
+        )
+    )
+    return {
+        "type": "assistant",
+        "timestamp": at.isoformat().replace("+00:00", "Z"),
+        "message": {"id": message_id, "model": "claude-observed-1", "usage": usage},
+    }
 
 
 @pytest.fixture
@@ -273,3 +317,49 @@ def test_a_session_that_ends_failing_still_counts_the_failure(session: Session) 
     session.stop()
     _used, outcome, _evidence, _model = session.outcome()
     assert outcome == "tests_failed"
+
+
+def test_stop_records_what_the_task_cost_after_the_retrieval(session: Session) -> None:
+    session.search()
+    at = session.retrieved_at()
+    transcript = [
+        assistant("msg_before", at - timedelta(minutes=5), (1000, 1000, 1000, 1000)),
+        assistant("msg_a", at + timedelta(seconds=10), (10, 200, 3000, 40)),
+        assistant("msg_a", at + timedelta(seconds=11), (10, 200, 3000, 40)),  # same message
+        assistant("msg_b", at + timedelta(seconds=30), (5, 0, 3200, 60)),
+    ]
+
+    session.stop(transcript=transcript)
+
+    assert session.cost() == (10 + 200 + 3000 + 5 + 0 + 3200, 40 + 60, 30.0)
+
+
+def test_each_stop_recomputes_the_cost(session: Session) -> None:
+    session.search()
+    at = session.retrieved_at()
+    first = [assistant("msg_a", at + timedelta(seconds=10), (1, 2, 3, 4))]
+    session.stop(transcript=first)
+    assert session.cost() == (6, 4, 10.0)
+
+    later = [*first, assistant("msg_b", at + timedelta(seconds=70), (1, 1, 1, 1))]
+    session.stop(transcript=later)
+    assert session.cost() == (9, 5, 70.0)
+
+
+def test_a_message_within_clock_skew_counts_and_time_is_never_negative(
+    session: Session,
+) -> None:
+    session.search()
+    at = session.retrieved_at()
+    session.stop(transcript=[assistant("msg_a", at - timedelta(seconds=2), (1, 0, 0, 1))])
+    assert session.cost() == (1, 1, 0.0)
+
+
+def test_without_usage_the_cost_stays_unknown(session: Session) -> None:
+    session.search()
+    session.stop()  # a transcript with a model but no usage
+    assert session.cost() == (None, None, None)
+    payload = {"session_id": session.session_id, "stop_hook_active": False}
+    session.env.run("stop", payload)  # no transcript at all
+    assert session.cost() == (None, None, None)
+    assert "failed" not in session.env.log()
