@@ -117,16 +117,17 @@ Decision record: `docs/decisions/2026-11-07-MIT-580-agent-orchestration.md`.
   keeps Linear writes in the agent project and on agent-created issues (`.agents/owned-issues.txt`,
   kept by `record_issue`). `bash_guard` blocks merges into anything but `feature/`, pushes to
   main, force pushes, hook bypasses, settings-changing `gh` calls, reads of live Commons
-  credentials, and issue IDs agents don't own in commit messages, PR text and new or pushed
-  branch names. A denial is final: never look for another route to the same action.
+  credentials, git aliases it can't expand, and issue IDs agents don't own in commit messages,
+  PR text and new or pushed branch names (plus message text it can't read: shell substitution,
+  stdin without a heredoc, `gh pr create --fill`). A denial is final: never look for another route to the same action.
   GitHub rulesets on `main` and `feature/**` require a PR, the `check` status and an
   up-to-date branch, and refuse force pushes, for everyone.
 
 ## Data isolation
 
-- Agent commands take their settings from `.env.agent`. Worktrees refuse sourcing it, so pass
-  its variables inline (`COMMONS_DATABASE_URL=... COMMONS_CONFIG=... uv run commons status`);
-  `scripts/test-db.sh` reads it itself. It points at the local
+- Agent commands take their settings from `.env.agent`. Worktree shells can't source
+  `.env.agent`; pass the variables inline (`COMMONS_DATABASE_URL=... uv run commons status`)
+  or use `scripts/test-db.sh`, which loads it itself. It points at the local
   throwaway Postgres from `db/compose.yml` and keeps the CLI off this machine's real identity
   and keys. `.worktreeinclude` copies it into every agent worktree. Only `.env.agent.example`
   is committed.
