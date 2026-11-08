@@ -179,12 +179,49 @@ def test_a_repo_task_session_has_no_credentials_and_cannot_push(
     assert Path(env["GH_CONFIG_DIR"]).is_dir()
     assert not any(Path(env["GH_CONFIG_DIR"]).iterdir())
     assert env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"  # Homebrew's system gitconfig names osxkeychain
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     flag = repo_call["command"].index("--disallowedTools")
-    assert repo_call["command"][flag + 1 :] == ["Bash(git push*)", "Bash(gh *)"]
+    assert repo_call["command"][flag + 1 :] == [
+        "Bash(git push*)",
+        "Bash(gh *)",
+        "Bash(uv run git*)",
+        "Bash(uv run gh*)",
+    ]
     # A written scenario's session is unchanged.
     assert written_call["env"]["GITHUB_TOKEN"] == PLANTED
     assert "--disallowedTools" not in written_call["command"]
+
+
+CREDENTIAL_TEST = BASE_TEST + (
+    "\n    def test_no_credentials(self):\n"
+    "        import os\n"
+    "        self.assertNotIn('GH_TOKEN', os.environ)\n"
+    "        self.assertNotIn('GITHUB_TOKEN', os.environ)\n"
+    "        self.assertNotIn('SSH_AUTH_SOCK', os.environ)\n"
+    "        self.assertEqual(os.environ['GIT_CONFIG_NOSYSTEM'], '1')\n"
+    "        self.assertEqual(os.environ['GIT_CONFIG_GLOBAL'], '/dev/null')\n"
+)
+# Exits nonzero, failing `prepare`, if setup can see any of the credentials.
+CREDENTIAL_SETUP = (
+    'uv run python -c "import os, sys; '
+    "sys.exit(bool({'GH_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK'} & set(os.environ)))\""
+)
+
+
+def test_setup_and_the_test_command_run_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Setup, pin builds, and tests (an agent-edited conftest.py too) run code from the repo."""
+    for name in ("GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK"):
+        monkeypatch.setenv(name, PLANTED)
+    task = fixture_task(tmp_path, "calc-env", {"tests/test_calc.py": CREDENTIAL_TEST})
+    task = replace(task, setup=CREDENTIAL_SETUP)
+    project = tmp_path / "project"
+    repos.materialize(task, project)
+    repos.prepare(task, project)
+    tests = repos.run_tests(task, project)
+    assert tests.returncode == 0, tests.stderr
 
 
 def test_run_one_writes_the_materialized_tree(

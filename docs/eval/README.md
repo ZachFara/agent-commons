@@ -94,9 +94,14 @@ those paths. The cache's `info/attributes` turns off `export-ignore`, which some
 set on their tests. The project has no `.git` and no remote. Then `uv venv --python <python>`,
 `setup`, and `uv pip install <pins>` run in it.
 
-**The session** of a repo task runs without `GH_TOKEN`, `GITHUB_TOKEN`, and `SSH_AUTH_SOCK`,
-with `GH_CONFIG_DIR` set to an empty temp directory, `GIT_CONFIG_GLOBAL=/dev/null`, and
-`GIT_TERMINAL_PROMPT=0`, and with `--disallowedTools "Bash(git push*)" "Bash(gh *)"`.
+**The session** of a repo task, and every command run on its project (setup, the pins'
+install, the tests, and the grading run of the project the agent edited), runs without
+`GH_TOKEN`, `GITHUB_TOKEN`, and `SSH_AUTH_SOCK`. It also runs with `GH_CONFIG_DIR` set to an
+empty directory, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` (Homebrew's system
+gitconfig sets `credential.helper=osxkeychain`), and `GIT_TERMINAL_PROMPT=0`. The session also
+gets `--disallowedTools "Bash(git push*)" "Bash(gh *)" "Bash(uv run git*)" "Bash(uv run gh*)"`.
+The deny list is a best-effort guard, not isolation. `sh -c` or a Python subprocess can still
+run git. Everything runs as this machine's user, with that user's home directory and keychain.
 
 **`agent_eval.py check`** materializes each task and also exports the whole fix tree, sets both
 up, and runs `test_command` in each. It prints "fails before, passes after", or reports the task
@@ -112,6 +117,12 @@ as broken when the tests already pass at the base or still fail with the fix.
 - it needs no services, GPU, or Docker; the checkout is under about 200 MB; the tests run in
   under 2 minutes;
 - the prompt doesn't reveal the fix (it is the neutral "fix the failing tests" prompt).
+
+Records are reviewed like code: `check` and `run` execute the record's `setup` and the
+repository's code on this machine.
+
+The fix commit stays in the cache during `run`, because the project's test files come from it.
+An agent that reads `~/.cache/agent-commons-eval/` could find the fix there.
 
 ## Trial ledger
 

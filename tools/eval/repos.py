@@ -4,7 +4,7 @@ Both commits are fetched once, shallow and by sha, into a bare cache under
 `~/.cache/agent-commons-eval/repos/`. A project is the base tree from `git archive` with the
 fix's versions of the task's test paths laid over it: the base-to-fix diff of those paths,
 applied to the base. It holds no `.git` and no remote, so the agent can't read the fix from
-history or push anywhere.
+history or push anywhere. The fix commit has to be in the cache to supply those test files.
 """
 
 import io
@@ -23,32 +23,42 @@ CACHE = Path.home() / ".cache" / "agent-commons-eval" / "repos"
 # A repository's own .gitattributes may mark its tests `export-ignore`, and `git archive` would
 # leave them out. $GIT_DIR/info/attributes outranks every .gitattributes in the tree.
 ARCHIVE_ATTRIBUTES = "* -export-ignore -export-subst\n"
-# Removed from a repo task's session: credentials that could reach GitHub or an SSH agent.
+# Credentials that could reach GitHub or an SSH agent. A task's setup, its pins' build code, and
+# its tests (including a conftest.py the agent edited, run again at grading) never see them.
 HIDDEN = frozenset({"GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK"})
-DISALLOWED_TOOLS = ("Bash(git push*)", "Bash(gh *)")
+# No global or system git config: either can name a credential helper (Homebrew's git sets
+# credential.helper=osxkeychain in its system gitconfig). No prompts for a password either.
+GIT_LOCKED = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_TERMINAL_PROMPT": "0",
+}
+# A best-effort guard, not isolation: `sh -c` or a Python subprocess can still run git.
+DISALLOWED_TOOLS = ("Bash(git push*)", "Bash(gh *)", "Bash(uv run git*)", "Bash(uv run gh*)")
 SHA = re.compile(r"[0-9a-f]{40}")
 PIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\],-]*==[^=\s]+")
 PYTHON = re.compile(r"\d+\.\d+(\.\d+)?")
 
 
+def _locked(env: dict[str, str], gh_config: Path) -> dict[str, str]:
+    """Return env without credentials, git redirection, or the harness's venv, git locked down."""
+    gh_config.mkdir(parents=True, exist_ok=True)
+    hidden = HIDDEN | GIT_REPO_VARIABLES | {"VIRTUAL_ENV"}  # uv would use the harness's venv
+    return {
+        **{key: value for key, value in env.items() if key not in hidden},
+        **GIT_LOCKED,
+        "GH_CONFIG_DIR": str(gh_config),  # empty: gh finds no logged-in host
+    }
+
+
 def environment() -> dict[str, str]:
     """Return the environment for git, setup, and tests run on a task's project."""
-    env = git_environment()
-    env.pop("VIRTUAL_ENV", None)  # uv would use the harness's environment, not the project's
-    return env
+    return _locked(git_environment(), CACHE.parent / "gh-config")
 
 
 def session_environment(env: dict[str, str], workdir: Path) -> dict[str, str]:
     """Return a repo task session's environment: no GitHub or SSH credentials, no git prompts."""
-    gh_config = workdir / "gh-config"
-    gh_config.mkdir(exist_ok=True)
-    hidden = HIDDEN | GIT_REPO_VARIABLES | {"VIRTUAL_ENV"}
-    return {
-        **{key: value for key, value in env.items() if key not in hidden},
-        "GH_CONFIG_DIR": str(gh_config),
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_TERMINAL_PROMPT": "0",
-    }
+    return _locked(env, workdir / "gh-config")
 
 
 def run(command: list[str], cwd: Path | None = None) -> str:
