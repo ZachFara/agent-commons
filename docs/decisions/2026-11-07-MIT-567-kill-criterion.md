@@ -28,7 +28,8 @@ Decision:
      the interval rules the margin out: the best case it allows is below the margin for both
      metrics. Anything else is inconclusive.
    - (b) The same rule at +5 points / 10% lower tokens.
-   - (c) Continue on any improvement in either metric whose interval excludes zero.
+   - (c) Tokens only. Continue if the Commons arm's tokens per passed task are at least
+     15-20% lower, with the interval excluding zero. Pass rate does not decide.
 6. **Sample size.** At 3 runs × 20 tasks per arm, the pass-rate interval is about ±12 points.
    That is wide next to a 10-point margin. There is also a ceiling: in decision 0023 agents
    fixed every bug, so both arms may pass nearly everything. If so, tokens per passed task
@@ -38,7 +39,8 @@ Decision:
    into folds so no task is measured in the wave that seeded it (cross-fold). Where a task has
    no sibling, the seeding wave runs on the same task, and its results are labelled as seeded
    from the same task and reported apart. Entries from the seeding wave go through the usual
-   approval before the measured runs, since search shows only approved entries.
+   approval before the measured runs, since search does not show pending entries (it shows
+   approved ones, and retired ones that have a fix version).
 8. **Signals.** Only test signals count for this experiment: a run passes when its task's tests
    pass. Agent self-reports and the Commons' own outcome rows are not used.
 9. **What stop means.** Kill means no more agent-facing features: no new tools, instructions
@@ -47,8 +49,8 @@ Decision:
 
 Consequences: The run has a fixed rule before any number is seen, so a result cannot be argued
 after the fact. Option (a) can return inconclusive at this sample size; that is the honest
-answer, and it calls for more tasks, not a looser margin. Option (c) is easy to pass, so it
-could keep a feature line alive on a tiny gain. Cross-fold seeding needs tasks that share an
+answer, and it calls for more tasks, not a looser margin. Option (c) bets on the ceiling: it
+ignores pass rate, so it could continue even if the Commons arm passed fewer tasks. Cross-fold seeding needs tasks that share an
 upstream change; if few do, most results carry the seeded-from-the-same-task label, which
 overstates the benefit. We'd revisit the margin if the task set grows past 20 or the ceiling
 makes pass rate useless.
