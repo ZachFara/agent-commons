@@ -67,7 +67,7 @@ Decision:
    final PR opens with `gh pr create --base main --head feature/<slug>`, and a head with no
    unowned issue ID passes the head check, so it needs no `final/<slug>` branch. Cutting a
    working branch (`git push origin origin/main:refs/heads/feature/<slug>`), removing
-   worktrees and deleting merged branches other than main are allowed; deleting main stays
+   worktrees and deleting branches other than main are allowed; deleting main stays
    denied.
 5. GitHub ruleset on `main` and `feature/**`, no bypass actors: PR required (0 approvals:
    agents push as Zach and an author can't approve their own PR), required `check`, branches
