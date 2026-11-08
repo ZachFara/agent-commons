@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import Any, TextIO
 
 from commons.domain.errors import NotInitializedError
-from commons.domain.observations import ToolUse, exit_code_from_error
+from commons.domain.observations import ToolUse, doc_lookup, exit_code_from_error
 from commons.service import agent_text, hook_client
 from commons.service.hook_client import HookBackend, LocalBackend, RemoteBackend, remote_client
 from commons.service.hooks import StopResult
@@ -106,6 +106,7 @@ def _tool_use(payload: Payload, *, failed: bool) -> ToolUse:
         old_text=None if is_bash or failed else _old_text(tool_input),
         exit_code=_exit_code(payload, failed=failed) if is_bash else None,
         output=_output(payload) if is_bash and not failed else None,
+        doc_lookup=None if failed else doc_lookup(name, tool_input),
     )
 
 

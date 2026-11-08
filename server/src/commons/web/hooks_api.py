@@ -22,7 +22,7 @@ from starlette.routing import Route
 from commons.domain.entries import Proposal
 from commons.domain.errors import InvalidInputError, NotPermittedError, RateLimitedError
 from commons.domain.keys import KeyHolder
-from commons.domain.observations import command_tail
+from commons.domain.observations import DocLookup, command_tail, split_library_id
 from commons.domain.outcomes import Usage
 from commons.domain.usage import UseObservation
 from commons.privacy.redaction import scrub
@@ -173,6 +173,7 @@ def _tool_use(conn: Connection, body: Body) -> Body:
         _session_id(body),
         _test_run(body.get("test_run")),
         _file_change(body.get("file_change")),
+        _doc_lookup(body.get("doc_lookup")),
     )
     return {}
 
@@ -203,6 +204,28 @@ def _file_change(value: object) -> dict[str, object] | None:
         msg = "file_change must be {path_sha256, content_sha256}, both SHA-256 hex digests."
         raise InvalidInputError(msg)
     return dict(value)
+
+
+def _doc_lookup(value: object) -> DocLookup | None:
+    if value is None:
+        return None
+    if not (
+        isinstance(value, dict)
+        and set(value) == {"library_id", "version", "query"}
+        and _is_library(value["library_id"], value["version"])
+        and (value["query"] is None or isinstance(value["query"], str))
+    ):
+        msg = "doc_lookup must be {library_id: /org/project, version: str, query: str or null}."
+        raise InvalidInputError(msg)
+    return DocLookup(value["library_id"], value["version"], value["query"])
+
+
+def _is_library(library_id: object, version: object) -> bool:
+    """Whether library_id and version are what the client splits a Context7 id into."""
+    if not isinstance(library_id, str) or not isinstance(version, str):
+        return False
+    full = f"{library_id}/{version}" if version else library_id
+    return split_library_id(full) == (library_id, version)
 
 
 def _retrievals(conn: Connection, body: Body) -> Body:

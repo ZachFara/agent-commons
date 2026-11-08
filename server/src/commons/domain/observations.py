@@ -1,9 +1,12 @@
 """What hooks observe about a task (decision 0016)."""
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
+from uuid import UUID
+
+from commons.domain.reporters import PrivacyDefault
 
 # Mirrors the Postgres enum task_event_kind.
 TaskEventKind = Literal["test_run", "file_change"]
@@ -56,6 +59,56 @@ _PASSED_SUMMARIES: tuple[re.Pattern[str], ...] = (
 
 _EXIT_CODE = re.compile(r"^Exit code (\d+)")
 
+# Context7's query-docs under any MCP server name: mcp__context7__, mcp__claude_ai_Context7__,
+# mcp__plugin_context7_context7__. resolve-library-id only finds ids and is not recorded.
+_DOC_QUERY_TOOL = re.compile(r"mcp__.+__query-docs")
+_LIBRARY_ID = re.compile(r"/[\w.-]+/[\w.-]+(?:/[\w.-]+)?", re.ASCII)
+MAX_LIBRARY_ID_LENGTH = 200
+
+
+@dataclass(frozen=True)
+class DocLookup:
+    """One Context7 query-docs call: which library and version, and what was asked."""
+
+    library_id: str  # /org/project
+    version: str  # the id's third segment, "" if it named none
+    query: str | None
+
+
+@dataclass(frozen=True)
+class DocLookupRecord:
+    """What the store keeps about one doc lookup, already cut down for its privacy mode."""
+
+    task_id: UUID
+    privacy_mode: PrivacyDefault
+    library_id: str
+    version: str
+    query: str | None
+
+
+def split_library_id(library_id: str) -> tuple[str, str] | None:
+    """Split a Context7 id (`/vercel/next.js/v16.2.9`) into library and version; None if bad."""
+    if len(library_id) > MAX_LIBRARY_ID_LENGTH or not _LIBRARY_ID.fullmatch(library_id):
+        return None
+    _, org, project, *version = library_id.split("/")
+    return f"/{org}/{project}", "".join(version)
+
+
+def doc_lookup(tool_name: str, tool_input: object) -> DocLookup | None:
+    """Return the lookup a query-docs call made, or None for any other tool or a bad id.
+
+    Only the tool's input is read. The library id is `libraryId`, or
+    `context7CompatibleLibraryID` in older Context7 servers.
+    """
+    if not _DOC_QUERY_TOOL.fullmatch(tool_name) or not isinstance(tool_input, Mapping):
+        return None
+    library_id = tool_input.get("libraryId", tool_input.get("context7CompatibleLibraryID"))
+    split = split_library_id(library_id) if isinstance(library_id, str) else None
+    if split is None:
+        return None
+    query = tool_input.get("query")
+    return DocLookup(*split, query=query if isinstance(query, str) else None)
+
 
 @dataclass(frozen=True)
 class ToolUse:
@@ -69,6 +122,7 @@ class ToolUse:
     exit_code: int | None  # Bash only; None if unknown (e.g. interrupted)
     old_text: str | None = None  # text an edit replaced: evidence of acting on a fix too
     output: str | None = None  # Bash only; read for the runner's summary, never stored
+    doc_lookup: DocLookup | None = None  # Context7 query-docs only
 
 
 def is_test_command(command: str, extra_patterns: Sequence[str] = ()) -> bool:

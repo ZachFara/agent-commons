@@ -106,6 +106,16 @@ TABLES = {
         "results",
         "excluded",
     },
+    "doc_lookups": {
+        "task_id",
+        "reporter_id",
+        "model_id",
+        "privacy_mode",
+        "library_id",
+        "version",
+        "query",
+        "excluded",
+    },
     "corrections": {
         "batch_id",
         "corrected_by",
