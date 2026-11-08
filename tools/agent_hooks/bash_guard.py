@@ -34,10 +34,13 @@ Denied (exit code 2, reason on stderr):
 
 Commands are split into simple commands on `;`, `&&`, `||`, `|`, newlines and `$(`; each
 one's program comes after any keywords (`{`, `!`, `if`, `then`, `do`...), assignments and
-wrappers (`env`, `sudo`...) with their options. Shell wrappers (`bash -c`, `eval` with its
+wrappers (`env`, `sudo`, `timeout 120`, `nice`, `stdbuf`...) with their options, and runs in
+the directory `env -C` or `sudo -D` names. Shell wrappers (`bash -c`, `eval` with its
 arguments joined, `env -S`, `xargs`, a heredoc fed to a shell) are checked recursively, with
-the bodies of heredocs that end inside them. Other heredoc bodies (commit messages, PR
-bodies) are data, checked only for issue IDs when the command commits or writes PR text.
+the bodies of heredocs that end inside them; an `env -S` value with a backslash or `$` is
+denied, as env reads those itself. A configured alias's expansion gets the line-wide scans
+too. Other heredoc bodies (commit messages, PR bodies) are data, checked only for issue IDs
+when the command commits or writes PR text.
 This guards against mistakes, not an adversary: the GitHub rulesets on main and feature/ are
 the backstop. A crash fails closed: the entry script turns every exit code but 0 into 2,
 which blocks the call.
@@ -81,18 +84,26 @@ HEREDOC_MARK = "\0heredoc"
 CUT = "`"
 SEPARATORS = ";&|()`\n"
 PUNCTUATION = SEPARATORS + "<>"
-WRAPPERS = frozenset({"env", "command", "time", "nohup", "exec", "sudo"})
+WRAPPERS = frozenset(
+    {"env", "command", "time", "nohup", "exec", "sudo", "timeout", "nice", "stdbuf"}
+)
 # Wrapper options that take a value: short letters (`-u x`, `-ux`) and long names (`--user x`).
 WRAPPER_VALUES = {
     "env": ("CPSu", frozenset({"--chdir", "--split-string", "--unset"})),
     "exec": ("a", frozenset()),
+    "nice": ("n", frozenset({"--adjustment"})),
+    "stdbuf": ("eio", frozenset({"--error", "--input", "--output"})),
     "sudo": (
         "CDghpRrTtUu",
         frozenset({"--chdir", "--chroot", "--close-from", "--command-timeout", "--group"})
         | frozenset({"--host", "--other-user", "--prompt", "--role", "--type", "--user"}),
     ),
     "time": ("fo", frozenset({"--format", "--output"})),
+    "timeout": ("ks", frozenset({"--kill-after", "--signal"})),
 }
+WRAPPER_POSITIONALS = {"timeout": 1}  # `timeout 120 git ...`: the duration comes first
+# Wrapper options that run the command in another directory, like `git -C`.
+WRAPPER_CHDIR = {"env": frozenset({"-C", "--chdir"}), "sudo": frozenset({"-D", "--chdir"})}
 SPLIT_STRING = frozenset({"-S", "--split-string"})  # `env -S 'git push'` runs the split value
 # Reserved words that may come before a simple command's program.
 KEYWORDS = frozenset({"{", "!", "if", "then", "else", "elif", "do", "while", "until"})
@@ -105,11 +116,13 @@ GIT_GLOBAL_WITH_VALUE = frozenset(
 GIT_CONFIG_OPTIONS = frozenset({"-c", "--config-env"})
 # Global options under which git reads another repository's config, which may hold aliases.
 GIT_OTHER_CONFIG = frozenset({"--git-dir", "--work-tree", "--bare"})
-# Variables that point git at other config, and assignments to them (`X=`, `X+=`). Matched
-# anywhere on the line (`X=1 git ...`, `export X=1; git ...`), since simple_commands drops
-# assignments. `printf -v`, `read` and `source` set them too (sets_config_variable).
+# Variables that point git at other config, and assignments to them (`X=`, `X+=`). Any word
+# on the line that starts with one counts (`X=1 git ...`, `export X=1; git ...`), since
+# simple_commands drops assignments; in eval strings and sourced files, any text does.
+# `printf -v` and `read` set them too (sets_config_variable).
 CONFIG_VARIABLE = re.compile(r"GIT_CONFIG\w*|GIT_DIR|GIT_COMMON_DIR|XDG_CONFIG_HOME|HOME")
-GIT_CONFIG_VARIABLES = re.compile(rf"\b(?:{CONFIG_VARIABLE.pattern})\+?=")
+CONFIG_ASSIGNMENT = re.compile(rf"(?:{CONFIG_VARIABLE.pattern})\+?=")
+GIT_CONFIG_VARIABLES = re.compile(rf"\b{CONFIG_ASSIGNMENT.pattern}")
 # Subcommands that run the repository's hooks. Config the guard can't read may skip them
 # (core.hooksPath), even for these builtins.
 GIT_HOOKED = frozenset({"commit", "push", "merge"})
@@ -199,6 +212,8 @@ class SimpleCommand(NamedTuple):
 
     words: list[str]
     stdin: list[str]
+    assignments: tuple[str, ...] = ()  # `X=1` before the program, wrappers' included
+    chdirs: tuple[str, ...] = ()  # directories wrappers run it in (`env -C dir`), in order
 
     @property
     def heredoc_stdin(self) -> bool:
@@ -262,27 +277,49 @@ def wrapper_option(wrapper: str, words: list[str]) -> tuple[int, str, str | None
     return 1, name, value
 
 
-def command_words(words: list[str]) -> list[str]:
-    """Return a simple command's words from its program on.
+def split_string(value: str) -> list[str]:
+    """Return the words `env -S` splits a value into; raise ValueError if shlex can't tell."""
+    if set(value) & set("\\$"):
+        msg = "env -S has its own escapes and ${NAME}, which the guard can't read; drop -S"
+        raise ValueError(msg)
+    return shlex.split(value)
 
-    Drops the keywords, assignments, wrappers and wrapper options before it, and runs
-    `env -S` values as the command they split into.
+
+def wrapper_arguments(wrapper: str, args: list[str]) -> tuple[list[str], list[str]]:
+    """Return the words after a wrapper's options and positionals, and directories it sets."""
+    chdirs: list[str] = []
+    while args and args[0].startswith("-"):
+        taken, name, value = wrapper_option(wrapper, args)
+        args = args[taken:]
+        if name == "--":
+            break
+        if value is not None and name in WRAPPER_CHDIR.get(wrapper, frozenset()):
+            chdirs.append(value)
+        if value is not None and wrapper == "env" and name in SPLIT_STRING:
+            args = [*split_string(value), *args]
+    return args[WRAPPER_POSITIONALS.get(wrapper, 0) :], chdirs
+
+
+def command_words(command: SimpleCommand) -> SimpleCommand:
+    """Return a simple command with its words from its program on.
+
+    Takes off the keywords, assignments, wrappers and wrapper options before it, keeping the
+    assignments and the directories wrappers change to. `env -S` values run as the command
+    they split into.
     """
-    wrapper = ""
+    words, assignments, chdirs = command.words, list(command.assignments), list(command.chdirs)
     while words:
         if words[0] in WRAPPERS:
-            wrapper, words = words[0], words[1:]
-        elif ASSIGNMENT.match(words[0]) or words[0] in KEYWORDS:
+            words, directories = wrapper_arguments(words[0], words[1:])
+            chdirs += directories
+        elif ASSIGNMENT.match(words[0]):
+            assignments.append(words[0])
             words = words[1:]
-        elif wrapper and words[0].startswith("-"):
-            taken, name, value = wrapper_option(wrapper, words)
-            words = words[taken:]
-            if wrapper == "env" and name in SPLIT_STRING and value is not None:
-                words = [*shlex.split(value), *words]
-            wrapper = "" if name == "--" else wrapper
+        elif words[0] in KEYWORDS:
+            words = words[1:]
         else:
             break
-    return words
+    return command._replace(words=words, assignments=tuple(assignments), chdirs=tuple(chdirs))
 
 
 def simple_commands(text: str) -> list[SimpleCommand]:
@@ -304,7 +341,7 @@ def simple_commands(text: str) -> list[SimpleCommand]:
                 words.pop()
         else:
             words.append(token)
-    stripped = [SimpleCommand(command_words(words), stdin) for words, stdin in commands]
+    stripped = [command_words(command) for command in commands]
     return [command for command in stripped if command.words]
 
 
@@ -616,8 +653,12 @@ def check_git(args: list[str], shell: Shell, *, expanded: bool = False) -> str |
     )
     if alias.startswith("!") or (alias and expanded):
         return f"git {subcommand} is an alias for `{alias}`; run what it stands for directly"
-    if alias:
-        return check_git([*shlex.split(alias), *rest], shell._replace(cwd=cwd), expanded=True)
+    if alias:  # the line-wide scans never saw the expansion
+        return (
+            scan(CREDENTIALS, alias)
+            or scan(BYPASSES, alias)
+            or check_git([*shlex.split(alias), *rest], shell._replace(cwd=cwd), expanded=True)
+        )
     return check_git_subcommand(subcommand, rest, shell._replace(cwd=cwd))
 
 
@@ -776,9 +817,10 @@ def check_words(words: list[str], shell: Shell) -> str | None:
 
 
 def sets_config_variable(words: list[str], cwd: str) -> bool:
-    """Return whether `printf -v`, `read` or `source` may set a CONFIG_VARIABLE.
+    """Return whether `printf -v`, `read`, `eval` or `source` may set a CONFIG_VARIABLE.
 
-    A sourced file is read like a message file; one that can't be read may set anything.
+    A sourced file is read like a message file; one that can't be read may set anything. The
+    text of an eval string and of a sourced file is searched, not just its words.
     """
     name, args = program(words), words[1:]
     if name in {"source", "."}:
@@ -787,19 +829,36 @@ def sets_config_variable(words: list[str], cwd: str) -> bool:
         except (OSError, ValueError, RuntimeError):
             return True
         return bool(GIT_CONFIG_VARIABLES.search(script))
+    if name == "eval":
+        return bool(GIT_CONFIG_VARIABLES.search(" ".join(args)))
     targets = {"printf": option_values(args, frozenset({"-v"}), "v"), "read": args}.get(name, [])
     return any(CONFIG_VARIABLE.fullmatch(target) for target in targets)
+
+
+def sets_git_config(text: str, commands: list[SimpleCommand], cwd: str) -> bool:
+    """Return whether a command line may set a CONFIG_VARIABLE.
+
+    Matches whole words (`X=1`, `export X=1`, `env -S 'X=1 ...'`), so quoted text that only
+    names `X=` (a commit message) sets nothing.
+    """
+    words = [*tokenize(text), *(word for simple in commands for word in simple.assignments)]
+    return any(CONFIG_ASSIGNMENT.match(word) for word in words) or any(
+        sets_config_variable(simple.words, cwd) for simple in commands
+    )
 
 
 def heredocs(command: str, outer: Shell | None) -> tuple[str, list[str], bool]:
     """Return split_heredocs of a command, with the bodies of heredocs the outer line took out.
 
     A heredoc whose end line comes before a wrapper's closing quote (`bash -c "..."`, `eval`)
-    is taken out by the outer line, which leaves HEREDOC_MARK in the wrapped command.
+    is taken out by the outer line, which leaves HEREDOC_MARK in the wrapped command. Inside
+    double quotes the outer shell substitutes before the inner one reads `<<'EOF'`, so any
+    substitution in those bodies counts, quoted heredoc or not (single quotes fail closed).
     """
     text, bodies, expands = split_heredocs(command)
     if outer is not None and HEREDOC_MARK in command:
-        return text, [*bodies, *outer.heredocs], expands or outer.expands
+        outer_expands = outer.expands or any(SUBSTITUTION.search(body) for body in outer.heredocs)
+        return text, [*bodies, *outer.heredocs], expands or outer_expands
     return text, bodies, expands
 
 
@@ -814,16 +873,17 @@ def reason_to_deny(command: str, cwd: str, outer: Shell | None = None) -> str | 
     text, bodies, expands = heredocs(command, outer)
     commands = simple_commands(text)
     reasons = [scan(CREDENTIALS, command), scan(BYPASSES, text)]
-    sets_git_config = (
-        bool(GIT_CONFIG_VARIABLES.search(text))
-        or (outer is not None and outer.sets_git_config)
-        or any(sets_config_variable(simple.words, cwd) for simple in commands)
-    )
-    shell = Shell(cwd, tuple(bodies), expands, sets_git_config=sets_git_config)
+    config = (outer is not None and outer.sets_git_config) or sets_git_config(text, commands, cwd)
+    shell = Shell(cwd, tuple(bodies), expands, sets_git_config=config)
     if bodies and any(program(simple.words) in SCRIPT_RUNNERS for simple in commands):
         reasons.extend(reason_to_deny(body, cwd, outer=shell) for body in bodies)
     reasons.extend(
-        check_words(simple.words, shell._replace(heredoc_stdin=simple.heredoc_stdin))
+        check_words(
+            simple.words,
+            shell._replace(
+                cwd=str(Path(cwd).joinpath(*simple.chdirs)), heredoc_stdin=simple.heredoc_stdin
+            ),
+        )
         for simple in commands
     )
     return next((reason for reason in reasons if reason), None)

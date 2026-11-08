@@ -956,6 +956,150 @@ def test_bash_guard_reads_a_heredoc_inside_a_wrapped_command(
     assert "only Zach changes main" in capsys.readouterr().err
     assert bash(wrapped("git commit -F - <<EOF\nfeat: $(date)\nEOF"), repo, monkeypatch) == 2
     assert "shell substitution" in capsys.readouterr().err
+    # The outer shell substitutes inside the double quotes, before `<<'EOF'` is read.
+    assert bash(wrapped("git commit -F - <<'EOF'\nfeat: $(date)\nEOF"), repo, monkeypatch) == 2
+    assert "shell substitution" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "timeout 120 git push origin main",
+        "timeout -k 5 -s KILL 120 git push --force origin feat/x",
+        "timeout --signal=KILL --preserve-status 1m git push origin main",
+        "timeout -- 120 git push origin main",
+        "nice git push origin main",
+        "nice -n 5 git push origin main",
+        "nice -5 git push origin main",
+        "nice --adjustment=5 git push origin main",
+        "stdbuf -oL git push origin main",
+        "stdbuf -o L -e 0 git push origin main",
+        "stdbuf --output=L git push origin main",
+        "timeout 60 nice -n 5 env -u X git push origin main",
+    ],
+)
+def test_bash_guard_sees_past_timeout_nice_and_stdbuf(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "push" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_allows_a_timed_push_of_the_own_branch(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash("timeout 120 git push -u origin HEAD", repo, monkeypatch) == 0
+    checkout(repo, "main")
+    assert bash("timeout 120 git push -u origin HEAD", repo, monkeypatch) == 2
+
+
+@pytest.mark.usefixtures("agent_ticket", "other_repo")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env -C ../other git push -u origin HEAD",
+        "env --chdir=../other git push",
+        "sudo -D ../other git push origin @",
+        "sudo --chdir ../other git push -u origin HEAD",
+    ],
+)
+def test_bash_guard_follows_a_wrapper_into_its_directory(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """other_repo is on main; the working repo is on the agent's own branch."""
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert bash(command.replace("../other", "."), repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_reads_message_files_where_env_runs_git(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    message = repo / "sub" / "msg.txt"
+    message.parent.mkdir()
+    message.write_text(f"feat: x\n\nPart of {AGENT_TICKET}.\n", encoding="utf-8")
+    assert bash("env -C sub git commit -F msg.txt", repo, monkeypatch) == 0
+    message.write_text(f"feat: x\n\nPart of {FOREIGN_ID}.\n", encoding="utf-8")
+    assert bash("env -C sub git commit -F msg.txt", repo, monkeypatch) == 2
+    assert FOREIGN_ID in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env -S 'git\\_push origin main'",
+        "env -S 'git push origin ${BRANCH}'",
+        "env -S'git push $REMOTE main'",
+        "env --split-string='echo \\c'",
+    ],
+)
+def test_bash_guard_denies_env_split_strings_with_escapes(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """env -S has its own escapes (`\\_` is a space) and `${NAME}`, which shlex doesn't read."""
+    assert bash(command, repo, monkeypatch) == 2
+    assert "env -S" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+def test_bash_guard_checks_alias_expansions_for_bypasses(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / ".git" / "config").write_text(
+        "[alias]\n"
+        "\tci = commit --no-verify\n"
+        "\tsk = -c core.hooksPath=.scratch commit\n"
+        "\tsecret = show HEAD:.config/agent-commons/config.json\n",
+        encoding="utf-8",
+    )
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash("git ci -m 'feat: x'", repo, monkeypatch) == 2
+    assert "--no-verify" in capsys.readouterr().err
+    assert bash("git sk -m 'feat: x'", repo, monkeypatch) == 2
+    assert "core.hooksPath" in capsys.readouterr().err
+    assert bash("git secret", repo, monkeypatch) == 2
+    assert "credentials" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git commit -m "fix: deny GIT_DIR= before commit"',
+        "git commit -m 'docs: HOME=x and GIT_CONFIG_GLOBAL+=y are denied'",
+        "git push -u origin feat/x && git commit -m 'docs: why HOME= is denied'",
+    ],
+)
+def test_bash_guard_allows_config_assignments_as_quoted_text(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 0
+
+
+@pytest.mark.usefixtures("agent_ticket")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "HOME=.scratch; git commit -m 'feat: x'",
+        "{ HOME=.scratch; git commit -m 'feat: x'; }",
+        "declare -x HOME=.scratch; git commit -m 'feat: x'",
+        'HOME=".scratch dir" git commit -m x',
+        "eval 'export HOME=.scratch'; git commit -m 'feat: x'",
+        "eval export HOME=.scratch; git push -u origin feat/x",
+    ],
+)
+def test_bash_guard_still_denies_config_assignments_as_words(
+    command: str, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checkout(repo, f"feat/{AGENT_TICKET}")
+    assert bash(command, repo, monkeypatch) == 2
+    assert "runs hooks" in capsys.readouterr().err
 
 
 def test_bash_guard_denies_a_nul_byte(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
