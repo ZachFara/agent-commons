@@ -186,8 +186,11 @@ PYDANTIC_CONFIG_AS_DECLARED = Upstream(
 # The two tests below fail at the base on Pydantic 2.14.0 ('default' == 'honeycrisp') and pass
 # there on 2.13.5 (checked); the PR's third new test, on init kwargs, passes at the base. The
 # error doesn't name a fix; not claimed as hard-set (the obvious fix wasn't tried).
-# Cause words name pydantic's change, not the symptom. Not "implies" or "validate_by_name": a
-# fix that only treats the symptom says them ("validate_by_alias=False implies by name").
+# Cause words name pydantic's change, not the symptom, and every phrase carries its object
+# (`model_config` or `validate_by_name`): a bare verb ("written back", "no longer writes")
+# matches a fix that only treats the symptom ("never written back to the field"), and "write
+# back" matches "write backend". Not "implies" or "validate_by_name" alone: a symptom-only fix
+# says them ("validate_by_alias=False implies by name").
 PYDANTIC_SETTINGS_BY_NAME = GitHubTask(
     name="gh-pydantic-settings-validate-by-name",
     repo="https://github.com/pydantic/pydantic-settings",
@@ -207,17 +210,21 @@ PYDANTIC_SETTINGS_BY_NAME = GitHubTask(
     discovery=Discovery(
         symptom_words=("validate_by_alias", "alias", "environment variable", "default"),
         cause_words=(
-            "no longer writes",
-            "stopped writing",
-            "written back",
-            "writes back",
-            "write back",
-            "writing back",
+            "back into model_config",
+            "back to model_config",
             "no longer mutates",
+            "no longer mutates model_config",
             "mutate model_config",
             "mutates model_config",
+            "mutating model_config",
             "model_config as declared",
-            "resolved validate_by_name",
+            "model_config no longer",
+            "model_config unchanged",
+            "leaves model_config",
+            "no longer writes validate_by_name",
+            "no longer sets validate_by_name",
+            "stopped writing validate_by_name",
+            "stopped setting validate_by_name",
             "2.14",
         ),
         library="pydantic",
