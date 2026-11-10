@@ -357,16 +357,16 @@ MLODA_DUCKDB = GitHubTask(
     upstream=DUCKDB_JOIN_ALIAS,
     discovery=Discovery(
         symptom_words=("append_columns", "Referenced table", "BinderException", "Binder Error"),
-        # Not bare "alias": the laid-over tests and the base source use it everywhere.
+        # No alias phrase ("alias no longer resolves", "drops the join alias"): they restate the
+        # binder error, and bare "alias" fills the laid-over tests and the base source. Not bare
+        # "new select" or "bind": a workaround says "wrap the join in a new SELECT", and "bind"
+        # is in "Binder Error". "starts a new select" needs its final "s", so "start a new
+        # select" in a fix doesn't match.
         cause_words=(
-            "alias stops resolving",
-            "aliases stop resolving",
-            "alias no longer resolves",
-            "aliases no longer resolve",
-            "new select",
-            "drops the join alias",
-            "loses the join alias",
             "bindstatement",
+            "bind statement",
+            "starts a new select",
+            "started a new select",
             "2.0",
         ),
         library="duckdb",
