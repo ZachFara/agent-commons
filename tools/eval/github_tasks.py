@@ -163,6 +163,70 @@ PYDANTIC_SETTINGS = GitHubTask(
 )
 
 
+# Pydantic 2.14.0 (2026-10-08) no longer writes the resolved `validate_by_name` back into a
+# model's `model_config`, which now stays as declared: pydantic/pydantic#13825 ("Do not mutate
+# `model_config` attribute"), merged 2026-09-25 (authored and committed 2026-09-25).
+# Release notes: https://github.com/pydantic/pydantic/releases/tag/v2.14.0
+PYDANTIC_CONFIG_AS_DECLARED = Upstream(
+    library="pydantic",
+    version="2.14.0",
+    released="2026-10-08",
+    changelog="https://github.com/pydantic/pydantic/releases/tag/v2.14.0",
+    upstream_change="pydantic-2.14-model-config-not-resolved",
+)
+
+# Issue: https://github.com/pydantic/pydantic-settings/issues/1021 (2026-10-09): with
+# `validate_by_alias=False`, environment variables and secret files named after an aliased
+# field are ignored and the default is used.
+# Fix: https://github.com/pydantic/pydantic-settings/pull/1022 (squash-merged 2026-10-13): the
+# sources resolve "fields can be populated by name" themselves, applying the `populate_by_name`
+# fallback and the `validate_by_alias=False` implication. The base is the squash commit's
+# parent. Only tests/test_settings.py is laid over: its new tests have no comments or
+# docstrings. tests/test_utils.py is left out, because it imports the fix's new helper.
+# The two tests below fail at the base on Pydantic 2.14.0 ('default' == 'honeycrisp') and pass
+# there on 2.13.5 (checked); the PR's third new test, on init kwargs, passes at the base. The
+# error doesn't name a fix; not claimed as hard-set (the obvious fix wasn't tried).
+# Cause words name pydantic's change, not the symptom. Not "implies" or "validate_by_name": a
+# fix that only treats the symptom says them ("validate_by_alias=False implies by name").
+PYDANTIC_SETTINGS_BY_NAME = GitHubTask(
+    name="gh-pydantic-settings-validate-by-name",
+    repo="https://github.com/pydantic/pydantic-settings",
+    base_commit="f0dd3824b3cdacd65a4bda730a9754a1cfdcda13",
+    fix_commit="3b405d42a4c55c9e88864bf80cddac44caad7da7",
+    issue_url="https://github.com/pydantic/pydantic-settings/issues/1021",
+    fix_url="https://github.com/pydantic/pydantic-settings/pull/1022",
+    test_paths=("tests/test_settings.py",),
+    python="3.12",
+    pins=("pydantic==2.14.0",),
+    setup=f"uv pip install --quiet {EXCLUDE_NEWER} -e . pytest==9.1.1",
+    test_command=tests(
+        "tests/test_settings.py::test_validate_by_alias_false_when_using_name",
+        "tests/test_settings.py::test_validate_by_alias_false_with_secrets_when_using_name",
+    ),
+    upstream=PYDANTIC_CONFIG_AS_DECLARED,
+    discovery=Discovery(
+        symptom_words=("validate_by_alias", "alias", "environment variable", "default"),
+        cause_words=(
+            "no longer writes",
+            "stopped writing",
+            "written back",
+            "writes back",
+            "write back",
+            "writing back",
+            "no longer mutates",
+            "mutate model_config",
+            "mutates model_config",
+            "model_config as declared",
+            "resolved validate_by_name",
+            "2.14",
+        ),
+        library="pydantic",
+    ),
+    trigger="version_specific",
+    license="MIT",
+)
+
+
 # Polars 2.0.0 (2026-10-06; first release candidate 2026-09-02): a lazy query's collect now
 # runs on the streaming engine, which doesn't keep a join's row order unless the join passes
 # `maintain_order`. Upgrade guide, "The Lazy API defaults to the streaming engine":
@@ -328,6 +392,14 @@ def scenario(task: GitHubTask) -> Scenario:
     )
 
 
-TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA, PIP_TOOLS, MARKLASSIAN]
+TASKS: list[GitHubTask] = [
+    PYTEST_BDD,
+    TEKORE,
+    PYDANTIC_SETTINGS,
+    PYDANTIC_SETTINGS_BY_NAME,
+    MLODA,
+    PIP_TOOLS,
+    MARKLASSIAN,
+]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
