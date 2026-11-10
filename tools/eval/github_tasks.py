@@ -348,15 +348,18 @@ TABLE_EXTRACTION = GitHubTask(
     test_paths=("tests/test_jobs.py",),
     python="3.12",
     pins=("fastapi==0.147.0",),
-    # The project's CI constraints: without them PyMuPDF 2.1 pulls in onnxruntime (over 300 MB).
+    # The project's CI constraints: without them PyMuPDF 2.1 pulls in onnxruntime (over 300 MB);
+    # with them the project is about 226 MB. They pin fastapi 0.146.0; the pin installs over it.
     setup=f"uv pip install --quiet {EXCLUDE_NEWER} -c requirements/ci-constraints.txt -e .[dev]",
     test_command=tests("tests/test_jobs.py"),
     upstream=FASTAPI_OMITTED_BOOL,
     discovery=Discovery(
         symptom_words=("include_metadata", "metadata"),
-        # FastAPI's own words for the change ("unchecked HTML checkboxes"). Not "omitted bool"
-        # or "default": the failing test's name and a symptom-only fix say them.
-        cause_words=("checkbox", "unchecked", "bool form fields as false", "0.147"),
+        # Each names FastAPI's object that changed: its `bool` form field, read by the new rule
+        # its release notes call "unchecked HTML checkboxes". Not "boolean form field",
+        # "omitted bool" or "default": the laid-over test names say them, and so would a fix
+        # that only treats the symptom.
+        cause_words=("bool form field", "html checkbox", "unchecked checkbox", "0.147"),
         library="fastapi",
     ),
     trigger="version_specific",
