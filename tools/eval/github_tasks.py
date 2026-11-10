@@ -315,6 +315,55 @@ MARKLASSIAN = GitHubTask(
 )
 
 
+# FastAPI 0.147.0 (2026-10-19) reads an omitted `bool` form field as False, like an unchecked
+# HTML checkbox, whatever default the parameter declares: fastapi/fastapi#16523, merged
+# 2026-10-19 (fastapi/fastapi@19c0b7a, authored and committed 2026-10-19). 0.162.0 (2026-10-23)
+# went back to the declared default. Release notes:
+# https://github.com/fastapi/fastapi/releases/tag/0.147.0
+FASTAPI_OMITTED_BOOL = Upstream(
+    library="fastapi",
+    version="0.147.0",
+    released="2026-10-19",
+    changelog="https://github.com/fastapi/fastapi/releases/tag/0.147.0",
+    upstream_change="fastapi-0.147-omitted-bool-form-false",
+)
+
+# Issue: https://github.com/huss-huss/table-extraction-pro/issues/6 (2026-10-19): `/extract` and
+# `/jobs` read an omitted `include_metadata: bool = Form(True)` as False on FastAPI 0.147.
+# Fix: https://github.com/huss-huss/table-extraction-pro/pull/7 (merged 2026-10-19): the routes
+# take the boolean fields as optional strings and parse them, applying the default themselves.
+# A merge commit: the base is its first parent. Only tests/test_jobs.py is laid over: the fix's
+# tests/test_api.py has a comment stating the cause ("FastAPI 0.147 reads a missing ...").
+# The laid-over file's new omitted-field test and `test_result_formats` fail at the base on
+# 0.147.0; the file passes at the base on 0.146.0 (checked). Its new test's comment names only
+# the symptom, with "Regression for #6"; that issue states the cause, but eval sessions have no
+# web tools. The error doesn't name its fix; not claimed hard-set.
+TABLE_EXTRACTION = GitHubTask(
+    name="gh-table-extraction-bool-form",
+    repo="https://github.com/huss-huss/table-extraction-pro",
+    base_commit="16908b90dc506ea42666c95e1a16415fd841dfd6",
+    fix_commit="3c30a22452397abb0adbc16f468f2bb17868675e",
+    issue_url="https://github.com/huss-huss/table-extraction-pro/issues/6",
+    fix_url="https://github.com/huss-huss/table-extraction-pro/pull/7",
+    test_paths=("tests/test_jobs.py",),
+    python="3.12",
+    pins=("fastapi==0.147.0",),
+    # The project's CI constraints: without them PyMuPDF 2.1 pulls in onnxruntime (over 300 MB).
+    setup=f"uv pip install --quiet {EXCLUDE_NEWER} -c requirements/ci-constraints.txt -e .[dev]",
+    test_command=tests("tests/test_jobs.py"),
+    upstream=FASTAPI_OMITTED_BOOL,
+    discovery=Discovery(
+        symptom_words=("include_metadata", "metadata"),
+        # FastAPI's own words for the change ("unchecked HTML checkboxes"). Not "omitted bool"
+        # or "default": the failing test's name and a symptom-only fix say them.
+        cause_words=("checkbox", "unchecked", "bool form fields as false", "0.147"),
+        library="fastapi",
+    ),
+    trigger="version_specific",
+    license="MIT",
+)
+
+
 def scenario(task: GitHubTask) -> Scenario:
     """Return the scenario that replays a task: its project comes from the repository."""
     return Scenario(
@@ -328,6 +377,14 @@ def scenario(task: GitHubTask) -> Scenario:
     )
 
 
-TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA, PIP_TOOLS, MARKLASSIAN]
+TASKS: list[GitHubTask] = [
+    PYTEST_BDD,
+    TEKORE,
+    PYDANTIC_SETTINGS,
+    MLODA,
+    PIP_TOOLS,
+    MARKLASSIAN,
+    TABLE_EXTRACTION,
+]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
