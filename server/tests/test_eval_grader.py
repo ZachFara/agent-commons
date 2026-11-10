@@ -270,6 +270,7 @@ def test_the_cause_words_grader_v2_skips_are_exactly_the_versions() -> None:
         "8.5",
         "3.4",
         "0.147",
+        "3.11.2",
     }
 
 
