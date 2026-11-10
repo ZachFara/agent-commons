@@ -426,11 +426,20 @@ TABLE_EXTRACTION = GitHubTask(
     upstream=FASTAPI_OMITTED_BOOL,
     discovery=Discovery(
         symptom_words=("include_metadata", "metadata"),
-        # Each names FastAPI's object that changed: its `bool` form field, read by the new rule
-        # its release notes call "unchecked HTML checkboxes". Not "boolean form field",
-        # "omitted bool" or "default": the laid-over test names say them, and so would a fix
-        # that only treats the symptom.
-        cause_words=("bool form field", "html checkbox", "unchecked checkbox", "0.147"),
+        # Every phrase pairs FastAPI's object, its `bool` form field, with its new rule: an
+        # omitted one is read as False, the "unchecked HTML checkboxes" of its release notes.
+        # Not a bare "bool form field", "boolean form field" or "default": the laid-over test
+        # names say them, and so would a fix that only treats the symptom.
+        cause_words=(
+            "omitted bool form fields as false",
+            "omitted bool form field as false",
+            "omitted boolean form fields as false",
+            "omitted boolean form field as false",
+            "html checkbox",
+            "unchecked checkbox",
+            "checkbox semantics",
+            "0.147",
+        ),
         library="fastapi",
     ),
     trigger="version_specific",
