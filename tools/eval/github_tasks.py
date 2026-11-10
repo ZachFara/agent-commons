@@ -315,6 +315,67 @@ MARKLASSIAN = GitHubTask(
 )
 
 
+# DuckDB 2.0.0 (2026-10-21) rebuilt the Python relational API on the engine's BindStatement:
+# after a join, an input's alias stops resolving once a later step (such as `order()`) starts a
+# new SELECT. duckdb/duckdb-python#697, "Move Relational API to BindStatement", opened 2026-10-19,
+# merged as 0eeca76 (authored and committed 2026-10-20).
+# Release notes: https://github.com/duckdb/duckdb-python/releases/tag/v2.0.0
+DUCKDB_JOIN_ALIAS = Upstream(
+    library="duckdb",
+    version="2.0.0",
+    released="2026-10-21",
+    changelog="https://github.com/duckdb/duckdb-python/releases/tag/v2.0.0",
+    upstream_change="duckdb-2.0-join-alias-after-new-select",
+)
+
+# Issue: https://github.com/mloda-ai/mloda/issues/2395 (2026-10-30): `DuckdbRelation.__len__`
+# and `append_columns` fail on DuckDB 2.0, the latter with a binder error naming a
+# "JOIN_RELATION_..." candidate table.
+# Fix: https://github.com/mloda-ai/mloda/pull/2405 (squash-merged 2026-10-30): `append_columns`
+# projects the row number out of the join before ordering. The base is the squash's parent.
+# Only the new `append_columns` test runs: it fails at the base on duckdb 2.0.0, passes at the
+# base on 1.5.6 (checked) and at the fix. The `__len__` half is left out: its error names its
+# own fix (`rel.limit(1).fetchall()`). The laid-over mixin has no comment about DuckDB versions
+# or aliases. The install is about 220 MB (pyarrow and duckdb).
+MLODA_DUCKDB = GitHubTask(
+    name="gh-mloda-duckdb-join-alias",
+    repo="https://github.com/mloda-ai/mloda",
+    base_commit="b4071889c9b626c738a2abb0ffb7ac451e6ee222",
+    fix_commit="c222f78fb8f867f77e6022a524024539de619ca1",
+    issue_url="https://github.com/mloda-ai/mloda/issues/2395",
+    fix_url="https://github.com/mloda-ai/mloda/pull/2405",
+    test_paths=(
+        "tests/test_plugins/compute_framework/base_implementations/relation_test_mixin.py",
+    ),
+    python="3.12",
+    pins=("duckdb==2.0.0", "pytest==9.1.1"),
+    setup=f"uv pip install --quiet {EXCLUDE_NEWER} -e .[duckdb]",
+    test_command=tests(
+        "tests/test_plugins/compute_framework/base_implementations/duckdb/test_duckdb_relation.py"
+        "::TestDuckdbRelation::test_append_columns_keeps_column_and_row_order"
+    ),
+    upstream=DUCKDB_JOIN_ALIAS,
+    discovery=Discovery(
+        symptom_words=("append_columns", "Referenced table", "BinderException", "Binder Error"),
+        # No alias phrase ("alias no longer resolves", "drops the join alias"): they restate the
+        # binder error, and bare "alias" fills the laid-over tests and the base source. Not bare
+        # "new select" or "bind": a workaround says "wrap the join in a new SELECT", and "bind"
+        # is in "Binder Error". "starts a new select" needs its final "s", so "start a new
+        # select" in a fix doesn't match.
+        cause_words=(
+            "bindstatement",
+            "bind statement",
+            "starts a new select",
+            "started a new select",
+            "2.0",
+        ),
+        library="duckdb",
+    ),
+    trigger="version_specific",
+    license="Apache-2.0",
+)
+
+
 def scenario(task: GitHubTask) -> Scenario:
     """Return the scenario that replays a task: its project comes from the repository."""
     return Scenario(
@@ -328,6 +389,14 @@ def scenario(task: GitHubTask) -> Scenario:
     )
 
 
-TASKS: list[GitHubTask] = [PYTEST_BDD, TEKORE, PYDANTIC_SETTINGS, MLODA, PIP_TOOLS, MARKLASSIAN]
+TASKS: list[GitHubTask] = [
+    PYTEST_BDD,
+    TEKORE,
+    PYDANTIC_SETTINGS,
+    MLODA,
+    PIP_TOOLS,
+    MARKLASSIAN,
+    MLODA_DUCKDB,
+]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
