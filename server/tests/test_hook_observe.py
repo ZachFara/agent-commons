@@ -1,6 +1,7 @@
 import json
 import stat
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,14 @@ def events(database_url: str, task_id: str) -> list[tuple[str, dict[str, Any]]]:
             "SELECT kind::text, data FROM task_events WHERE task_id = %s ORDER BY created_at",
             (task_id,),
         ).fetchall()
-    return [(kind, data) for kind, data in rows]
+    return [(kind, untimed(kind, data)) for kind, data in rows]
+
+
+def untimed(kind: str, data: dict[str, Any]) -> dict[str, Any]:
+    """The event without the hook's time of a test run, which every run must carry."""
+    if kind == "test_run":
+        assert datetime.fromisoformat(data.pop("at")).tzinfo is not None
+    return data
 
 
 def spool(session_id: str) -> list[dict[str, Any]]:
