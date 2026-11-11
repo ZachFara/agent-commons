@@ -505,6 +505,76 @@ MLODA_DUCKDB = GitHubTask(
 )
 
 
+# Matplotlib 3.11.2 (2026-09-11) gave `ColormapRegistry` its own `__contains__`, which looks the
+# name up in the registry's dict: before, `in` was `Mapping.__contains__`, which calls
+# `__getitem__`, so a subclass's `__getitem__` decided membership. matplotlib/matplotlib#32172
+# ("PERF: Avoid `difflib` lookup in `ColormapRegistry.register`"), merged 2026-08-05, backported
+# to 3.11.x as eb3e50c (authored and committed 2026-08-05). The PERF title is this change: the
+# new `__contains__` in lib/matplotlib/cm.py keeps `register`'s `name in self` from going
+# through `__getitem__` and its difflib suggestions.
+# Release notes: https://github.com/matplotlib/matplotlib/releases/tag/v3.11.2
+MATPLOTLIB_REGISTRY_CONTAINS = Upstream(
+    library="matplotlib",
+    version="3.11.2",
+    released="2026-09-11",
+    changelog="https://github.com/matplotlib/matplotlib/releases/tag/v3.11.2",
+    upstream_change="matplotlib-3.11.2-colormap-registry-contains",
+)
+
+# Issue: https://github.com/Ultraplot/UltraPlot/issues/831 (2026-09-29): on matplotlib 3.11.2 a
+# plain `ax.scatter` fails with "None is not a valid value for cmap"; 3.11.1 works.
+# Fix: https://github.com/Ultraplot/UltraPlot/pull/832 (squash-merged 2026-09-30):
+# `ColormapDatabase`, a `ColormapRegistry` subclass, gets a `__contains__` that translates names
+# as its `__getitem__` does. The base is the squash commit's parent. The new test fails at the
+# base on matplotlib 3.11.2 (`'Fire' in uplt.colormaps`) and passes there on 3.11.1 (checked).
+# The laid-over file's only comment is about an older reversal bug; nothing names matplotlib's
+# change. The fix's source comment names 3.11.2, but the agent never sees the fix tree. The
+# error doesn't name its fix; not claimed hard-set.
+# No bare `__contains__` or `__getitem__`: the fix adds the one, and the base docstring cites
+# the other. Bare "ColormapRegistry" is in the base's class line, and "colormap" fills the test.
+ULTRAPLOT = GitHubTask(
+    name="gh-ultraplot-colormap-contains",
+    repo="https://github.com/Ultraplot/UltraPlot",
+    base_commit="74e28e2aeb684b013f6f732a63b4d19b68cb93dc",
+    fix_commit="d48479c2196368945b9e920300cc43d651ed5325",
+    issue_url="https://github.com/Ultraplot/UltraPlot/issues/831",
+    fix_url="https://github.com/Ultraplot/UltraPlot/pull/832",
+    test_paths=("ultraplot/tests/test_colormap.py",),
+    python="3.12",
+    pins=("matplotlib==3.11.2",),
+    # The version comes from setuptools-scm, which needs a git checkout.
+    setup=(
+        "env SETUPTOOLS_SCM_PRETEND_VERSION=2.7.0"
+        f" uv pip install --quiet {EXCLUDE_NEWER} -e . pytest==9.1.1 pytest-mpl"
+    ),
+    test_command=tests("ultraplot/tests/test_colormap.py"),
+    upstream=MATPLOTLIB_REGISTRY_CONTAINS,
+    discovery=Discovery(
+        symptom_words=("ColormapDatabase", "colormaps", "Fire"),
+        # Every phrase states what changed in matplotlib: `ColormapRegistry` gained its own
+        # `__contains__`, or membership stopped going through `__getitem__`. No bare object
+        # nouns ("ColormapRegistry.__contains__"): a symptom-only fix says "overrides
+        # ColormapRegistry.__contains__". Nothing that describes what a `__contains__` checks
+        # ("checks _cmaps"): the fix's own `__contains__` checks the translated key.
+        cause_words=(
+            "colormapregistry defines __contains__",
+            "colormapregistry now defines",
+            "colormapregistry now has",
+            "colormapregistry gained",
+            "__contains__ no longer calls __getitem__",
+            "__contains__ no longer goes through __getitem__",
+            "no longer falls back to __getitem__",
+            "__contains__ bypasses __getitem__",
+            "__contains__ skips __getitem__",
+            "3.11.2",
+        ),
+        library="matplotlib",
+    ),
+    trigger="version_specific",
+    license="MIT",
+)
+
+
 def scenario(task: GitHubTask) -> Scenario:
     """Return the scenario that replays a task: its project comes from the repository."""
     return Scenario(
@@ -528,6 +598,7 @@ TASKS: list[GitHubTask] = [
     MARKLASSIAN,
     MLODA_DUCKDB,
     TABLE_EXTRACTION,
+    ULTRAPLOT,
 ]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
