@@ -186,11 +186,11 @@ PYDANTIC_CONFIG_AS_DECLARED = Upstream(
 # The two tests below fail at the base on Pydantic 2.14.0 ('default' == 'honeycrisp') and pass
 # there on 2.13.5 (checked); the PR's third new test, on init kwargs, passes at the base. The
 # error doesn't name a fix; not claimed as hard-set (the obvious fix wasn't tried).
-# Cause words name pydantic's change, not the symptom, and every phrase carries its object
-# (`model_config` or `validate_by_name`): a bare verb ("written back", "no longer writes")
-# matches a fix that only treats the symptom ("never written back to the field"), and "write
-# back" matches "write backend". Not "implies" or "validate_by_name" alone: a symptom-only fix
-# says them ("validate_by_alias=False implies by name").
+# Cause words name pydantic's change, not the symptom, and every phrase but the version carries
+# its object (`model_config` or `validate_by_name`): a bare verb ("written back", "no longer
+# writes") matches a fix that only treats the symptom ("never written back to the field"), and
+# "write back" matches "write backend". Not "implies" or "validate_by_name" alone: a
+# symptom-only fix says them ("validate_by_alias=False implies by name").
 PYDANTIC_SETTINGS_BY_NAME = GitHubTask(
     name="gh-pydantic-settings-validate-by-name",
     repo="https://github.com/pydantic/pydantic-settings",
@@ -212,15 +212,12 @@ PYDANTIC_SETTINGS_BY_NAME = GitHubTask(
         cause_words=(
             "back into model_config",
             "back to model_config",
-            "no longer mutates",
             "no longer mutates model_config",
             "mutate model_config",
             "mutates model_config",
             "mutating model_config",
             "model_config as declared",
             "model_config no longer",
-            "model_config unchanged",
-            "leaves model_config",
             "no longer writes validate_by_name",
             "no longer sets validate_by_name",
             "stopped writing validate_by_name",
@@ -428,8 +425,8 @@ TABLE_EXTRACTION = GitHubTask(
         symptom_words=("include_metadata", "metadata"),
         # Every phrase pairs FastAPI's object, its `bool` form field, with its new rule: an
         # omitted one is read as False, the "unchecked HTML checkboxes" of its release notes.
-        # Not a bare "bool form field", "boolean form field" or "default": the laid-over test
-        # names say them, and so would a fix that only treats the symptom.
+        # Not a bare "bool form field", "boolean form field" or "default": a fix that only treats
+        # the symptom says them ("parse the boolean form field and apply its default").
         cause_words=(
             "omitted bool form fields as false",
             "omitted bool form field as false",
