@@ -186,7 +186,73 @@ Records are reviewed like code: `run` still executes the record's `setup`, and t
 the repository's code, on this machine. `check` and grading run them in containers.
 
 The fix commit stays in the cache during `run`, because the project's test files come from it.
-An agent that reads `~/.cache/agent-commons-eval/` could find the fix there.
+An agent that reads `~/.cache/agent-commons-eval/` could find the fix there. The leak flags
+below catch that.
+
+### Leak flags
+
+Every GitHub task is a real bug with a public fix, and the session runs on this machine with
+its network. A session that looks the fix up instead of finding the cause would inflate its
+arm's score. So after each GitHub-task session, `tools/eval/leaks.py` scans what the session
+asked for: the inputs of its tool calls (Bash commands, file paths and patterns, edits, MCP
+arguments). It never scans what came back, because the project's own files name the repository,
+and reading `pyproject.toml` must not raise a flag. For the same reason an `Edit`'s
+`old_string` is not scanned, and every match of a rule is counted: a rule flags the call when
+the rest of its input holds a match more times than the call's `old_string`s together. So an
+edit that keeps a link the file already had is not flagged, but one that keeps it and adds a
+fetch of the repository is. Context7's tools are part of an arm, so they are never scanned. Written
+scenarios have no repository and are never scanned.
+
+There are two levels:
+
+| Level | Rule | A tool input that contains |
+|---|---|---|
+| `leak` | `repo` | the task's repo as `github.com/<owner>/<name>` (or `github.com:`), `api.github.com/repos/<owner>/<name>`, `raw.githubusercontent.com/<owner>/<name>` or `codeload.github.com/<owner>/<name>`, in any case |
+| `leak` | `fix_commit` | the fix commit's sha, or its first 7 or more characters as a whole hex token (no letter or digit next to it) |
+| `leak` | `issue_or_fix` | the issue URL or the fix URL, with or without the scheme |
+| `leak` | `cache` | the cache path (`repos.CACHE`), `.cache/agent-commons-eval` (so `~/`, `$HOME/` and a listing of the folder are caught too), or the task's cache folder name |
+| `leak` | `index` | `pip install`, `pip download`, `uv pip install`, `uv add`, `uv run --with`, `uvx`, `uv tool install` or `uv tool run` of the task's own distribution, or a `pypi.org` or `files.pythonhosted.org` URL for it |
+| `review` | `network` | any other outbound network call in a `Bash`, `Write`, `Edit`, `MultiEdit` or `NotebookEdit` input: `urllib`, `httpx`, `http.client`, `curl`, `wget`, `fetch(`, `import requests` or `requests.`, `import socket` or `socket.`, `git clone`, `git fetch`, `pip download` |
+
+The distribution is `[project].name` from the base tree's `pyproject.toml` (the project folder
+during a run, the cache for a past one), normalized per PEP 503, or the repository's name when
+there is none. A call gets one flag per leak rule it breaks; a call with no leak gets at most
+one `review` flag.
+
+Each result, its `<stem>.json` and its ledger line carry `flags`: a list of
+`{level, rule, tool, excerpt}`, empty when clean. The excerpt is at most 160 characters around
+the match, on one line, scrubbed of secrets by the server's scrub first.
+
+- **A `leak`** keeps the session out of every count (the run summary, `trials`, `report`,
+  `effects`, `compare` and `counterfactuals`) until a human has read the transcript and
+  cleared it.
+- **A `review`** session is counted, but listed so someone reads it.
+
+At the end of `run`, `search` and `arms`, the harness prints each flagged session with its
+level, rule, tool, transcript path and excerpt. To check a past run, scan its transcripts
+again: `uv run python tools/agent_eval.py flags .scratch/eval/<condition>` prints the same
+report. It needs each transcript's `<stem>.json` to know the task.
+
+**Clearing** a leak that turns out to be harmless, e.g. a README link the agent copied into a
+changelog:
+
+```
+uv run python tools/agent_eval.py clear <condition>-<task>-<index> --reason "why it is no leak"
+```
+
+The session is named by its transcript's stem. The ledger stays append-only: the command
+appends `{"at", "clears": "<stem>", "condition", "scenario", "run", "reason"}`, and reading the
+ledger marks one line `cleared`: the latest line of that session before it, the one whose
+transcript is on disk. A condition run again reuses its stems and overwrites their transcripts,
+so an older line of the same stem stays held, and so does a later one. The saved `<stem>.json`
+gets `cleared` too, for `report`. The command refuses a session whose latest line has no leak
+flag, or no reason. Marking a line `invalid` works as before, and an `invalid` line is never
+counted, cleared or not.
+
+**The scan blocks nothing.** It is a list of what to read, not a guard. A fetch hidden from it
+(a URL built from pieces, base64, a script that downloads another script) still gets through,
+and the scan never sees tool output. That is why transcripts are still read by hand. Blocking
+network access, or running sessions in a container, is not done here.
 
 ## Arms: Commons, Context7, both, or neither
 
@@ -234,6 +300,7 @@ Each result and ledger line also records, in every arm and in `run` and `search`
 | `patch_hash` | 16 hex digits of sha256 over the whole diff of what was read, taken with whitespace removed and blank lines dropped, so whitespace-only differences share a hash |
 | `repeat` | which of `--runs` repeats of its task, arm and model the session was (1 to N); 0 outside `arms`. Unlike `run`, the same repeat pairs across arms |
 | `grader_version` | the grader that judged the session's proposals (`runner.GRADER_VERSION`, see Grading); lines and results without it are version 1, and no report pools two versions |
+| `flags` | GitHub tasks only: `{level, rule, tool, excerpt}` per tool call that may have reached the fix (see Leak flags); empty when clean and in every other scenario. Lines from before this field have none |
 
 Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
 `conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:
@@ -372,7 +439,8 @@ without both. Ask the owner before running it, because it uses the subscription.
 tool descriptions, hook messages). Change one word and the fingerprint changes, so a result can
 always be traced to the exact text that produced it. `uv run python tools/agent_eval.py trials`
 summarizes it per variant, fingerprint, and scenario kind. The three baselines were back-filled
-from their committed results.
+from their committed results. The only other lines are the `clears` lines `agent_eval.py clear`
+appends (see Leak flags), which mark an earlier session line `cleared` when the ledger is read.
 
 ## Baseline (2026-10-25)
 

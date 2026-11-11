@@ -17,6 +17,8 @@ Usage:
   uv run python tools/agent_eval.py counterfactuals --condition NAME --store NAME
   uv run python tools/agent_eval.py compare --condition NAME
   uv run python tools/agent_eval.py effects [--condition NAME]
+  uv run python tools/agent_eval.py flags DIRECTORY        # scan saved GitHub-task transcripts
+  uv run python tools/agent_eval.py clear SESSION --reason TEXT  # count a flagged session again
 
 Sessions use the signed-in Claude Code account (subscription usage, not API billing).
 """
@@ -46,13 +48,13 @@ from commons.store.counterfactuals import CounterfactualRun, known_entries, reco
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
-from tools.eval import container, holdout, repos, runner  # noqa: E402
+from tools.eval import container, holdout, leaks, repos, runner  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from tools.eval.model import Scenario
+    from tools.eval.model import GitHubTask, Scenario
 
 RESULTS = REPO / ".scratch" / "eval"
 
@@ -230,7 +232,7 @@ def plan_configs(named: list[str] | None, count: int, seed: int) -> list[str]:
 
 def finished(transcripts: Path, condition: str, job: runner.Job) -> bool:
     """Whether a job already has a clean result for the same text, skill and arm (`--resume`)."""
-    path = transcripts / f"{condition}-{job.scenario.name}-{job.index}.json"
+    path = transcripts / f"{runner.stem(condition, job.scenario.name, job.index)}.json"
     if not path.exists():
         return False
     saved = json.loads(path.read_text(encoding="utf-8"))
@@ -285,16 +287,127 @@ def run_jobs(jobs: list[runner.Job], args: argparse.Namespace) -> int:
     ):
         append_ledger([result])
         results.append(result)
-    failed = sum(bool(r.failures(SCENARIOS[r.scenario])) for r in results)
+    # A session flagged as a possible leak is held out of every count until it is cleared.
+    kept = [r for r in results if counted(asdict(r))]
+    failed = sum(bool(r.failures(SCENARIOS[r.scenario])) for r in kept)
     cost = sum(r.cost_usd for r in results)
     errors = sum(r.error is not None for r in results)
     print(
-        f"\n{len(results)} sessions, {failed} missed expectations, {errors} errored; "
+        f"\n{len(results)} sessions, {failed} missed expectations, {errors} errored, "
+        f"{len(results) - len(kept)} held as possible leaks; "
         f"API-equivalent cost ${cost:.2f}; results in {transcripts}"
     )
-    for line in passing_tokens([asdict(r) for r in results if r.error is None]):
+    for line in passing_tokens([asdict(r) for r in kept if r.error is None]):
+        print(line)
+    sessions = [
+        (
+            transcripts / f"{runner.stem(r.condition, r.scenario, r.index)}.jsonl",
+            [asdict(flag) for flag in r.flags],
+        )
+        for r in results
+    ]
+    for line in flag_report(sessions):
         print(line)
     return 1 if errors else 0
+
+
+def flag_report(sessions: list[tuple[Path, list[dict[str, Any]]]]) -> list[str]:
+    """Return the report of flagged sessions: per flag, its level, rule, tool and transcript."""
+    flagged = [(path, found) for path, found in sessions if found]
+    if not flagged:
+        return ["no session flagged"]
+    lines = [
+        (
+            f"{len(flagged)} flagged sessions: a leak isn't counted until cleared "
+            "(`clear SESSION --reason TEXT`); read each transcript"
+        )
+    ]
+    for path, found in flagged:
+        lines += [
+            f"  {flag['level']:<6} {flag['rule']:<12} {flag['tool']:<12} {path}\n"
+            f"         {flag['excerpt']}"
+            for flag in found
+        ]
+    return lines
+
+
+def leaked(row: dict[str, Any]) -> bool:
+    """Whether a ledger line or saved result has a leak-level flag."""
+    return any(flag.get("level") == leaks.LEAK for flag in row.get("flags") or [])
+
+
+def counted(row: dict[str, Any]) -> bool:
+    """Whether a session counts: not marked `invalid`, and no leak flag unless `cleared`."""
+    return not row.get("invalid") and (not leaked(row) or bool(row.get("cleared")))
+
+
+def flags(args: argparse.Namespace) -> int:
+    """Scan a directory's saved GitHub-task transcripts again and print the flag report."""
+    directory = Path(args.directory)
+    if not directory.is_dir():
+        print(f"no directory {directory}", file=sys.stderr)
+        return 2
+    sessions = []
+    for transcript in sorted(directory.glob("*.jsonl")):
+        task = transcript_task(transcript)
+        if task is not None:
+            calls = runner.tool_uses(runner.read_transcript(transcript))
+            found = leaks.scan(calls, task, leaks.distribution(task, None))
+            sessions.append((transcript, [asdict(flag) for flag in found]))
+    print(f"{len(sessions)} GitHub-task transcripts scanned in {directory}")
+    for line in flag_report(sessions):
+        print(line)
+    return 0
+
+
+def transcript_task(transcript: Path) -> "GitHubTask | None":
+    """Return the GitHub task of a saved transcript, by its result; None for any other."""
+    saved = transcript.with_suffix(".json")
+    if not saved.is_file():
+        return None
+    scenario = SCENARIOS.get(str(json.loads(saved.read_text(encoding="utf-8")).get("scenario")))
+    return scenario.repo if scenario is not None else None
+
+
+def clear(args: argparse.Namespace) -> int:
+    """Count a session flagged as a leak again, after a human read its transcript.
+
+    The ledger stays append-only: a line `{"clears": SESSION, "reason": ...}`, which also names
+    the session's condition, scenario and run, marks the latest earlier line of that session
+    `cleared` when the ledger is read: the one whose transcript is on disk. The saved result is
+    marked too, for `report`.
+    """
+    reason = " ".join(args.reason.split())
+    rows = [row for row in _ledger_lines() if session_name(row) == args.session]
+    if not reason:
+        print("say why the session is cleared: --reason TEXT", file=sys.stderr)
+        return 2
+    if not rows or not leaked(rows[-1]):
+        print(f"the latest ledger line of {args.session} has no leak flag", file=sys.stderr)
+        return 2
+    record = {
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "clears": args.session,
+        **{key: rows[-1][key] for key in ("condition", "scenario", "run")},
+        "reason": reason,
+    }
+    with LEDGER.open("a", encoding="utf-8") as ledger:
+        ledger.write(json.dumps(record) + "\n")
+    mark_cleared(RESULTS / str(rows[-1]["condition"]) / f"{args.session}.json", reason)
+    print(f"cleared {args.session}: {reason}")
+    return 0
+
+
+def mark_cleared(saved: Path, reason: str) -> None:
+    """Mark a saved result `cleared`, if it is still there."""
+    if saved.is_file():
+        result = json.loads(saved.read_text(encoding="utf-8"))
+        saved.write_text(json.dumps({**result, "cleared": reason}, indent=1), encoding="utf-8")
+
+
+def session_name(row: dict[str, Any]) -> str:
+    """Return the session a ledger line records, as its transcript's stem."""
+    return runner.stem(str(row["condition"]), str(row["scenario"]), int(row["run"]))
 
 
 def passing_tokens(rows: list[dict[str, Any]]) -> list[str]:
@@ -355,6 +468,7 @@ def append_ledger(results: list[runner.Result]) -> None:
                 "patch_hash": result.patch_hash,
                 "repeat": result.repeat,
                 "grader_version": result.grader_version,
+                "flags": [asdict(flag) for flag in result.flags],
             }
             ledger.write(json.dumps(line) + "\n")
 
@@ -365,8 +479,9 @@ def by_variant() -> int:
         print("no trials logged yet")
         return 0
     lines = _ledger_lines()
-    # A line marked `invalid` stays in the ledger as a record but is never counted.
-    rows = [row for row in lines if not row.get("invalid")]
+    # A line marked `invalid`, or flagged as a leak and not cleared, stays in the ledger as a
+    # record but is never counted.
+    rows = [row for row in lines if counted(row)]
     groups: dict[tuple[str, str, str, str, int], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         # The text fingerprint covers the server's text only, so the skill is its own group,
@@ -376,7 +491,7 @@ def by_variant() -> int:
         arm = row.get("arm", "commons")
         groups[(arm, variant, row["text"], row["trigger"], grader_version(row))].append(row)
     if skipped := len(lines) - len(rows):
-        print(f"({skipped} trials marked invalid are not counted)")
+        print(f"({skipped} trials marked invalid or held as possible leaks are not counted)")
     print(
         f"{'arm':<8} {'variant':<10} {'text':<13} {'trigger':<18} {'n':>3} "
         f"{'search':>7} {'propose':>8} {'good':>5} {'fixed':>6} {'grader':>6}"
@@ -394,7 +509,25 @@ def by_variant() -> int:
 
 
 def _ledger_lines() -> list[dict[str, Any]]:
-    return [json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line]
+    """Return the ledger's session lines, with `cleared` set where a clearing line says.
+
+    A clearing line clears one session line: the latest before it with that stem. A condition
+    run again reuses its stems (and overwrites their transcripts), so an older line of the same
+    stem is another session that nobody read, and stays held.
+    """
+    if not LEDGER.exists():
+        return []
+    sessions: list[dict[str, Any]] = []
+    for row in (
+        json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line
+    ):
+        if "clears" not in row:
+            sessions.append(row)
+            continue
+        earlier = [r for r in sessions if session_name(r) == row["clears"]]
+        if earlier:
+            earlier[-1]["cleared"] = row["reason"]
+    return sessions
 
 
 def effects(args: argparse.Namespace) -> int:
@@ -409,7 +542,7 @@ def effects(args: argparse.Namespace) -> int:
         if row["condition"] == args.condition
         and row["variant"].startswith("w-")
         and row.get("arm", "commons") == "commons"  # Context7 alongside is another treatment
-        and not row.get("invalid")  # kept in the ledger as a record, never counted
+        and counted(row)  # an `invalid` or uncleared leak line is a record, never counted
     ]
     if not rows:
         print(f"no wording trials for condition {args.condition}")
@@ -526,10 +659,13 @@ def report(args: argparse.Namespace) -> int:
     """Summarize saved results per condition, grader version, and scenario."""
     conditions = args.condition or sorted(p.name for p in RESULTS.iterdir() if p.is_dir())
     for condition in conditions:
-        rows: list[Row] = [
+        saved: list[Row] = [
             json.loads(path.read_text(encoding="utf-8"))
             for path in sorted((RESULTS / condition).glob("*.json"))
         ]
+        rows = [row for row in saved if counted(row)]
+        if held := len(saved) - len(rows):
+            print(f"\n({condition}: {held} sessions held as possible leaks are not counted)")
         for version, graded in by_grader(rows).items():
             print(f"\n== {condition}: {len(graded)} sessions, grader v{version}")
             _report_scenarios(graded)
@@ -571,10 +707,8 @@ USED = ("yes", "partial")
 
 
 def condition_rows(condition: str) -> list[Row]:
-    """Return the ledger's counted lines for one condition (a line marked `invalid` is not)."""
-    if not LEDGER.exists():
-        return []
-    return [r for r in _ledger_lines() if r["condition"] == condition and not r.get("invalid")]
+    """Return the ledger's counted lines for one condition (`counted`)."""
+    return [r for r in _ledger_lines() if r["condition"] == condition and counted(r)]
 
 
 def _arm(row: Row) -> str:
@@ -927,6 +1061,12 @@ def arms_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def clear_options(parser: argparse.ArgumentParser) -> None:
+    """Add the `clear` command's options: which session, and why."""
+    parser.add_argument("session", help="The transcript's stem: <condition>-<task>-<index>.")
+    parser.add_argument("--reason", required=True, help="Why it is no leak.")
+
+
 def main() -> int:
     """Dispatch to check, run, or report."""
     parser = argparse.ArgumentParser(
@@ -996,6 +1136,14 @@ def main() -> int:
     commands.add_parser(
         "trials", help="Summarize docs/eval/trials.jsonl per variant and text hash."
     )
+    commands.add_parser(
+        "flags", help="Scan saved GitHub-task transcripts for leaks and print the report."
+    ).add_argument("directory", help="A results directory, e.g. .scratch/eval/<condition>.")
+    clear_options(
+        commands.add_parser(
+            "clear", help="Count a session flagged as a leak again, after reading its transcript."
+        )
+    )
     args = parser.parse_args()
     commands_by_name: dict[str, Callable[[argparse.Namespace], int]] = {
         "check": lambda args: check(on_host=args.on_host),
@@ -1007,6 +1155,8 @@ def main() -> int:
         "compare": compare,
         "effects": effects,
         "report": report,
+        "flags": flags,
+        "clear": clear,
     }
     return commands_by_name[args.command](args)
 
