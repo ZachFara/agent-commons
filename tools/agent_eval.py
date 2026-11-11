@@ -373,16 +373,17 @@ def clear(args: argparse.Namespace) -> int:
     """Count a session flagged as a leak again, after a human read its transcript.
 
     The ledger stays append-only: a line `{"clears": SESSION, "reason": ...}`, which also names
-    the session's condition, scenario and run, marks every earlier line of that session
-    `cleared` when the ledger is read. The saved result is marked too, for `report`.
+    the session's condition, scenario and run, marks the latest earlier line of that session
+    `cleared` when the ledger is read: the one whose transcript is on disk. The saved result is
+    marked too, for `report`.
     """
     reason = " ".join(args.reason.split())
     rows = [row for row in _ledger_lines() if session_name(row) == args.session]
     if not reason:
         print("say why the session is cleared: --reason TEXT", file=sys.stderr)
         return 2
-    if not any(leaked(row) for row in rows):
-        print(f"no ledger line of session {args.session} has a leak flag", file=sys.stderr)
+    if not rows or not leaked(rows[-1]):
+        print(f"the latest ledger line of {args.session} has no leak flag", file=sys.stderr)
         return 2
     record = {
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -508,7 +509,12 @@ def by_variant() -> int:
 
 
 def _ledger_lines() -> list[dict[str, Any]]:
-    """Return the ledger's session lines, each marked `cleared` if a later line clears it."""
+    """Return the ledger's session lines, with `cleared` set where a clearing line says.
+
+    A clearing line clears one session line: the latest before it with that stem. A condition
+    run again reuses its stems (and overwrites their transcripts), so an older line of the same
+    stem is another session that nobody read, and stays held.
+    """
     if not LEDGER.exists():
         return []
     sessions: list[dict[str, Any]] = []
@@ -518,8 +524,9 @@ def _ledger_lines() -> list[dict[str, Any]]:
         if "clears" not in row:
             sessions.append(row)
             continue
-        for earlier in (r for r in sessions if session_name(r) == row["clears"]):
-            earlier["cleared"] = row["reason"]
+        earlier = [r for r in sessions if session_name(r) == row["clears"]]
+        if earlier:
+            earlier[-1]["cleared"] = row["reason"]
     return sessions
 
 

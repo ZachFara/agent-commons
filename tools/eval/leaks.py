@@ -11,6 +11,7 @@ an obfuscated fetch still gets through, which is why transcripts are still read.
 import re
 import subprocess
 import tomllib
+from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,8 +32,10 @@ EXCERPT_WIDTH = 160  # characters of a flag's excerpt
 EXCERPT_CONTEXT = 50  # characters kept before the match
 # A sha prefix is a whole hex token: no letter or digit right before or after it.
 HEX_TOKEN = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{7,40}(?![0-9A-Za-z])")
+# An install from an index: the words after the command, or a `--with` list.
 INSTALL = re.compile(
-    r"\b(?:pip3?\s+(?:install|download)|uv\s+add)\b(?P<args>[^;&|\n]*)|--with[=\s]+(?P<with>\S+)"
+    r"\b(?:pip3?\s+(?:install|download)|uv\s+(?:add|tool\s+(?:install|run))|uvx)\b"
+    r"(?P<args>[^;&|\n]*)|--with[=\s]+(?P<with>\S+)"
 )
 REQUIREMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 INDEX_URL = re.compile(r"\b(?:pypi\.org|files\.pythonhosted\.org)/(?P<path>[^\s\"'<>)]+)")
@@ -121,18 +124,13 @@ class Rules:
         )
 
     def leaks(self, text: str) -> Iterator[tuple[str, re.Match[str]]]:
-        """Yield (rule, match) for each leak rule the text breaks, once per rule."""
-        found = {
-            "repo": self.repo.search(text),
-            "fix_commit": next(
-                (m for m in HEX_TOKEN.finditer(text) if self.fix_commit.startswith(m[0].lower())),
-                None,
-            ),
-            "issue_or_fix": self.links.search(text),
-            "cache": self.cache.search(text),
-            "index": next(self._index_matches(text), None),
-        }
-        yield from ((rule, match) for rule, match in found.items() if match is not None)
+        """Yield (rule, match) for every match of every leak rule in the text."""
+        patterns = (("repo", self.repo), ("issue_or_fix", self.links), ("cache", self.cache))
+        for rule, pattern in patterns:
+            yield from ((rule, match) for match in pattern.finditer(text))
+        hexes = HEX_TOKEN.finditer(text)
+        yield from (("fix_commit", m) for m in hexes if self.fix_commit.startswith(m[0].lower()))
+        yield from (("index", match) for match in self._index_matches(text))
 
     def _index_matches(self, text: str) -> Iterator[re.Match[str]]:
         """Yield installs, downloads and index URLs of the task's own distribution."""
@@ -166,13 +164,20 @@ def scan(calls: list[dict[str, Any]], task: GitHubTask, distribution: str) -> li
 
 
 def _call_flags(rules: Rules, tool: str, given: object) -> list[Flag]:
-    """Return one call's flags: each leak rule once; else, for code, one review flag."""
+    """Return one call's flags: each leak rule once; else, for code, one review flag.
+
+    A match is exempt only as often as an `old_string` of the call already holds its text: an
+    edit may keep a link the file had, but a second copy of it is asked for.
+    """
     carried = list(_values(given, "old_string"))  # already in the file, not asked for
     texts = [redact(text).text for text in _strings(given, "old_string")]
+    seen: Counter[tuple[str, str]] = Counter()
     flags: dict[str, Flag] = {}
     for text in texts:
         for rule, match in rules.leaks(text):
-            if rule not in flags and not any(match[0] in old for old in carried):
+            seen[rule, match[0]] += 1
+            kept = sum(old.count(match[0]) for old in carried)
+            if rule not in flags and seen[rule, match[0]] > kept:
                 flags[rule] = Flag(LEAK, rule, tool, _excerpt(text, match))
     if flags or tool not in CODE_TOOLS:
         return list(flags.values())

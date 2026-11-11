@@ -197,8 +197,10 @@ arm's score. So after each GitHub-task session, `tools/eval/leaks.py` scans what
 asked for: the inputs of its tool calls (Bash commands, file paths and patterns, edits, MCP
 arguments). It never scans what came back, because the project's own files name the repository,
 and reading `pyproject.toml` must not raise a flag. For the same reason an `Edit`'s
-`old_string` is skipped, and a match is ignored if it is also in that `old_string`: the text was
-already in the file. Context7's tools are part of an arm, so they are never scanned. Written
+`old_string` is not scanned, and every match of a rule is counted: a rule flags the call when
+the rest of its input holds a match more times than the call's `old_string`s together. So an
+edit that keeps a link the file already had is not flagged, but one that keeps it and adds a
+fetch of the repository is. Context7's tools are part of an arm, so they are never scanned. Written
 scenarios have no repository and are never scanned.
 
 There are two levels:
@@ -209,7 +211,7 @@ There are two levels:
 | `leak` | `fix_commit` | the fix commit's sha, or its first 7 or more characters as a whole hex token (no letter or digit next to it) |
 | `leak` | `issue_or_fix` | the issue URL or the fix URL, with or without the scheme |
 | `leak` | `cache` | the cache path (`repos.CACHE`), `.cache/agent-commons-eval` (so `~/`, `$HOME/` and a listing of the folder are caught too), or the task's cache folder name |
-| `leak` | `index` | `pip install`, `pip download`, `uv pip install`, `uv add` or `uv run --with` of the task's own distribution, or a `pypi.org` or `files.pythonhosted.org` URL for it |
+| `leak` | `index` | `pip install`, `pip download`, `uv pip install`, `uv add`, `uv run --with`, `uvx`, `uv tool install` or `uv tool run` of the task's own distribution, or a `pypi.org` or `files.pythonhosted.org` URL for it |
 | `review` | `network` | any other outbound network call in a `Bash`, `Write`, `Edit`, `MultiEdit` or `NotebookEdit` input: `urllib`, `httpx`, `http.client`, `curl`, `wget`, `fetch(`, `import requests` or `requests.`, `import socket` or `socket.`, `git clone`, `git fetch`, `pip download` |
 
 The distribution is `[project].name` from the base tree's `pyproject.toml` (the project folder
@@ -240,9 +242,10 @@ uv run python tools/agent_eval.py clear <condition>-<task>-<index> --reason "why
 
 The session is named by its transcript's stem. The ledger stays append-only: the command
 appends `{"at", "clears": "<stem>", "condition", "scenario", "run", "reason"}`, and reading the
-ledger marks every earlier line of that session `cleared`. A later run of the same session isn't
-cleared by it. The
-saved `<stem>.json` gets `cleared` too, for `report`. The command refuses a session with no leak
+ledger marks one line `cleared`: the latest line of that session before it, the one whose
+transcript is on disk. A condition run again reuses its stems and overwrites their transcripts,
+so an older line of the same stem stays held, and so does a later one. The saved `<stem>.json`
+gets `cleared` too, for `report`. The command refuses a session whose latest line has no leak
 flag, or no reason. Marking a line `invalid` works as before, and an `invalid` line is never
 counted, cleared or not.
 

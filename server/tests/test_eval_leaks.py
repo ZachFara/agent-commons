@@ -85,6 +85,8 @@ LEAKS = [
     ("index", bash("python3 -m pip download Widget.Kit --no-deps -d /tmp/w")),
     ("index", bash("uv add widget_kit")),
     ("index", bash("uv run --with widget-kit==2.1.0 python -c 'import widget_kit'")),
+    ("index", bash("sh -c 'uvx widget-kit@2.1.0 --version'")),
+    ("index", bash("sh -c 'uv tool install Widget_Kit==2.1.0'")),
     ("index", bash("curl -s https://pypi.org/pypi/widget-kit/json")),
     (
         "index",
@@ -129,6 +131,15 @@ def test_reading_the_projects_own_files_that_name_the_repo_is_not_flagged() -> N
         *bash("uv pip install -e . pytest widget-kit-extras"),
     ]
     assert flags_of(events) == []
+
+
+def test_an_edit_that_keeps_a_link_and_adds_a_fetch_of_the_repo_is_flagged() -> None:
+    kept = "See https://github.com/acme/widget-kit.\n"
+    added = "curl -L https://codeload.github.com/acme/widget-kit/tar.gz/main\n"
+    edit = {"file_path": "project/README.md", "old_string": kept, "new_string": kept + added}
+    (flag,) = flags_of(call("Edit", edit))
+    assert (flag.level, flag.rule) == (leaks.LEAK, "repo")
+    assert "codeload.github.com" in flag.excerpt
 
 
 def test_another_network_call_is_counted_but_listed_for_review() -> None:
@@ -284,6 +295,17 @@ def test_a_leak_is_not_counted_until_cleared_and_then_counts_again(
     # A later run of the same session is a new trial: the clearing doesn't reach it.
     tools.agent_eval.append_ledger([result(1, [LEAKED])])
     assert [row["run"] for row in tools.agent_eval.condition_rows("leaks")] == [1, 2, 3]
+
+
+def test_clearing_a_rerun_session_clears_only_its_latest_line(ledger: Path) -> None:
+    """A condition run again reuses its stems; the older line's transcript is gone, unread."""
+    older, newer = result(1, [LEAKED]), replace(result(1, [LEAKED]), tests_pass=False)
+    tools.agent_eval.append_ledger([older, newer])
+    name = f"leaks-{TASK.name}-1"
+    assert tools.agent_eval.clear(argparse.Namespace(session=name, reason="README link")) == 0
+    rows = tools.agent_eval.condition_rows("leaks")
+    assert [row["tests_pass"] for row in rows] == [False]  # only the newer line counts
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 3
 
 
 @pytest.mark.usefixtures("ledger")
