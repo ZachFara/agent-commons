@@ -42,7 +42,7 @@ from commons.service.hook_install import commons_executable, commons_hooks
 from commons.store.migrate import apply_migrations
 from commons.store.models import model_id
 from commons.store.reporters import upsert_reporter
-from tools.eval import repos
+from tools.eval import leaks, repos
 from tools.eval.model import CANARY, Discovery, Scenario
 
 REPO = Path(__file__).resolve().parents[2]
@@ -212,6 +212,8 @@ class Result:
     repeat: int = 0  # which repeat of its task, arm and model (`arms`); 0 elsewhere
     patch_truncated: bool = False  # a changed file or the patch itself was cut at its cap
     grader_version: int = GRADER_VERSION  # which grader judged `proposals`
+    # Tool calls that may have reached the fix (GitHub tasks only); a leak isn't counted.
+    flags: list[leaks.Flag] = field(default_factory=list)
 
     def summary(self) -> str:
         """One line describing what the agent did."""
@@ -831,6 +833,16 @@ def disallowed_tools(scenario: Scenario) -> list[str]:
     return ["--disallowedTools", *repos.DISALLOWED_TOOLS] if scenario.repo is not None else []
 
 
+def stem(condition: str, scenario: str, index: int) -> str:
+    """Return a session's file name without suffix: its transcript is `<stem>.jsonl`."""
+    return f"{condition}-{scenario}-{index}"
+
+
+def read_transcript(path: Path) -> list[dict[str, Any]]:
+    """Return the stream-json events of a saved transcript (`<stem>.jsonl`)."""
+    return _events(path.read_text(encoding="utf-8"))
+
+
 def _events(stdout: str) -> list[dict[str, Any]]:
     events = []
     for line in stdout.splitlines():
@@ -1101,7 +1113,16 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         patch=patch.text,
         patch_hash=patch.hash,
         patch_truncated=patch.truncated,
+        flags=session_flags(session, calls),
     )
+
+
+def session_flags(session: Session, calls: list[dict[str, Any]]) -> list[leaks.Flag]:
+    """Return a GitHub task's leak and review flags; a written scenario has none."""
+    task = session.scenario.repo
+    if task is None:
+        return []
+    return leaks.scan(calls, task, leaks.distribution(task, session.pristine or session.project))
 
 
 @dataclass(frozen=True)
@@ -1206,12 +1227,12 @@ def run_one(job: Job, model: str, condition: str, transcripts: Path, *, hooks: b
                 if scenario.then is not None:
                     events += next_turn(session, workdir, chosen, events, hooks=hooks)
             transcripts.mkdir(parents=True, exist_ok=True)
-            stem = f"{condition}-{scenario.name}-{index}"
-            (transcripts / f"{stem}.jsonl").write_text(
+            name = stem(condition, scenario.name, index)
+            (transcripts / f"{name}.jsonl").write_text(
                 "\n".join(json.dumps(e) for e in events), encoding="utf-8"
             )
             result = replace(grade(session, events), model=chosen, repeat=job.repeat)
-            save_result(transcripts, stem, result)
+            save_result(transcripts, name, result)
             return result
 
 
