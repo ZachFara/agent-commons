@@ -10,7 +10,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
 from uuid import UUID
@@ -215,14 +215,20 @@ def _test_run(value: object, at: object) -> dict[str, object] | None:
 
 
 def _aware_time(value: object, name: str) -> datetime:
+    """Return the time in UTC, which any offset Python accepts converts to and Postgres reads.
+
+    Postgres can't cast an offset with fractional seconds, and a stored one would break every
+    later Stop for the task.
+    """
     try:
         parsed = datetime.fromisoformat(value) if isinstance(value, str) else None
-    except ValueError:
-        parsed = None
-    if parsed is None or parsed.tzinfo is None:
+        utc = None if parsed is None or parsed.tzinfo is None else parsed.astimezone(UTC)
+    except (ValueError, OverflowError):  # OverflowError: a year edge shifted out of range
+        utc = None
+    if utc is None:
         msg = f"{name} must be an ISO time with a UTC offset."
         raise InvalidInputError(msg)
-    return parsed
+    return utc
 
 
 def _run_shape(value: object) -> dict[str, object] | None:

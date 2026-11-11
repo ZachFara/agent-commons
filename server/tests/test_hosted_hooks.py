@@ -238,6 +238,11 @@ def test_local_privacy_reporters_are_refused(app: Starlette, db: psycopg.Connect
             "test_run": {"command": "pytest", "exit_code": 0},
             "test_run_at": "2026-11-11T10:00:00",  # no zone: can't be compared
         },
+        {
+            "session_id": "s",
+            "test_run": {"command": "pytest", "exit_code": 0},
+            "test_run_at": "0001-01-01T00:00:00+01:00",  # out of range in UTC
+        },
         {"session_id": "s", "file_change": {"path_sha256": "x", "content_sha256": "y"}},
         {"session_id": "s", "file_change": {"content": "def secret(): ..."}},
         {
@@ -267,6 +272,28 @@ def test_only_derived_shapes_are_accepted(
     response = post(app, key, "tool-use", body)
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_input"
+
+
+def test_a_run_time_with_any_offset_is_stored_in_utc(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    """Postgres can't cast a fractional-second offset; stored, it would break every Stop."""
+    key = create_key(db, "offset-dev", admin=False)
+    session = str(uuid.uuid4())
+    started = post(app, key, "session-start", {"session_id": session}).json()
+    body = {
+        "session_id": session,
+        "test_run": {"command": "pytest", "exit_code": 0},
+        "test_run_at": "2026-11-11T10:00:00+05:00:30.5",
+    }
+    assert post(app, key, "tool-use", body).status_code == 200
+
+    (stored,) = db.execute(
+        "SELECT data->>'at' FROM task_events WHERE task_id = %s", (started["task_id"],)
+    ).fetchone() or (None,)
+    assert stored == "2026-11-11T04:59:29.500000+00:00"
+    stop = {"session_id": session, "used": {}, "matched_at": {}}
+    assert post(app, key, "stop", stop).status_code == 200
 
 
 def doc_lookups(db: psycopg.Connection, task_id: uuid.UUID) -> list[tuple[Any, ...]]:
