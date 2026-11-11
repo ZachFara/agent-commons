@@ -512,7 +512,9 @@ MLODA_DUCKDB = GitHubTask(
 # name up in the registry's dict: before, `in` was `Mapping.__contains__`, which calls
 # `__getitem__`, so a subclass's `__getitem__` decided membership. matplotlib/matplotlib#32172
 # ("PERF: Avoid `difflib` lookup in `ColormapRegistry.register`"), merged 2026-08-05, backported
-# to 3.11.x as eb3e50c (authored and committed 2026-08-05).
+# to 3.11.x as eb3e50c (authored and committed 2026-08-05). The PERF title is this change: the
+# new `__contains__` in lib/matplotlib/cm.py keeps `register`'s `name in self` from going
+# through `__getitem__` and its difflib suggestions.
 # Release notes: https://github.com/matplotlib/matplotlib/releases/tag/v3.11.2
 MATPLOTLIB_REGISTRY_CONTAINS = Upstream(
     library="matplotlib",
@@ -552,18 +554,21 @@ ULTRAPLOT = GitHubTask(
     upstream=MATPLOTLIB_REGISTRY_CONTAINS,
     discovery=Discovery(
         symptom_words=("ColormapDatabase", "colormaps", "Fire"),
-        # Every phrase names matplotlib's object, `ColormapRegistry` or its `__contains__`, with
-        # what changed: membership stopped going through `__getitem__`.
+        # Every phrase states what changed in matplotlib: `ColormapRegistry` gained its own
+        # `__contains__`, or membership stopped going through `__getitem__`. No bare object
+        # nouns ("ColormapRegistry.__contains__"): a symptom-only fix says "overrides
+        # ColormapRegistry.__contains__". Nothing that describes what a `__contains__` checks
+        # ("checks _cmaps"): the fix's own `__contains__` checks the translated key.
         cause_words=(
-            "colormapregistry.__contains__",
-            "colormapregistry's __contains__",
             "colormapregistry defines __contains__",
             "colormapregistry now defines",
+            "colormapregistry now has",
+            "colormapregistry gained",
             "__contains__ no longer calls __getitem__",
             "__contains__ no longer goes through __getitem__",
+            "no longer falls back to __getitem__",
             "__contains__ bypasses __getitem__",
             "__contains__ skips __getitem__",
-            "__contains__ checks _cmaps",
             "3.11.2",
         ),
         library="matplotlib",
