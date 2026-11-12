@@ -268,9 +268,9 @@ def _prompt_version(
     record = bool(prompts)
     if record:
         surfaces["record_prompt"] = agent_text.RECORD_PROMPT
-    turn_nudge = _switched_on("COMMONS_TURN_NUDGE")
-    if turn_nudge:
-        surfaces["turn_nudge"] = agent_text.TURN_NUDGE
+    turn_nudge = agent_text.turn_nudge_setting()
+    if turn_nudge in agent_text.TURN_NUDGES:
+        surfaces["turn_nudge"] = agent_text.TURN_NUDGES[turn_nudge][0]
     if _switched_on(FEEDBACK_SETTING):
         surfaces["session_feedback"] = "on"
     label = agent_text.variant_label(turn_nudge=turn_nudge, record=record)

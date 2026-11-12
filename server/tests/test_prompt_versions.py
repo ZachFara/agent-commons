@@ -199,6 +199,19 @@ def test_switched_on_extras_are_part_of_the_version_and_its_label(
     assert served_hash(server) == prompt_version("", read).hash != hash_
 
 
+def test_the_command_nudge_condition_is_its_own_version(
+    db: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COMMONS_TURN_NUDGE", "on")
+    tests = searched_version(db, build(db, monkeypatch, "invite"))
+    monkeypatch.setenv("COMMONS_TURN_NUDGE", "commands")
+    commands = searched_version(db, build(db, monkeypatch, "invite"))
+    assert commands != tests
+    _, label, surfaces = version_row(db, commands)
+    assert label == "invite+command-nudge+record"
+    assert surfaces["turn_nudge"] == agent_text.COMMAND_NUDGE
+
+
 def test_writes_outside_the_mcp_tools_record_no_version(db: psycopg.Connection) -> None:
     proposal = Proposal(
         symptom="ImportError: cannot import name 'soft_unicode' from 'markupsafe'",
