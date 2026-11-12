@@ -339,6 +339,7 @@ Each result and ledger line also records, in every arm and in `run` and `search`
 | `repeat` | which of `--runs` repeats of its task, arm and model the session was (1 to N); 0 outside `arms`. Unlike `run`, the same repeat pairs across arms |
 | `grader_version` | the grader that judged the session's proposals (`runner.GRADER_VERSION`, see Grading); lines and results without it are version 1, and no report pools two versions |
 | `flags` | GitHub tasks only: `{level, rule, tool, excerpt}` per tool call that may have reached the fix (see Leak flags); empty when clean and in every other scenario. Lines from before this field have none |
+| `task_ids` | every task id of the session, sorted: the tasks its hooks started under its Claude session ids, plus every task id it passed to a commons tool. `review-sheet` links a store's entry to its task by them. Lines from before 2026-11-11 have none |
 
 Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
 `conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:
@@ -376,9 +377,29 @@ so the store is never the live Commons database. The server is `COMMONS_EVAL_ADM
 - **Without `--seed-wave`** (the measured run): `NAME` must already exist. Each session runs in
   `CREATE DATABASE <session db> TEMPLATE NAME`, which is dropped after grading. Every session
   starts from what the seed wave left and the owner approved, and never sees another
-  session's work. Approve the wave's entries against the store first:
-  `COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/NAME uv run commons pending`,
-  then `commons review`.
+  session's work. Review the wave's entries against the store first (see "The store review"
+  below), then approve or reject them with
+  `COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/NAME uv run commons review`.
+
+### The store review
+
+Search shows only approved entries, so the review of a seed wave's store decides what the
+measured sessions can find. The reviewer checks each pending entry's fix against the upstream
+fix (`fix_url`) of the task that proposed it. An entry whose fix is a workaround (it makes the
+tests pass without the upstream change) is rejected with that reason, or edited to the upstream
+fix. This step was added on 2026-11-11, after 4 of 6 Commons sessions on
+`gh-table-extraction-bool-form` copied an approved entry's workaround fix.
+
+```
+uv run python tools/agent_eval.py review-sheet --store NAME
+```
+
+prints each pending entry (as `commons pending` lists them, up to 50) with its id, symptom,
+cause and fix, next to the `fix_url` and `issue_url` of its task. It only reads the store, and
+refuses one not on `localhost` or `127.0.0.1`. It links an entry to its task by the entry's
+`task_id` and the `task_ids` each ledger line records (see the table above). An entry no line
+claims, for example one from a session logged before 2026-11-11, shows `task unknown`. An entry
+from a written scenario shows that it has no upstream fix.
 
 A store holds many sessions' work under the one `eval-agent` pseudonym. So grading counts a
 session's proposals, reports and retrievals by its own task ids: the tasks its hooks started
@@ -415,15 +436,34 @@ EVAL_ARMS_CONDITION=X`) reads the ledger and prints these sections:
   interval: tasks resampled with replacement, 10,000 resamples, seed 20261107.
 - **The verdict**: continue, kill or inconclusive, from `PASS_MARGIN`, `TOKEN_MARGIN` and
   `PASS_FLOOR` in `tools/agent_eval.py`. The rule is in the Proposed arms record,
-  `docs/decisions/2026-11-07-MIT-565-github-task-arms.md`.
+  `docs/decisions/2026-11-07-MIT-565-github-task-arms.md`. A same-task condition
+  (`github-arms-same-task`, and each one in `SAME_TASK_CONDITIONS`) gets **kill** or **not
+  decided** only, never continue: the same kill rule and constants, but its win is inflated by
+  entries its own tasks wrote. `github-smoke` gets `verdict: none`.
+- **The combined verdict** (amended 2026-11-11): kill if `github-arms` or
+  `github-arms-same-task` says kill, continue only if `github-arms` says continue, inconclusive
+  otherwise. It is printed under either condition's report once both have counted rows of the
+  same grader version.
 - **Secondary comparisons**: `commons` against `none`, and `context7` against `none`.
 - **Herding**: per arm, the failed sessions, and for the Commons arms how many of them used a
   retrieved entry. Also, the share of failed sessions whose patch is their task's most common
   wrong patch (same `patch_hash`, at least two failed sessions sharing it; no patch never
   counts).
 
-`compare` reads one condition only, so seed waves and `github-arms-same-task` never enter the
-`github-arms` verdict.
+`compare` reads one condition only, so seed waves, `github-smoke` and `github-arms-same-task`
+never enter the `github-arms` verdict. Only the combined verdict reads `github-arms-same-task`
+as well, and no verdict reads `github-smoke`.
+
+### The smoke test
+
+The ten GitHub tasks checked in by 2026-11-11 (`SMOKE_TASKS` in `tools/eval/github_tasks.py`)
+are the smoke test.
+Sonnet and Haiku pass all of them with no tools, and none shares an `upstream_change` with
+another, so they can't measure the commons, but they check the harness end to end.
+`make eval-smoke` runs them under all four arms, `EVAL_SMOKE_RUNS` (1) times each, each
+session on a fresh database, under the condition `github-smoke`
+(`agent_eval.py arms --smoke`). That condition never enters any verdict. 40 sessions at one
+run; ask the owner before running it, because it uses the subscription.
 
 ### The GitHub-task arms run, fold by fold
 
@@ -443,6 +483,8 @@ Each fold seeds its own store and is measured on the other fold's store:
 `arms`, space-separated in `EVAL_ARMS_TASKS`.
 
 ```
+# 0. The smoke test: the smoke-test tasks, all four arms, as github-smoke (no verdict).
+make eval-smoke
 # 1. Seed waves: the commons arm, once per task, into each fold's own store.
 uv run python tools/agent_eval.py arms --store commons_eval_store_a --seed-wave \
   --arm commons --runs 1 --condition github-arms-seed-a <A>
@@ -450,15 +492,18 @@ uv run python tools/agent_eval.py arms --store commons_eval_store_b --seed-wave 
   --arm commons --runs 1 --condition github-arms-seed-b <B>
 uv run python tools/agent_eval.py arms --store commons_eval_store_same --seed-wave \
   --arm commons --runs 1 --condition github-arms-seed-same <same>
-# 2. Review each store's pending entries (commons pending, then commons review), e.g.
+# 2. Review each store's pending entries (see "The store review"): check each fix against its
+#    task's upstream fix, and reject a workaround with that reason or edit it, e.g.
+uv run python tools/agent_eval.py review-sheet --store commons_eval_store_a
 COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/commons_eval_store_a \
-  uv run commons pending
+  uv run commons review
 # 3. Measured runs: each fold on the other fold's store.
 make eval-arms EVAL_STORE=commons_eval_store_b EVAL_ARMS_TASKS="<A>"
 make eval-arms EVAL_STORE=commons_eval_store_a EVAL_ARMS_TASKS="<B>"
 make eval-arms EVAL_STORE=commons_eval_store_same EVAL_ARMS_TASKS="<same>" \
   EVAL_ARMS_CONDITION=github-arms-same-task
-# 4. The verdict (both folds), then the same-task set, reported apart.
+# 4. The fold verdict (both folds), the same-task set's kill-only verdict, and the combined
+#    verdict, printed under both once both conditions have rows.
 make eval-compare EVAL_ARMS_CONDITION=github-arms
 make eval-compare EVAL_ARMS_CONDITION=github-arms-same-task
 # Counterfactual pairs: once per measured store; each writes the pairs whose entry it holds.

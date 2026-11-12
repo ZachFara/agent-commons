@@ -3,6 +3,7 @@
 import argparse
 import json
 import math
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -195,7 +196,9 @@ def test_the_verdict_counts_both_folds_of_github_arms_and_never_same_task_lines(
     assert "verdict: kill" in out
 
     assert tools.agent_eval.compare(argparse.Namespace(condition="github-arms-same-task")) == 0
-    assert "verdict: continue" in capsys.readouterr().out  # reported apart, never pooled
+    out = capsys.readouterr().out  # reported apart, never pooled; its win can't continue
+    assert "== github-arms-same-task: 60 sessions" in out
+    assert "verdict: not decided" in out
 
 
 def test_compare_never_pools_grader_versions_and_gives_each_its_own_verdict(
@@ -231,3 +234,150 @@ def test_compare_with_no_trials_says_so(
     monkeypatch.setattr(tools.agent_eval, "LEDGER", tmp_path / "missing.jsonl")
     assert tools.agent_eval.compare(argparse.Namespace(condition=CONDITION)) == 0
     assert "no trials for condition" in capsys.readouterr().out
+
+
+SAME_TASK = "github-arms-same-task"
+EQUAL = [3, 2, 0, 1, 3, 3, 2, 1, 0, 3]
+Rows = list[dict[str, Any]]
+
+
+def write_ledger(path: Path, rows: Rows) -> None:
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+def under(condition: str, rows: Rows) -> Rows:
+    """The rows as another condition's, their tasks renamed so no two conditions share one."""
+    return [
+        {**row, "condition": condition, "scenario": f"{condition}-{row['scenario']}"}
+        for row in rows
+    ]
+
+
+def win() -> Rows:
+    """Hand-made rows the fold verdict continues on: Commons passes every session."""
+    return arm_runs("both", [3] * 10, 3) + arm_runs("context7", [1] * 10, 3)
+
+
+def tie() -> Rows:
+    """Hand-made rows that kill: both arms pass exactly the same sessions."""
+    return arm_runs("both", EQUAL, 3) + arm_runs("context7", EQUAL, 3)
+
+
+def verdict_line(out: str) -> str:
+    return next(line for line in out.splitlines() if line.startswith("verdict: "))
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [(tie, "verdict: kill"), (win, "verdict: not decided")],
+    ids=["kills", "would-continue"],
+)
+@pytest.mark.parametrize("condition", tools.agent_eval.SAME_TASK_CONDITIONS)
+def test_a_same_task_set_can_only_kill_or_be_not_decided(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    rows: Callable[[], Rows],
+    expected: str,
+    condition: str,
+) -> None:
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    write_ledger(ledger, under(condition, rows()))
+
+    assert tools.agent_eval.compare(argparse.Namespace(condition=condition)) == 0
+    out = capsys.readouterr().out
+    assert "same-task set: its verdict can only be kill or not decided" in out
+    assert verdict_line(out) == expected
+
+
+def test_the_same_task_verdict_uses_the_fold_verdicts_kill_rule() -> None:
+    killed = Comparison(10, 0.0, -0.05, 0.05, 1.0, 0.9, 1.1)
+    continued = Comparison(10, 0.3, 0.2, 0.4, 0.5, 0.4, 0.6)
+    undecided = Comparison(10, 0.05, -0.1, 0.2, 1.0, 0.7, 1.3)
+    cases = (killed, continued, undecided)
+    assert [verdict(c) for c in cases] == ["kill", "continue", "inconclusive"]
+    assert [tools.agent_eval.same_task_verdict(c) for c in cases] == [
+        "kill",
+        "not decided",
+        "not decided",
+    ]
+
+
+def test_the_fold_verdict_of_github_arms_still_continues_on_a_win(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    write_ledger(ledger, win())
+    assert tools.agent_eval.compare(argparse.Namespace(condition=CONDITION)) == 0
+    out = capsys.readouterr().out
+    assert verdict_line(out) == "verdict: continue"
+    assert "same-task set" not in out
+    assert "combined verdict" not in out  # no same-task rows yet
+
+
+@pytest.mark.parametrize(
+    ("folds", "same", "expected"),
+    [
+        ("continue", "not decided", "continue"),
+        ("continue", "kill", "kill"),
+        ("kill", "not decided", "kill"),
+        ("inconclusive", "kill", "kill"),
+        ("inconclusive", "not decided", "inconclusive"),
+    ],
+)
+def test_the_combined_rule_kills_on_either_and_continues_only_on_the_folds(
+    folds: str, same: str, expected: str
+) -> None:
+    assert tools.agent_eval.combined_verdict(folds, same) == expected
+
+
+@pytest.mark.parametrize(
+    ("folds", "same", "expected"),
+    [
+        (win, win, "continue (github-arms continue, github-arms-same-task not decided)"),
+        (win, tie, "kill (github-arms continue, github-arms-same-task kill)"),
+        (tie, win, "kill (github-arms kill, github-arms-same-task not decided)"),
+    ],
+    ids=["folds-continue", "same-task-kills", "folds-kill"],
+)
+def test_compare_prints_the_combined_verdict_once_both_conditions_have_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    folds: Callable[[], Rows],
+    same: Callable[[], Rows],
+    expected: str,
+) -> None:
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    write_ledger(ledger, folds() + under(SAME_TASK, same()))
+
+    for condition in (CONDITION, SAME_TASK):  # under either condition's report
+        assert tools.agent_eval.compare(argparse.Namespace(condition=condition)) == 0
+        assert f"combined verdict, grader v1: {expected}" in capsys.readouterr().out
+
+
+def test_the_smoke_test_never_enters_a_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Smoke rows, a clear win on the folds' own task names, change no verdict."""
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    smoke = tools.agent_eval.SMOKE_CONDITION
+    smoke_rows = [{**row, "condition": smoke} for row in win()]
+    write_ledger(ledger, tie() + under(SAME_TASK, tie()) + smoke_rows)
+
+    assert tools.agent_eval.compare(argparse.Namespace(condition=CONDITION)) == 0
+    out = capsys.readouterr().out
+    assert f"== {CONDITION}: 60 sessions" in out
+    assert verdict_line(out) == "verdict: kill"
+    assert "combined verdict, grader v1: kill (github-arms kill, github-arms-same-task kill)" in out
+
+    assert tools.agent_eval.compare(argparse.Namespace(condition=smoke)) == 0
+    out = capsys.readouterr().out
+    assert f"== {smoke}: 60 sessions" in out
+    assert verdict_line(out) == "verdict: none (the smoke test never enters a verdict)"
+    assert "combined verdict" not in out
+    assert smoke not in tools.agent_eval.SAME_TASK_CONDITIONS
