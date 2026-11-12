@@ -14,6 +14,9 @@ Decision: a pre-registered behavioral eval in `tools/agent_eval.py` and `tools/e
   (no user settings or hooks), `--strict-mcp-config` (only the eval MCP server), its own
   database (`commons_eval_<scenario>_<condition>_<n>`), project, config, and spool. Sessions
   run in parallel (concurrency 4-5) on the signed-in Claude Code account.
+  *Updated 2026-11-11 (`MIT-653`): the database is now `commons_<16 hex>`, the first 16 hex
+  characters of a hash of condition, index and scenario, so a store line shown to the agent
+  doesn't reveal the scenario or that it's an eval.*
 - **Scenarios** (`tools/eval/scenarios.py`): small failing projects with invented, vendored
   libraries placed on `PYTHONPATH` outside the project. Prompts are neutral ("fix the failing
   tests") and never mention the commons. Kinds, matching DESIGN.md §5's propose triggers:
