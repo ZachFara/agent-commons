@@ -197,7 +197,7 @@ own fix takes the fields as optional strings and parses them, applying the defau
 The seed session (ledger line 1621) solved it differently. It widened the annotation to
 `FormBool = Union[bool, Literal["__unused__"]]`, so FastAPI no longer treats the field as
 exactly `bool`, and proposed that as an entry. Measured sessions start from the store as the
-seed wave left it, after the owner's review (`docs/eval/README.md:376-381`). Then
+seed wave left it, after the owner's review (`docs/eval/README.md:377-382`). Then
 `github-same10` ran each arm three times on Sonnet:
 
 | Arm | Ledger lines | Passed | Route taken |
@@ -217,7 +217,7 @@ route instead. Nothing failed, so nothing in Commons noticed:
 - The outcome score rewards it: each copy is a hook-observed `tests_passed`
   (`server/src/commons/store/ranking.py:9-19`).
 - The eval's herding report counts only failed sessions sharing a wrong patch
-  (`tools/agent_eval.py:923-934`, `1020-1032`), so this run scores zero herding.
+  (`tools/agent_eval.py:987-998`, `1088-1100`), so this run scores zero herding.
 - The review card shows cause, fix, repro, environment, domains, redactions, risks and
   likely duplicates (`server/src/commons/web/templates/queue.html:11-29`). Nothing asks
   whether the fix is the library's own route or a workaround.
@@ -229,7 +229,7 @@ route instead. Nothing failed, so nothing in Commons noticed:
 
 The decision record for these runs predicted the general case: "A bad entry approved in the
 review can mislead every Commons session at once"
-(`docs/decisions/2026-11-07-MIT-565-github-task-arms.md:146-147`). This entry wasn't bad. It
+(`docs/decisions/2026-11-07-MIT-565-github-task-arms.md:190-191`). This entry wasn't bad. It
 was a working workaround, which is harder to catch.
 
 ### Pip-tools: zero of six searched
@@ -244,18 +244,18 @@ rule is "before your first fix for a failure that involves a dependency or the r
 In stigmergy terms: a trace only acts on agents that sense it, and in Commons sensing is the
 agent's choice. Earlier interviews give the agents' own reasons for skipping: "the agent read
 library source instead of searching" (9 of 26) and "search was seen as help when stuck rather
-than a duplicate check" (6 of 26) (`docs/eval/README.md:719-725`). Here no one was harmed: the
+than a duplicate check" (6 of 26) (`docs/eval/README.md:764-770`). Here no one was harmed: the
 task was easy. The eval already answers this for measurement with a difficulty screen that
 keeps only tasks blind Sonnet finds hard (`docs/eval/README.md:187-204`).
 
 ### Older ledger evidence
 
 - Agents laying a new trail beside an existing one: Opus "re-proposing fixes the store already
-  held in 10 of 12 known-entry sessions" under one wording (`docs/eval/README.md:705-709`).
-  The search-before-propose check fixed it in later rounds (`README.md:715-717`). Duplicate
+  held in 10 of 12 known-entry sessions" under one wording (`docs/eval/README.md:750-754`).
+  The search-before-propose check fixed it in later rounds (`README.md:760-762`). Duplicate
   detection catches the rest at review (`docs/decisions/0027-duplicate-resolution.md:31-34`).
 - Untrusted traces: in the injection scenario, no session in any condition followed the
-  planted instructions (`docs/eval/README.md:692-696`).
+  planted instructions (`docs/eval/README.md:737-741`).
 
 ## Each idea against Commons
 
@@ -337,7 +337,7 @@ the others depend on it.
 - **Test.** A scenario seeded with two approved entries for one symptom, a workaround and the
   upstream route, with equal outcome history; condition `alternatives` against the baseline.
   **Kill it** if the upstream-route share (proposal 1) doesn't rise, or tokens per passing
-  session rise by more than 20%, the margin the arms record uses (`tools/agent_eval.py:800`).
+  session rise by more than 20%, the margin the arms record uses (`tools/agent_eval.py:810`).
 
 ### 5. "N used, M failed", measured for herding too
 
