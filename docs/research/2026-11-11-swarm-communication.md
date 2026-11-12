@@ -238,8 +238,8 @@ On `gh-pip-tools-flag-default`, none of the six Commons sessions (`both` at line
 `commons` at 1635, 1636, 1638) called `search`, and all six passed after one or two earlier
 test runs (`attempts`, "test runs before the last one", `tools/eval/runner.py:195`). Only the seed session (line 1619) searched. The shipped
 rule is "before your first fix for a failure that involves a dependency or the runtime, call
-`search`" (`server/src/commons/service/agent_text.py:267-268`, shipped as `SEARCH_RULES[4]`,
-`agent_text.py:530`).
+`search`" (`server/src/commons/service/agent_text.py:282-283`, shipped as `SEARCH_RULES[4]`,
+`agent_text.py:545`).
 
 In stigmergy terms: a trace only acts on agents that sense it, and in Commons sensing is the
 agent's choice. Earlier interviews give the agents' own reasons for skipping: "the agent read
@@ -264,7 +264,7 @@ keeps only tasks blind Sonnet finds hard (`docs/eval/README.md:187-204`).
 | Evaporation (ACO) | Outcome weight halves every 90 days after the first 90 (`ranking/score.py:10-11`, `23-25`), so the score drifts back to the prior | An entry with no outcomes scores 0.5 forever (`store/search.py:38`). Approval never fades. Nothing reacts to the library changing. Decay flags in `status` are not built (`domain/status.py:23`) | FastAPI 0.162 reverted the behavior; the 0.147 entry keeps full weight |
 | Bounds on reinforcement (MAX-MIN) | A prior worth two outcomes keeps new entries off 0 and 1 (`ranking/score.py:7-8`) | No floor on the chance of being shown: below the relevance cutoff (0.25) or past `limit` (5), an entry earns nothing (`store/search.py:131-136`, `domain/search.py:140`, `mcp/server.py:110`) | Not tested: every symptom in our runs had one entry |
 | Blackboard | One shared store all agents read and write | No control component: nothing schedules which agent looks at what. The only lever is the instruction text | Pip-tools: 0 of 6 looked |
-| Gossip (push) | Nightly `commons rank` is a batch anti-entropy pass (decision 0017, `docs/decisions/0017-ranking-v0.md:19-22`) | Hooks push no entries. Both nudges are about proposing, not searching (`service/agent_text.py:131-136`, `158-162`; `service/hooks.py:151-165`) | Pip-tools |
+| Gossip (push) | Nightly `commons rank` is a batch anti-entropy pass (decision 0017, `docs/decisions/0017-ranking-v0.md:19-22`) | Hooks push no entries. All three nudges ask the agent to propose, not to search (`service/agent_text.py:131-136`, `158-170`; `service/hooks.py:160-177`) | Pip-tools |
 | Tombstones, CRDT-style append-only state | Raw observations are never deleted; corrections record old and new values (`DESIGN.md:107-110`). Retirement is a status change, never a delete (`0026-entry-lifecycle.md:34`) | Merging entries is a human act, not automatic (`0027-duplicate-resolution.md:31-34`) | Nothing against it |
 | Bandits (Thompson, UCB) | Ranks greedily by the posterior mean (`store/search.py:135`) | No exploration. A Thompson draw is designed but Proposed, behind a trigger (`docs/decisions/2026-11-07-MIT-582-search-exploration.md:34-62`) | Exploration picks among entries; table-extraction had one |
 | Cascades | Shows outcomes, not just choices: the provenance line gives `success S/N when used` (`domain/search.py:106-111`) | Tells agents to follow the crowd: "prefer entries with successes" (`service/agent_text.py:58-62`). A pass can't tell the right fix from a working workaround | Table-extraction, 4 of 6 |
@@ -280,16 +280,18 @@ the others depend on it.
 ### 1. See herds that pass
 
 - **What.** Give each GitHub task an optional `upstream_route`: one concrete span from the
-  upstream fix (for table-extraction, `Optional[str] = Form(None)`). `compare` reports, per arm
-  and task, the share of passing sessions whose patch contains it, next to the share that used
-  a retrieved entry. Herding then has two lines: failed sessions sharing a wrong patch (today)
+  upstream fix (for table-extraction, `Optional[str] = Form(None`). `compare` reports, per arm
+  and task, the share of passing sessions whose patch adds it, next to the share that used a
+  retrieved entry. Only added lines count. The project's own
+  `engine: Optional[str] = Form(None)` appears as context in every table-extraction patch, so
+  matching the whole patch would find the span in all 12 sessions. Herding then has two lines: failed sessions sharing a wrong patch (today)
   and passing sessions that left the upstream route for an entry's.
 - **Cost.** Small. `tools/eval/github_tasks.py`, `tools/agent_eval.py` and their tests. It
   replays the ledger and runs no session.
 - **Risk.** The span is hand-picked per task, and some tasks have several good routes; leave it
   unset there. `patch_excerpt` is scrubbed and can be cut, so a long patch may hide the span.
-- **Test.** Replay `github-same10`: it should show table-extraction at `none` 3 of 3 and
-  `commons` 0 of 3 on the upstream route. **Kill it** if, on the full `github-arms` run, the
+- **Test.** Replay `github-same10`. Matched on added lines, the span gives table-extraction
+  `none` 3 of 3 (ledger lines 1655-1657), `commons` 0 of 3, `both` 2 of 3 and `context7` 2 of 3. **Kill it** if, on the full `github-arms` run, the
   Commons arms' share on the upstream route is no lower than `none`'s on every task where an
   entry was used: then herding is rare and proposals 2 and 4 aren't needed.
 
@@ -314,12 +316,25 @@ the others depend on it.
 - **What.** Treat each minor of a 0.x library as its own major in the version factor, as
   semver does for 0.x, so a 0.147 entry is demoted for a 0.162 caller. Later, keep it shown but
   marked when the caller is past every version the entry has a recorded success on.
-- **Cost.** Small: `domain/search.py:196-218` and its tests.
+- **Cost.** Small in code: `domain/search.py:196-218` and its tests. Most of the cost is the
+  agent eval below.
 - **Risk.** Many 0.x libraries keep behavior across minors; this demotes their entries for
-  everyone on a newer minor. It needs callers to pass `environment.libraries`, which the
-  `search` tool's description doesn't mention (`AGENTS.md:213`).
-- **Test.** The search-relevance gate of decision 0025: `make search-eval` on the judged set.
-  **Kill it** if precision@5 or recall@5 falls, the rule that gate already applies.
+  everyone on a newer minor. It needs callers to pass `environment.libraries`, which neither the
+  `environment` argument's description (`server/src/commons/mcp/server.py:106-108`) nor the
+  `search` tool's description (`server/src/commons/service/agent_text.py:58-61`) mentions: both
+  name only `environment.language`.
+- **Test.** Two gates, like the exploration record's.
+  - The search-relevance gate of decision 0025: `make search-eval` on the judged set. **Kill
+    it** if precision@5 or recall@5 falls, the rule that gate already applies.
+  - An agent eval (decision 0023), since this changes which entries come back and in what
+    order. Result order "is what the agent sees"
+    (`docs/decisions/2026-11-07-MIT-582-search-exploration.md:98-105`). Run one condition,
+    say `version-0x`, on Sonnet and Opus against the baseline at the baseline's run count. It
+    needs known-entry scenarios on a 0.x library: one where the seeded entry's minor still
+    applies, and one where a later minor changed the behavior. **Kill it** if, on either model,
+    the rates of `used`, `tests_passed` or `report` fall against the baseline on the scenario
+    where the entry still applies. The other scenario shows whether the demotion helps at all.
+    If agents don't pass `libraries`, the factor never fires and the two conditions match.
 - **Why not faster time decay.** Ant colonies tune evaporation for many ants per iteration.
   Commons sees a few sessions a day; decaying faster than 90 days would erase evidence before
   anyone could renew it. Version change is the event that actually makes a trace stale.
