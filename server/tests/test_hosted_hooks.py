@@ -163,6 +163,29 @@ def test_older_servers_still_accept_the_test_run(app: Starlette, db: psycopg.Con
     assert datetime.fromisoformat(body["test_run_at"]).tzinfo is not None
 
 
+@pytest.mark.usefixtures("state")
+def test_a_retried_ci_check_crosses_as_one_flag_and_the_server_nudges(
+    app: Starlette, db: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MIT-652: the hook sends whether a command failed and later worked, never the commands."""
+    monkeypatch.setenv("COMMONS_TURN_NUDGE", "commands")
+    sent: list[dict[str, Any]] = []
+    http = client(app, create_key(db, "retry-dev", admin=False))
+    http.event_hooks = {"request": [lambda request: sent.append(json.loads(request.content))]}
+    backend = RemoteBackend(http)
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
+    hook_client.on_tool_use(backend, bash(session, "gh pr checks 7", 1))
+    hook_client.on_tool_use(backend, bash(session, "gh pr checks 7 --watch", 0))
+
+    result = hook_client.on_stop(backend, session, None)
+
+    assert sent[-1]["fixed_failing_command"] is True
+    assert "gh pr checks" not in json.dumps(sent)
+    assert result is not None
+    assert result.nudge == agent_text.COMMAND_NUDGE.format(task_id=task_id)
+
+
 def post(app: Starlette, key: str | None, step: str, body: dict[str, Any]) -> httpx2.Response:
     return client(app, key).post(f"/api/hooks/{step}", json=body)
 

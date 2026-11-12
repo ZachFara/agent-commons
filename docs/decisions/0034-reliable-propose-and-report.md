@@ -106,3 +106,28 @@ by the owner's decision (Question MIT-598, item 1). It still records nothing unl
 then only asks the agent to review the session and `propose` or `report` what qualifies; no
 transcript is kept. `COMMONS_RECORD_PROMPT=off` turns it off. Its text is unchanged and still
 unmeasured.
+
+Update (2026-11-11, `MIT-652`): a turn-nudge signal that needs no tests, built and not measured.
+Real misses happened with no local tests, or with a failure that showed only on CI, where the
+test signal never fires. `COMMONS_TURN_NUDGE=commands` is an eval condition: the store nudges
+when the turn fixed a failing test (as with `on`) or when the Stop hook saw a command fail and
+later work, with its own text (`agent_text.COMMAND_NUDGE`, version label `+command-nudge`).
+Off by default; `on` and the shipped texts are unchanged.
+- The hook spools each Bash call's exit code and marks each turn's end in the spool. At Stop it
+  sends the store one boolean, `fixed_failing_command`; no command leaves the machine.
+- Failing: a known non-zero exit code, from a run that names a program and has none of the
+  commands that fail with nothing wrong (`grep`, `rg`, `test`, `[`, `false`, `which`, `command`,
+  `type`, `ls`, `find`, `diff`, `cmp`, `git diff`, `git grep`), since the code could be theirs.
+  A CI check exiting 8 (`gh pr checks`: pending) is not a failure.
+- Working afterwards: a later run in the same turn exits 0 and runs the same program: name and
+  subcommand (`git commit`, `npm run`, `gh pr checks`), past `VAR=value`, wrappers (`sudo`,
+  `env`, `time`, `timeout`, `nice`, `nohup`) and runners (`uv run`, `poetry run`, `pnpm exec`,
+  `bundle exec`, `npx`, `uvx`, `python -m`); an empty subcommand matches any. Shell plumbing
+  (`cd`, `echo`, `cat`, `tail`, `sed`, `mkdir`...) names no program. `gh pr checks` and
+  `gh run view|watch --exit-status` are one program, so any later passing check is a retry.
+  A pipe into `tail` can hide a failure behind its 0, and the shell's code is taken as it is.
+- At most one nudge per turn, and none if the turn searched or proposed (as with `on`).
+- On the 34 recorded GitHub-task sessions of 2026-11-11 (`github-same10`,
+  `github-haiku-none-check`) it would have fired in 4. The test signal, reading runner
+  summaries, fires in 33: those tasks all have local tests, so they are not the misses this
+  targets. Definition and tests: `domain/retries.py`, `server/tests/test_command_retries.py`.

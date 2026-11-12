@@ -365,8 +365,11 @@ def _stop(conn: Connection, body: Body) -> Body:
         _session_id(body),
         _model(body),
         used,
-        paired=matched_in is not None,
-        cost=_cost(body.get("cost")),  # absent from hooks older than MIT-600
+        hooks.TurnSeen(
+            paired=matched_in is not None,
+            cost=_cost(body.get("cost")),  # absent from hooks older than MIT-600
+            fixed_failing_command=body.get("fixed_failing_command") is True,  # since MIT-652
+        ),
     )
     if result is None:
         return {"task_id": None, "unreported": []}

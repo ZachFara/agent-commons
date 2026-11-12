@@ -4,8 +4,7 @@ These run where the database is: in the hook process locally, on the server when
 Everything that reads the user's machine (spool, transcript) is in `hook_client`.
 """
 
-import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from commons.domain.errors import NotPermittedError
@@ -14,7 +13,7 @@ from commons.domain.outcomes import ObservedRun, merge_observation
 from commons.domain.prompts import PromptVersion
 from commons.domain.usage import ArtifactFrequencies, UseObservation, count_artifacts
 from commons.privacy.doc_lookup_log import doc_lookup_record
-from commons.service.agent_text import TURN_NUDGE
+from commons.service.agent_text import TURN_NUDGES, turn_nudge_setting
 from commons.service.identity import current_reporter, test_traffic
 from commons.service.ranking import rank, ranking_is_stale
 from commons.store.connection import Connection
@@ -109,22 +108,32 @@ def fixed_failing_tests(runs: list[ObservedRun]) -> bool:
     )
 
 
-def finish_turn(
-    conn: Connection,
-    session_id: str,
-    model: str | None,
-    used: dict[UUID, UseObservation],
-    *,
-    paired: bool = True,
-    cost: dict[UUID, TaskCost] | None = None,
-) -> StopResult | None:
-    """Record the observed model, `used` per retrieval, and observed outcomes (decision 0016).
+@dataclass(frozen=True)
+class TurnSeen:
+    """What the Stop hook saw in the turn, besides `used`.
 
     With `paired` (decision 0036), a test run counts for a retrieval only if it came after
     the work that matched the fix. Hooks from before 0036 don't say when that was, so their
     turns are recorded unpaired, as before. `cost` is what the task cost after each
     retrieval; a retrieval it leaves out keeps the cost it had (hooks that don't send it).
+    `fixed_failing_command`: a command failed and later worked in this turn (MIT-652); only
+    the `commands` turn nudge reads it.
     """
+
+    paired: bool = True
+    cost: dict[UUID, TaskCost] = field(default_factory=dict)
+    fixed_failing_command: bool = False
+
+
+def finish_turn(
+    conn: Connection,
+    session_id: str,
+    model: str | None,
+    used: dict[UUID, UseObservation],
+    seen: TurnSeen | None = None,
+) -> StopResult | None:
+    """Record the observed model, `used` per retrieval, and observed outcomes (decision 0016)."""
+    turn = seen or TurnSeen()
     with conn.transaction():
         task_id = task_for_session(conn, session_id, current_reporter(conn))
         if task_id is None:
@@ -134,11 +143,11 @@ def finish_turn(
         runs = test_runs(conn, task_id)
         retrieved = task_retrievals(conn, task_id)
         for item in retrieved:
-            seen = used.get(item.retrieval_id, UseObservation(None))
-            _record_observation(conn, item, runs, seen, paired=paired)
-            if cost and (spent := cost.get(item.retrieval_id)) is not None:
+            observed = used.get(item.retrieval_id, UseObservation(None))
+            _record_observation(conn, item, runs, observed, paired=turn.paired)
+            if (spent := turn.cost.get(item.retrieval_id)) is not None:
                 set_cost(conn, item.retrieval_id, spent)
-        nudge = _turn_nudge(conn, task_id, runs)
+        nudge = _turn_nudge(conn, task_id, runs, fixed_failing_command=turn.fixed_failing_command)
     return StopResult(
         task_id,
         [item.entry_id for item in retrieved if not item.reported],
@@ -148,19 +157,24 @@ def finish_turn(
     )
 
 
-def _turn_nudge(conn: Connection, task_id: UUID, runs: list[ObservedRun]) -> str | None:
+def _turn_nudge(
+    conn: Connection, task_id: UUID, runs: list[ObservedRun], *, fixed_failing_command: bool
+) -> str | None:
     """Return the per-turn nudge if it is on and this turn earned it; mark the turn ended.
 
     It fires when the turn saw a failing test become a passing one with no search and no
-    proposal in the turn (decision 0034).
+    proposal in the turn (decision 0034). The `commands` setting (MIT-652, an eval condition)
+    also fires when the hook saw a command fail and later work in the turn.
     """
     since = end_turn(conn, task_id)
-    if os.environ.get("COMMONS_TURN_NUDGE", "off").strip().lower() != "on":
+    setting = turn_nudge_setting()
+    if setting not in TURN_NUDGES:
         return None
     turn = [run for run in runs if since is None or run.at > since]
-    if not fixed_failing_tests(turn) or acted_in_turn(conn, task_id, since):
+    earned = fixed_failing_tests(turn) or (setting == "commands" and fixed_failing_command)
+    if not earned or acted_in_turn(conn, task_id, since):
         return None
-    return TURN_NUDGE.format(task_id=task_id)
+    return TURN_NUDGES[setting][0].format(task_id=task_id)
 
 
 def _record_observation(

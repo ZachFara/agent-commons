@@ -18,7 +18,7 @@ from commons.domain.entries import Proposal, validate_proposal
 from commons.mcp.server import build_server
 from commons.service import agent_text
 from commons.service.hook_install import commons_hooks
-from commons.service.hooks import finish_turn
+from commons.service.hooks import StopResult, TurnSeen, finish_turn
 from commons.service.identity import acting_as
 from commons.store.tasks import start_task
 
@@ -71,6 +71,27 @@ def test_a_turn_that_searched_or_proposed_is_not_nudged(
         result = finish_turn(db, session, None, {})
     assert result is not None
     assert result.nudge is None
+
+
+def test_the_commands_setting_also_nudges_when_a_command_failed_and_later_worked(
+    db: psycopg.Connection, reporter: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    retried = TurnSeen(fixed_failing_command=True)
+    with acting_as(reporter):
+        monkeypatch.setenv("COMMONS_TURN_NUDGE", "on")  # the shipped-off test signal ignores it
+        assert_nudge(finish_turn(db, task_with_runs(db, reporter, []), None, {}, retried), None)
+        monkeypatch.setenv("COMMONS_TURN_NUDGE", "commands")
+        session = task_with_runs(db, reporter, [])
+        first = finish_turn(db, session, None, {}, retried)
+        assert_nudge(first, agent_text.COMMAND_NUDGE)
+        assert_nudge(finish_turn(db, session, None, {}), None)  # the next turn retried nothing
+        fixed = task_with_runs(db, reporter, [1, 0])  # a fixed test still counts, same text
+        assert_nudge(finish_turn(db, fixed, None, {}), agent_text.COMMAND_NUDGE)
+
+
+def assert_nudge(result: StopResult | None, text: str | None) -> None:
+    assert result is not None
+    assert result.nudge == (None if text is None else text.format(task_id=result.task_id))
 
 
 def prompts(monkeypatch: pytest.MonkeyPatch, setting: str | None) -> list[str]:

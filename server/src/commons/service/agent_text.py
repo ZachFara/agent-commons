@@ -160,6 +160,21 @@ TURN_NUDGE = (
     "or proposed. If the cause was a library or runtime behavior its docs don't state, call "
     "`propose` now with task_id {task_id}. If it was this codebase's own logic, finish as planned."
 )
+# The same nudge on a signal that needs no tests (MIT-652; `domain/retries.py` defines it): a
+# command that failed and later worked, a CI check retried until it passed, or a test fixed.
+# An eval condition only (COMMONS_TURN_NUDGE=commands), off by default; nothing ships it.
+COMMAND_NUDGE = (
+    "Agent Commons: in this turn a command failed and later worked, and nothing was searched "
+    "or proposed. If the cause was a library or runtime behavior its docs don't state, call "
+    "`propose` now with task_id {task_id}. If it was this codebase's own logic, finish as planned."
+)
+# COMMONS_TURN_NUDGE's settings that turn a nudge on, with its text and its version label.
+TURN_NUDGES = {"on": (TURN_NUDGE, "turn-nudge"), "commands": (COMMAND_NUDGE, "command-nudge")}
+
+
+def turn_nudge_setting() -> str:
+    """Return COMMONS_TURN_NUDGE, normalized: `off` (the default), `on` or `commands`."""
+    return os.environ.get("COMMONS_TURN_NUDGE", "off").strip().lower()
 
 
 # `/commons:record` (decision 0034): an MCP prompt, which clients show as a slash command. It
@@ -586,16 +601,18 @@ def variant() -> Variant:
     return resolve(_variant_name())
 
 
-def variant_label(*, turn_nudge: bool, record: bool) -> str:
+def variant_label(*, turn_nudge: str, record: bool) -> str:
     """Name what the server serves, for its prompt version (decision MIT-566).
 
     The variant name, the wording `baseline` or `previous` stands for (the alias moves when a
     new text ships), and the extras switched on: `baseline:w-a0b4c7d1e0f1g1h0n0s1+record`.
+    `turn_nudge` is COMMONS_TURN_NUDGE's setting.
     """
     name = _variant_name()
     wording_of = {"baseline": SHIPPED, "previous": PREVIOUS_SHIPPED}.get(name)
     label = name if wording_of is None else f"{name}:{wording_of}"
-    return label + ("+turn-nudge" if turn_nudge else "") + ("+record" if record else "")
+    nudge = TURN_NUDGES.get(turn_nudge)
+    return label + (f"+{nudge[1]}" if nudge else "") + ("+record" if record else "")
 
 
 def fingerprint(shown: Variant) -> str:

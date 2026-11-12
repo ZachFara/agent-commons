@@ -27,6 +27,7 @@ from commons.domain.observations import (
     observed_exit_code,
 )
 from commons.domain.prompts import PromptVersion
+from commons.domain.retries import CommandRun, fixed_failing_command
 from commons.domain.usage import ArtifactFrequencies, Evidence, UseObservation, observe_use
 from commons.privacy.redaction import scrub
 from commons.service import contributors, hooks
@@ -74,6 +75,8 @@ class HookBackend(Protocol):
         model: str | None,
         used: dict[UUID, UseObservation],
         cost: dict[UUID, TaskCost],
+        *,
+        fixed_failing_command: bool = False,
     ) -> StopResult | None:
         """Record the turn's observations."""
         ...
@@ -121,10 +124,13 @@ class LocalBackend:
         model: str | None,
         used: dict[UUID, UseObservation],
         cost: dict[UUID, TaskCost],
+        *,
+        fixed_failing_command: bool = False,
     ) -> StopResult | None:
         """Record the turn's observations."""
         with self._connection() as conn:
-            return hooks.finish_turn(conn, session_id, model, used, cost=cost)
+            seen = hooks.TurnSeen(cost=cost, fixed_failing_command=fixed_failing_command)
+            return hooks.finish_turn(conn, session_id, model, used, seen)
 
     def artifact_frequencies(self) -> ArtifactFrequencies:
         """Count artifacts across the store's approved fixes."""
@@ -220,8 +226,14 @@ class RemoteBackend:
         model: str | None,
         used: dict[UUID, UseObservation],
         cost: dict[UUID, TaskCost],
+        *,
+        fixed_failing_command: bool = False,
     ) -> StopResult | None:
-        """Record the turn's observations, with when matched work happened (0036)."""
+        """Record the turn's observations, with when matched work happened (0036).
+
+        Servers from before MIT-652 ignore `fixed_failing_command`, as they ignore any key
+        they don't read.
+        """
         body = {
             "session_id": session_id,
             "model": model,
@@ -238,6 +250,7 @@ class RemoteBackend:
                 }
                 for retrieval, spent in cost.items()
             },
+            "fixed_failing_command": fixed_failing_command,
         }
         result = self._post("stop", body)
         if result["task_id"] is None:
@@ -312,7 +325,8 @@ def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
     session's task is full_trace. The tool's response is never read.
     """
     if use.command is not None:
-        append_spool(use.session_id, {"tool": use.tool_name, "command": scrub(use.command)})
+        command = {"tool": use.tool_name, "command": scrub(use.command)}
+        append_spool(use.session_id, {**command, "exit_code": use.exit_code})
     where = {"path": use.file_path} if use.file_path else {}
     if use.new_text is not None:
         append_spool(use.session_id, {"tool": use.tool_name, "text": scrub(use.new_text), **where})
@@ -353,10 +367,14 @@ def _scrubbed(lookup: DocLookup | None) -> DocLookup | None:
 def on_stop(backend: HookBackend, session_id: str, transcript: str | None) -> StopResult | None:
     """Compute `used` from the local spool and cost from the transcript; record the turn.
 
-    Only the derived numbers leave the machine (decision 0016).
+    Only the derived numbers leave the machine (decision 0016), and whether a command failed
+    and later worked in this turn (MIT-652). A turn is what the spool holds after the last
+    turn's end, which this marks.
     """
     lines = _transcript_lines(Path(transcript)) if transcript else []
     records = read_spool(session_id)
+    retried = fixed_failing_command(_turn_commands(records))
+    append_spool(session_id, {TURN_END: True})
     retrieved = backend.retrievals(session_id)
     frequencies = backend.artifact_frequencies() if retrieved else ArtifactFrequencies()
     used = {
@@ -369,7 +387,30 @@ def on_stop(backend: HookBackend, session_id: str, transcript: str | None) -> St
         for item in retrieved
         if (spent := _cost_after(messages, item.retrieved_at)) is not None
     }
-    return backend.stop(session_id, _observed_model(lines), used, cost)
+    return backend.stop(
+        session_id, _observed_model(lines), used, cost, fixed_failing_command=retried
+    )
+
+
+TURN_END = "turn_end"
+
+
+def _turn_commands(records: list[dict[str, object]]) -> list[CommandRun]:
+    """Return the Bash calls spooled since the last turn ended, oldest first.
+
+    Calls spooled before calls carried their exit code have none, and count as unknown.
+    """
+    ends = [index for index, record in enumerate(records) if record.get(TURN_END)]
+    turn = records[ends[-1] + 1 :] if ends else records
+    return [
+        CommandRun(str(record["command"]), _exit_code(record.get("exit_code")))
+        for record in turn
+        if "command" in record
+    ]
+
+
+def _exit_code(value: object) -> int | None:
+    return value if isinstance(value, int) else None
 
 
 def _is_test(command: str) -> bool:
