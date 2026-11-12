@@ -105,10 +105,19 @@ positives:
 - With 30 positives, the interval is 0.63 to 0.90.
 
 **Cold start: rules first, then active labeling, then a model.**
-1. **Reason categories now.** Reject and retire forms gain a required category: `unsafe`,
-   `wrong`, `noise`, `duplicate` or `other`. It is stored in its own column, never in
-   `reason`, so `/mine` and agents see nothing new. Every review from then on is a clean
-   label, and the owner categorises the existing free-text reasons once.
+1. **Reason categories now, on the dashboard only.** The admin dashboard's reject and retire
+   forms gain a required category: `unsafe`, `wrong`, `noise`, `duplicate` or `other`. Those
+   forms record reviews with source `human`. The category is stored in its own column, never
+   in `reason`, so `/mine` and agents see nothing new. Every human review from then on is a
+   clean label, and the owner categorises the existing free-text reasons once.
+   - The requirement is not added to `validate_review` (`domain/reviews.py:35-39`), which the
+     MCP `reject` tool also calls. That tool records an agent review (source `agent`,
+     `mcp/server.py:164-170`).
+   - The MCP `reject` tool, its arguments and the server text stay unchanged. Agent rejects
+     stay uncategorised and are not labels, matching the label table's `source = 'human'`.
+   - Adding a category to MCP `reject` would change what agents see. That needs its own
+     record, and it ships only after an eval run the owner approves (decision 0023;
+     `docs/decisions/0034-reliable-propose-and-report.md:57-59`).
 2. **A rules score now**, from signals that already exist: risk findings, failure evidence,
    never-used, duplicate candidates, and the proposer's prior harmful rejections. It is a
    dashboard column and sort order with the rule that fired as its "top feature". This is the
@@ -345,8 +354,9 @@ nothing else.
 
 ## Decision (proposed)
 
-Option B. Start with the two pieces that need no model: required reject and retire reason
-categories (stored apart from the reason text), and a rules-based "likely problem" score as a
+Option B. Start with the two pieces that need no model: reject and retire reason categories,
+required on the human dashboard forms only and stored apart from the reason text (the MCP
+`reject` tool stays unchanged), and a rules-based "likely problem" score as a
 queue and Entries column and sort order. Train a model per target only once it has 30
 training positives and 15 hold-out positives. Compare logistic regression on TF-IDF and cheap
 features against k-NN and the rules score, run it 4 weeks in shadow, then display it with a
