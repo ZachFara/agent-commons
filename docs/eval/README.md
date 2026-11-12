@@ -180,7 +180,45 @@ never does. `make eval-check` never passes it. Docker is required: the tests in
 - a test fails at the base and passes with the fix (`check` proves it);
 - it needs no services, GPU, or Docker; the checkout is under about 200 MB; the tests run in
   under 2 minutes;
-- the prompt doesn't reveal the fix (it is the neutral "fix the failing tests" prompt).
+- the prompt doesn't reveal the fix (it is the neutral "fix the failing tests" prompt);
+- it passes the difficulty screen below, run after `check` passes for it, and its comment in
+  `github_tasks.py` carries the screen's line.
+
+**The difficulty screen** (`tools/eval/screen.py`; Zach's answer to Question `MIT-679`, 2(a)).
+Every task of the first batch passed with no help on Sonnet and Haiku, so none of them can
+show what help adds. Once `check` passes for a new task, run
+
+```
+uv run python tools/agent_eval.py screen --scenario TASK [--runs 3]
+```
+
+It runs the `none` arm on Sonnet `--runs` times (3 by default) through the `arms` machinery,
+under the condition `github-screen`, which no verdict reads. The task passes if Sonnet fails at
+least one run (`tests_pass` false), or if its runs' median `tokens_in + tokens_out` is at least
+`SCREEN_TOKEN_FACTOR` (2.0) times the reference median. The reference median is that of the
+counted (`counted()`) `none`-arm Sonnet lines of the smoke-test conditions `github-same10` and
+`github-pilot` in `trials.jsonl`. As of 2026-11-11 it is 246,683 tokens over 7 sessions of only
+two tasks: `gh-pip-tools-flag-default` (4 sessions) and `gh-table-extraction-bool-form` (3). The
+2.0x bar rests on that small sample and is provisional. The median moves as new counted
+`none`-arm Sonnet lines of those conditions arrive, which is why each screened task records the
+reference median it was decided on.
+
+The command prints PASS (exit 0) or FAIL (exit 1) with the runs, failures, median and reference
+median, and for a pass the line to record. It prints REFUSED (exit 2) instead of guessing: before
+any session when `--runs` is below 1 or the ledger has no reference line, and after the run when
+a session errored or is held as a possible leak, since a screen on fewer runs than asked is
+weaker. Its sessions are real ones: mind the eval budget.
+
+A task added below the "screened tasks" marker in `github_tasks.py` ends its source comment
+with the line the screen printed, for example:
+
+```
+# Screen 2026-11-12: PASS, 1 of 3 runs failed, median 301234 tokens, reference median 246683
+```
+
+`server/tests/test_eval_screen.py` checks that every task below the marker carries such a line,
+with at least 3 runs and numbers that pass the rule. The ten tasks above the marker came before
+the screen and are exempt; a new task above the marker fails the test.
 
 Records are reviewed like code: `run` still executes the record's `setup`, and the agent runs
 the repository's code, on this machine. `check` and grading run them in containers.

@@ -17,6 +17,7 @@ Usage:
   uv run python tools/agent_eval.py counterfactuals --condition NAME --store NAME
   uv run python tools/agent_eval.py compare --condition NAME
   uv run python tools/agent_eval.py review-sheet --store NAME  # pending entries, upstream fixes
+  uv run python tools/agent_eval.py screen --scenario TASK [--runs N]  # after `check` passes
   uv run python tools/agent_eval.py effects [--condition NAME]
   uv run python tools/agent_eval.py flags DIRECTORY        # scan saved GitHub-task transcripts
   uv run python tools/agent_eval.py clear SESSION --reason TEXT  # count a flagged session again
@@ -50,7 +51,7 @@ from commons.store.counterfactuals import CounterfactualRun, known_entries, reco
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
-from tools.eval import container, github_tasks, holdout, leaks, repos, runner  # noqa: E402
+from tools.eval import container, github_tasks, holdout, leaks, repos, runner, screen  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
 
 if TYPE_CHECKING:
@@ -833,11 +834,6 @@ class Comparison:
     ratio_high: float
 
 
-def _tokens(row: Row) -> int:
-    """All of a session's tokens: input, cache creation, cache read, and output."""
-    return int(row.get("tokens_in") or 0) + int(row.get("tokens_out") or 0)
-
-
 def task_totals(rows: list[Row], arm: str) -> dict[str, Totals]:
     """Return each task's (sessions, passes, tokens) in one arm."""
     totals: dict[str, Totals] = {}
@@ -847,7 +843,7 @@ def task_totals(rows: list[Row], arm: str) -> dict[str, Totals]:
             totals[str(row["scenario"])] = (
                 sessions + 1,
                 passes + bool(row["tests_pass"]),
-                tokens + _tokens(row),
+                tokens + screen.session_tokens(row),
             )
     return totals
 
@@ -1005,8 +1001,8 @@ def herded(rows: list[Row]) -> int:
 def arm_line(arm: str, model: str, rows: list[Row]) -> str:
     """One arm and model: sessions, pass rate, tokens, wall clock, and the commons counts."""
     passes = sum(bool(row["tests_pass"]) for row in rows)
-    per_success = _per_success(sum(_tokens(row) for row in rows), passes)
-    median_tokens = statistics.median(_tokens(row) for row in rows)
+    per_success = _per_success(sum(screen.session_tokens(row) for row in rows), passes)
+    median_tokens = statistics.median(screen.session_tokens(row) for row in rows)
     median_seconds = statistics.median(float(row.get("wall_clock_seconds") or 0) for row in rows)
     line = (
         f"{arm:<9} {model[:16]:<16} {len(rows):>4} {_with_interval(passes, len(rows)):<18} "
@@ -1219,6 +1215,59 @@ def arms_report_commands(commands: "argparse._SubParsersAction[argparse.Argument
     ).add_argument("--store", required=True)
 
 
+def screen_task(args: argparse.Namespace) -> int:
+    """Screen a new GitHub task for difficulty, after `check` passes for it.
+
+    Runs the none arm on Sonnet `--runs` times, under a condition no verdict reads, and prints
+    PASS (exit 0), FAIL (exit 1), or REFUSED (exit 2): with fewer than one run or no reference
+    in the ledger it refuses before any session starts, and it refuses a run with an errored
+    or held session.
+    """
+    if args.runs < 1:
+        print(f"REFUSED {args.scenario}: --runs must be at least 1", file=sys.stderr)
+        return 2
+    today = datetime.now(UTC).date().isoformat()
+    reference = screen.reference_median([row for row in _ledger_lines() if counted(row)])
+    if reference is None:
+        for line in screen.report(args.scenario, screen.screen([], reference), today):
+            print(line, file=sys.stderr)
+        return 2
+    before = len(_ledger_lines())
+    jobs = plan_arms([args.scenario], [screen.SCREEN_ARM], args.runs, [screen.SCREEN_MODEL])
+    run_jobs(jobs, args)
+    runs = [
+        row
+        for row in _ledger_lines()[before:]  # the ledger is append-only: this run's lines
+        if row["condition"] == screen.SCREEN_CONDITION and row["scenario"] == args.scenario
+    ]
+    kept = [row for row in runs if counted(row)]
+    if len(kept) < args.runs:
+        print(
+            f"REFUSED {args.scenario}: {len(kept)} of {args.runs} sessions finished and count "
+            "(the others errored or are held as possible leaks); read them, then screen again",
+            file=sys.stderr,
+        )
+        return 2
+    result = screen.screen(kept, reference)
+    for line in screen.report(args.scenario, result, today):
+        print(line)
+    return 0 if result.verdict == "PASS" else 1
+
+
+def screen_options(parser: argparse.ArgumentParser) -> None:
+    """Add the `screen` command's options; the rest of `run_jobs`'s are fixed."""
+    tasks = sorted(name for name, scenario in SCENARIOS.items() if scenario.repo)
+    parser.add_argument("--scenario", required=True, choices=tasks)
+    parser.add_argument("--runs", type=int, default=screen.SCREEN_RUNS)
+    parser.set_defaults(
+        condition=screen.SCREEN_CONDITION,
+        model=screen.SCREEN_MODEL,
+        resume=False,
+        no_hooks=False,
+        concurrency=screen.SCREEN_RUNS,
+    )
+
+
 def clear_options(parser: argparse.ArgumentParser) -> None:
     """Add the `clear` command's options: which session, and why."""
     parser.add_argument("session", help="The transcript's stem: <condition>-<task>-<index>.")
@@ -1286,8 +1335,7 @@ def main() -> int:
     arms_report_commands(commands)
     effects_parser = commands.add_parser("effects", help="Pool a wording search by option.")
     effects_parser.add_argument("--condition", default="wording")
-    report_parser = commands.add_parser("report")
-    report_parser.add_argument("--condition", action="append")
+    commands.add_parser("report").add_argument("--condition", action="append")
     commands.add_parser(
         "trials", help="Summarize docs/eval/trials.jsonl per variant and text hash."
     )
@@ -1297,6 +1345,11 @@ def main() -> int:
     clear_options(
         commands.add_parser(
             "clear", help="Count a session flagged as a leak again, after reading its transcript."
+        )
+    )
+    screen_options(
+        commands.add_parser(
+            "screen", help="Screen a new GitHub task for difficulty, after `check` passes for it."
         )
     )
     args = parser.parse_args()
@@ -1313,6 +1366,7 @@ def main() -> int:
         "report": report,
         "flags": flags,
         "clear": clear,
+        "screen": screen_task,
     }
     return commands_by_name[args.command](args)
 
