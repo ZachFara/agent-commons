@@ -66,4 +66,9 @@ Implementation notes (T46, 2026-10-31):
 - Known limit: run times are the store's clock and `matched_at` the client's. A client clock
   running ahead by more than the gap between an edit and the next test run drops that run's
   credit. Sending the client's run time with each test run would fix it; not done yet.
+- Amended 2026-11-11 (MIT-680): fixed as above. Hooks stamp each test run with this machine's
+  time (`test_run_at` beside `test_run` on the wire, since older servers accept exactly
+  `{command, exit_code}` there), stored as `at` in the event, and pairing compares it with
+  `matched_at`. Runs without it (older hooks) fall back to the store's clock. The limit showed
+  up in tests: Postgres in Docker Desktop runs about a millisecond behind the Mac.
 

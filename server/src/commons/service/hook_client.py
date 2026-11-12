@@ -9,7 +9,7 @@ import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
@@ -189,6 +189,11 @@ class RemoteBackend:
             "test_run": test_run,
             "file_change": file_change,
         }
+        if test_run is not None and "at" in test_run:
+            # Older servers accept exactly {command, exit_code} in test_run, so the run's
+            # time goes beside it, where they don't look.
+            body["test_run"] = {k: v for k, v in test_run.items() if k != "at"}
+            body["test_run_at"] = test_run["at"]
         if doc_lookup is not None:  # servers from before MIT-622 never see the key
             if bound_privacy_mode(session_id) != "full_trace":  # the query stays here (0016)
                 doc_lookup = replace(doc_lookup, query=None)
@@ -321,7 +326,12 @@ def on_tool_use(backend: HookBackend, use: ToolUse) -> None:
             use.command, use.exit_code, use.output or "", configured_test_runners()
         )
         if code is not None:
-            test_run = {"command": scrub(command_tail(use.command)), "exit_code": code}
+            test_run = {
+                "command": scrub(command_tail(use.command)),
+                "exit_code": code,
+                # This machine's clock, the one `matched_at` uses: the store's may differ.
+                "at": datetime.now(UTC).isoformat(),
+            }
     file_change: dict[str, object] | None = None
     if use.file_path is not None and use.new_text is not None:
         file_change = {

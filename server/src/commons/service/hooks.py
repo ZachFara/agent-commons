@@ -191,11 +191,13 @@ def _follows_matched_work(run: ObservedRun, seen: UseObservation) -> bool:
     """Whether a passing run can be credited to the entry: it came after work that matched.
 
     A pass with no matched work proves nothing about the entry (decision 0036). Failing runs
-    still count, so an agent's claim of success can be checked against them.
+    still count, so an agent's claim of success can be checked against them. `matched_at` is
+    the hook's clock, so it is compared with the hook's time of the run when there is one.
     """
     if seen.used not in {"yes", "partial"}:
         return False
-    return seen.matched_at is None or run.at > seen.matched_at
+    ran = run.client_at or run.at  # hooks from before the run's time: the store's clock
+    return seen.matched_at is None or ran > seen.matched_at
 
 
 def artifact_frequencies(conn: Connection) -> ArtifactFrequencies:

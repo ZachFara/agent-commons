@@ -82,11 +82,16 @@ Usage = Literal["yes", "partial", "no"]
 
 @dataclass(frozen=True)
 class ObservedRun:
-    """A test command a hook saw, and how it exited."""
+    """A test command a hook saw, and how it exited.
+
+    `at` is the store's clock. `client_at` is the hook's, the clock `matched_at` uses; hooks
+    that don't send it leave it None.
+    """
 
     command: str
     exit_code: int
     at: datetime
+    client_at: datetime | None = None
 
 
 def merge_observation(existing: OutcomeRecord | None, run: ObservedRun | None) -> OutcomeRecord:
