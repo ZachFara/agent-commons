@@ -12,6 +12,19 @@ number can be argued after it is seen. Question MIT-619, on the task-set size an
 is still open. **The run waits for its answer.** The run counts below are the recommended
 defaults until then.
 
+**Amended 2026-11-11 (MIT-679).** Items 3 and 9 and the run sequence in item 4 are amended
+below, each marked "Amended 2026-11-11". The reasons, from the first GitHub-task runs:
+
+- **The tasks were too easy.** Sonnet and Haiku passed all 10 tasks in
+  `tools/eval/github_tasks.py` with no tools, so no arm could do better than another. Those
+  10 are now the smoke test (`SMOKE_TASKS`, `make eval-smoke`, condition `github-smoke`),
+  which checks the harness end to end and never enters a verdict.
+- **There were no siblings.** None of the 10 shares an `upstream_change`, so folds A and B
+  were empty and every task fell into the same-task set, whose result is inflated by design.
+- **The review let a workaround through.** On `gh-table-extraction-bool-form`, 4 of 6 Commons
+  sessions copied an approved entry's workaround fix. The review had no step that compared an
+  entry's fix with the task's upstream fix.
+
 Decision:
 1. **Arms.** All four (`tools/eval/runner.py`, `ARM_SERVERS`):
    - `both`: the Commons plus Context7 (the kill-criterion record's Commons arm);
@@ -33,6 +46,15 @@ Decision:
    tasks alternate between fold A and fold B (A, B, A, ...). A task with no sibling goes to the
    **same-task** set. The three lists are written into this record (a table under this item)
    when the task set is checked in, and are not changed after the first seed wave.
+
+   *Amended 2026-11-11.* The same-task set gets a verdict of its own, but one that can only
+   be **kill** or **not decided**, never continue. Its sessions can find entries their own
+   task's sessions wrote, so a win there is inflated and proves nothing. A loss even with that
+   help still counts. The rule is item 8's kill rule with the same constants (`PASS_MARGIN`,
+   `TOKEN_MARGIN`, `PASS_FLOOR`): where item 8 says kill, the same-task verdict is kill, and
+   otherwise it is not decided (`same_task_verdict` in `tools/agent_eval.py`). It applies to
+   `github-arms-same-task` and to every condition in `SAME_TASK_CONDITIONS`, which also lists
+   the 2026-11-11 run `github-same10`. The fold verdict of `github-arms` is unchanged.
 4. **Stores.** One experiment store per fold, plus one for the same-task set, all on the local
    Postgres. The harness refuses any database not on `localhost` or `127.0.0.1` (the rule
    `scripts/test-db.sh` follows), so none is ever the live Commons database.
@@ -48,6 +70,13 @@ Decision:
    - The owner then reviews what each wave proposed, against its store (`commons pending`,
      then `commons review`, with `COMMONS_DATABASE_URL` set to the store). Search shows only
      approved entries, so this review is what the measured sessions can find.
+     *Amended 2026-11-11:* the reviewer checks each pending entry's fix against the upstream
+     fix (`fix_url`) of the task that proposed it. An entry whose fix is a workaround is
+     rejected with that reason, or edited to the upstream fix. `agent_eval.py review-sheet
+     --store NAME` prints the sheet for this: each pending entry's id, symptom, cause and fix
+     next to its task's `fix_url` and `issue_url`. It reads only, and links an entry to its
+     task by the task ids the session's ledger line records. An entry it can't link shows
+     "task unknown".
    - In a **measured run** (`make eval-arms`), each session gets its own
      `CREATE DATABASE ... TEMPLATE <store>`, dropped after grading. Every session of a fold
      starts from the same reviewed store, which only the *other* fold's tasks seeded, and never
@@ -57,8 +86,11 @@ Decision:
      It never counts by the shared `eval-agent` pseudonym.
 
    The run, in order. `<A>`, `<B>` and `<same>` are the fold lists from item 3, written as
-   `--scenario T` per task in the `arms` commands and space-separated in `EVAL_ARMS_TASKS`:
+   `--scenario T` per task in the `arms` commands and space-separated in `EVAL_ARMS_TASKS`
+   (*amended 2026-11-11:* step 0, the review in step 2, and the combined verdict in step 4):
    ```
+   # 0. The smoke test: the 10 smoke-test tasks, all four arms, as github-smoke (no verdict).
+   make eval-smoke
    # 1. Seed waves: the commons arm, once per task, into each fold's own store.
    uv run python tools/agent_eval.py arms --store commons_eval_store_a --seed-wave \
      --arm commons --runs 1 --condition github-arms-seed-a <A>
@@ -66,20 +98,24 @@ Decision:
      --arm commons --runs 1 --condition github-arms-seed-b <B>
    uv run python tools/agent_eval.py arms --store commons_eval_store_same --seed-wave \
      --arm commons --runs 1 --condition github-arms-seed-same <same>
-   # 2. Review each store's pending entries (repeat for _b and _same).
+   # 2. Review each store's pending entries (repeat for _b and _same): check each fix against
+   #    its task's upstream fix, and reject a workaround with that reason or edit it.
+   uv run python tools/agent_eval.py review-sheet --store commons_eval_store_a
    COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/commons_eval_store_a \
-     uv run commons pending
+     uv run commons review
    # 3. Measured runs: each fold on the other fold's store.
    make eval-arms EVAL_STORE=commons_eval_store_b EVAL_ARMS_TASKS="<A>"
    make eval-arms EVAL_STORE=commons_eval_store_a EVAL_ARMS_TASKS="<B>"
    make eval-arms EVAL_STORE=commons_eval_store_same EVAL_ARMS_TASKS="<same>" \
      EVAL_ARMS_CONDITION=github-arms-same-task
-   # 4. The verdict (item 9), then the same-task set, reported apart.
+   # 4. The fold verdict, the same-task set's kill-only verdict, and the combined verdict (item 9).
    make eval-compare EVAL_ARMS_CONDITION=github-arms
    make eval-compare EVAL_ARMS_CONDITION=github-arms-same-task
    ```
-   Both folds are measured under `github-arms`, so the verdict pools them. The seed waves'
-   conditions and `github-arms-same-task` are never part of it: `compare` reads one condition.
+   Both folds are measured under `github-arms`, so the fold verdict pools them. The seed
+   waves' conditions, `github-smoke` and `github-arms-same-task` are never part of it:
+   `compare` reads one condition. Only the combined verdict (item 9) reads both `github-arms`
+   and `github-arms-same-task`, and no verdict ever reads `github-smoke`.
    `eval-arms` refuses to run without both `EVAL_ARMS_TASKS` and `EVAL_STORE`.
 5. **Pass.** A session passes when the harness's own test run after the session passes
    (`tests_pass`). Hook outcomes, the Commons' outcome rows and agent self-reports are not
@@ -118,6 +154,14 @@ Decision:
    only the committed ledger, `docs/eval/trials.jsonl`, and only `github-arms` lines: both
    folds, never the seed waves or `github-arms-same-task`. Lines marked `invalid` are not
    counted. Errored sessions never reach the ledger, and `RESUME=1` runs them again.
+
+   *Amended 2026-11-11.* The decision is the **combined verdict**: **kill** if the folds'
+   verdict or the same-task set's verdict (item 3) is kill, **continue** only if the folds'
+   verdict is continue, and inconclusive otherwise. `compare` prints it as a
+   `combined verdict, grader vN:` line, under the report of either `github-arms` or
+   `github-arms-same-task`, once both conditions have counted rows of that grader version.
+   Until then the folds' `verdict:` line stands alone. `compare --condition github-smoke`
+   prints `verdict: none`: the smoke test never enters a verdict.
 10. **Reported, not deciding.** `compare` also prints:
     - per arm and model: sessions, the pass rate with a 95% Wilson interval, tokens per
       success, median tokens and median wall clock, and, for the Commons arms, how many

@@ -109,7 +109,8 @@ def test_status_command_prints_a_summary(
     monkeypatch.setenv("COMMONS_CONFIG", str(tmp_path / "config.json"))
     assert main(["status"]) == 0
     out = capsys.readouterr().out
-    assert out.startswith("entries: ")
+    assert out.startswith("store: ")  # which store, then its figures (test_active_store.py)
+    assert "\nentries: " in out
     assert "awaiting human review: " in out
     assert "last 30 days: " in out
 

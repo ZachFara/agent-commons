@@ -180,7 +180,45 @@ never does. `make eval-check` never passes it. Docker is required: the tests in
 - a test fails at the base and passes with the fix (`check` proves it);
 - it needs no services, GPU, or Docker; the checkout is under about 200 MB; the tests run in
   under 2 minutes;
-- the prompt doesn't reveal the fix (it is the neutral "fix the failing tests" prompt).
+- the prompt doesn't reveal the fix (it is the neutral "fix the failing tests" prompt);
+- it passes the difficulty screen below, run after `check` passes for it, and its comment in
+  `github_tasks.py` carries the screen's line.
+
+**The difficulty screen** (`tools/eval/screen.py`; Zach's answer to Question `MIT-679`, 2(a)).
+Every task of the first batch passed with no help on Sonnet and Haiku, so none of them can
+show what help adds. Once `check` passes for a new task, run
+
+```
+uv run python tools/agent_eval.py screen --scenario TASK [--runs 3]
+```
+
+It runs the `none` arm on Sonnet `--runs` times (3 by default) through the `arms` machinery,
+under the condition `github-screen`, which no verdict reads. The task passes if Sonnet fails at
+least one run (`tests_pass` false), or if its runs' median `tokens_in + tokens_out` is at least
+`SCREEN_TOKEN_FACTOR` (2.0) times the reference median. The reference median is that of the
+counted (`counted()`) `none`-arm Sonnet lines of the smoke-test conditions `github-same10` and
+`github-pilot` in `trials.jsonl`. As of 2026-11-11 it is 246,683 tokens over 7 sessions of only
+two tasks: `gh-pip-tools-flag-default` (4 sessions) and `gh-table-extraction-bool-form` (3). The
+2.0x bar rests on that small sample and is provisional. The median moves as new counted
+`none`-arm Sonnet lines of those conditions arrive, which is why each screened task records the
+reference median it was decided on.
+
+The command prints PASS (exit 0) or FAIL (exit 1) with the runs, failures, median and reference
+median, and for a pass the line to record. It prints REFUSED (exit 2) instead of guessing: before
+any session when `--runs` is below 1 or the ledger has no reference line, and after the run when
+a session errored or is held as a possible leak, since a screen on fewer runs than asked is
+weaker. Its sessions are real ones: mind the eval budget.
+
+A task added below the "screened tasks" marker in `github_tasks.py` ends its source comment
+with the line the screen printed, for example:
+
+```
+# Screen 2026-11-12: PASS, 1 of 3 runs failed, median 301234 tokens, reference median 246683
+```
+
+`server/tests/test_eval_screen.py` checks that every task below the marker carries such a line,
+with at least 3 runs and numbers that pass the rule. The ten tasks above the marker came before
+the screen and are exempt; a new task above the marker fails the test.
 
 Records are reviewed like code: `run` still executes the record's `setup`, and the agent runs
 the repository's code, on this machine. `check` and grading run them in containers.
@@ -301,6 +339,7 @@ Each result and ledger line also records, in every arm and in `run` and `search`
 | `repeat` | which of `--runs` repeats of its task, arm and model the session was (1 to N); 0 outside `arms`. Unlike `run`, the same repeat pairs across arms |
 | `grader_version` | the grader that judged the session's proposals (`runner.GRADER_VERSION`, see Grading); lines and results without it are version 1, and no report pools two versions |
 | `flags` | GitHub tasks only: `{level, rule, tool, excerpt}` per tool call that may have reached the fix (see Leak flags); empty when clean and in every other scenario. Lines from before this field have none |
+| `task_ids` | every task id of the session, sorted: the tasks its hooks started under its Claude session ids, plus every task id it passed to a commons tool. `review-sheet` links a store's entry to its task by them. Lines from before 2026-11-11 have none |
 
 Test files (under `tests/`, `test/`, or `__tests__/`, or named `test_*`, `*_test.*`,
 `conftest.py`, `*.test.*`, `*.spec.*`) are left out of the patch, as is generated output:
@@ -338,9 +377,29 @@ so the store is never the live Commons database. The server is `COMMONS_EVAL_ADM
 - **Without `--seed-wave`** (the measured run): `NAME` must already exist. Each session runs in
   `CREATE DATABASE <session db> TEMPLATE NAME`, which is dropped after grading. Every session
   starts from what the seed wave left and the owner approved, and never sees another
-  session's work. Approve the wave's entries against the store first:
-  `COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/NAME uv run commons pending`,
-  then `commons review`.
+  session's work. Review the wave's entries against the store first (see "The store review"
+  below), then approve or reject them with
+  `COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/NAME uv run commons review`.
+
+### The store review
+
+Search shows only approved entries, so the review of a seed wave's store decides what the
+measured sessions can find. The reviewer checks each pending entry's fix against the upstream
+fix (`fix_url`) of the task that proposed it. An entry whose fix is a workaround (it makes the
+tests pass without the upstream change) is rejected with that reason, or edited to the upstream
+fix. This step was added on 2026-11-11, after 4 of 6 Commons sessions on
+`gh-table-extraction-bool-form` copied an approved entry's workaround fix.
+
+```
+uv run python tools/agent_eval.py review-sheet --store NAME
+```
+
+prints each pending entry (as `commons pending` lists them, up to 50) with its id, symptom,
+cause and fix, next to the `fix_url` and `issue_url` of its task. It only reads the store, and
+refuses one not on `localhost` or `127.0.0.1`. It links an entry to its task by the entry's
+`task_id` and the `task_ids` each ledger line records (see the table above). An entry no line
+claims, for example one from a session logged before 2026-11-11, shows `task unknown`. An entry
+from a written scenario shows that it has no upstream fix.
 
 A store holds many sessions' work under the one `eval-agent` pseudonym. So grading counts a
 session's proposals, reports and retrievals by its own task ids: the tasks its hooks started
@@ -377,15 +436,34 @@ EVAL_ARMS_CONDITION=X`) reads the ledger and prints these sections:
   interval: tasks resampled with replacement, 10,000 resamples, seed 20261107.
 - **The verdict**: continue, kill or inconclusive, from `PASS_MARGIN`, `TOKEN_MARGIN` and
   `PASS_FLOOR` in `tools/agent_eval.py`. The rule is in the Proposed arms record,
-  `docs/decisions/2026-11-07-MIT-565-github-task-arms.md`.
+  `docs/decisions/2026-11-07-MIT-565-github-task-arms.md`. A same-task condition
+  (`github-arms-same-task`, and each one in `SAME_TASK_CONDITIONS`) gets **kill** or **not
+  decided** only, never continue: the same kill rule and constants, but its win is inflated by
+  entries its own tasks wrote. `github-smoke` gets `verdict: none`.
+- **The combined verdict** (amended 2026-11-11): kill if `github-arms` or
+  `github-arms-same-task` says kill, continue only if `github-arms` says continue, inconclusive
+  otherwise. It is printed under either condition's report once both have counted rows of the
+  same grader version.
 - **Secondary comparisons**: `commons` against `none`, and `context7` against `none`.
 - **Herding**: per arm, the failed sessions, and for the Commons arms how many of them used a
   retrieved entry. Also, the share of failed sessions whose patch is their task's most common
   wrong patch (same `patch_hash`, at least two failed sessions sharing it; no patch never
   counts).
 
-`compare` reads one condition only, so seed waves and `github-arms-same-task` never enter the
-`github-arms` verdict.
+`compare` reads one condition only, so seed waves, `github-smoke` and `github-arms-same-task`
+never enter the `github-arms` verdict. Only the combined verdict reads `github-arms-same-task`
+as well, and no verdict reads `github-smoke`.
+
+### The smoke test
+
+The ten GitHub tasks checked in by 2026-11-11 (`SMOKE_TASKS` in `tools/eval/github_tasks.py`)
+are the smoke test.
+Sonnet and Haiku pass all of them with no tools, and none shares an `upstream_change` with
+another, so they can't measure the commons, but they check the harness end to end.
+`make eval-smoke` runs them under all four arms, `EVAL_SMOKE_RUNS` (1) times each, each
+session on a fresh database, under the condition `github-smoke`
+(`agent_eval.py arms --smoke`). That condition never enters any verdict. 40 sessions at one
+run; ask the owner before running it, because it uses the subscription.
 
 ### The GitHub-task arms run, fold by fold
 
@@ -405,6 +483,8 @@ Each fold seeds its own store and is measured on the other fold's store:
 `arms`, space-separated in `EVAL_ARMS_TASKS`.
 
 ```
+# 0. The smoke test: the smoke-test tasks, all four arms, as github-smoke (no verdict).
+make eval-smoke
 # 1. Seed waves: the commons arm, once per task, into each fold's own store.
 uv run python tools/agent_eval.py arms --store commons_eval_store_a --seed-wave \
   --arm commons --runs 1 --condition github-arms-seed-a <A>
@@ -412,15 +492,18 @@ uv run python tools/agent_eval.py arms --store commons_eval_store_b --seed-wave 
   --arm commons --runs 1 --condition github-arms-seed-b <B>
 uv run python tools/agent_eval.py arms --store commons_eval_store_same --seed-wave \
   --arm commons --runs 1 --condition github-arms-seed-same <same>
-# 2. Review each store's pending entries (commons pending, then commons review), e.g.
+# 2. Review each store's pending entries (see "The store review"): check each fix against its
+#    task's upstream fix, and reject a workaround with that reason or edit it, e.g.
+uv run python tools/agent_eval.py review-sheet --store commons_eval_store_a
 COMMONS_DATABASE_URL=postgresql://commons:commons@localhost:5432/commons_eval_store_a \
-  uv run commons pending
+  uv run commons review
 # 3. Measured runs: each fold on the other fold's store.
 make eval-arms EVAL_STORE=commons_eval_store_b EVAL_ARMS_TASKS="<A>"
 make eval-arms EVAL_STORE=commons_eval_store_a EVAL_ARMS_TASKS="<B>"
 make eval-arms EVAL_STORE=commons_eval_store_same EVAL_ARMS_TASKS="<same>" \
   EVAL_ARMS_CONDITION=github-arms-same-task
-# 4. The verdict (both folds), then the same-task set, reported apart.
+# 4. The fold verdict (both folds), the same-task set's kill-only verdict, and the combined
+#    verdict, printed under both once both conditions have rows.
 make eval-compare EVAL_ARMS_CONDITION=github-arms
 make eval-compare EVAL_ARMS_CONDITION=github-arms-same-task
 # Counterfactual pairs: once per measured store; each writes the pairs whose entry it holds.
@@ -824,6 +907,37 @@ Count, per model: good proposals on the two discovery scenarios, search-found-us
 two known-entry scenarios (and no duplicate proposal there), searches and proposals on the
 controls, rejected `propose` calls, and fix rate. The bar is decision 0023's. MIT-598 holds the
 go/no-go.
+
+## Drafted variant: the session's store (MIT-653, 2026-11-11)
+
+In two real misses the agent used the wrong store, or wrote the lesson to AGENTS.md instead of
+the commons. Nothing ships: `baseline` and the hook texts are unchanged, and the store line's
+hook version joins `RELEASED_HOOK_TEXTS` only if it ships.
+
+| Variant | Surface | Change |
+|---|---|---|
+| `store-line` | SessionStart line | The shipped line plus "Store for this session: {store}.", the hook filling in `hosted at <host>` or `local database <name> on <host>` (`identity.store_label`: no key, no password) |
+| `lesson-store` | instructions and SessionStart line | `lesson-also-propose` and `store-line` together: the condition to run |
+
+Eval sessions run on a fresh local database each, and the store line shows the agent its name,
+so `runner.database_name` is now an opaque hash (`commons_<16 hex>`): the old name spelled out
+the condition and scenario. A `--store NAME` experiment store is shown under the name you give it.
+
+Not run yet (the owner starts each batch). On the four no-test scenarios and the five genuine
+controls, 3 runs each, on both models: 9 scenarios x 3 runs x 2 conditions x 2 models =
+**108 sessions**.
+
+```
+scenarios=(--scenario config-app-overwrites --scenario config-default-wins
+  --scenario known-config-app-overwrites --scenario known-config-default-wins
+  --scenario control-typo --scenario control-arithmetic --scenario control-clear-error
+  --scenario control-documented-option --scenario control-documented-flag --runs 3)
+for model in sonnet claude-opus-5-5; do
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --condition st-baseline-$model
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --variant lesson-store --condition st-lesson-store-$model
+done
+uv run python tools/agent_eval.py report --condition st-baseline-sonnet --condition st-lesson-store-sonnet
+```
 
 ## Hold-out change: whenever retired, Polars added (2026-11-08)
 

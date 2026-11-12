@@ -19,6 +19,7 @@ import psycopg
 import pytest
 from fastmcp import FastMCP
 from tools import agent_eval
+from tools.eval import runner
 from tools.eval.holdout import HOLDOUT, RETIRED, WHENEVER_IGNORE_DST
 from tools.eval.model import Scenario
 from tools.eval.scenarios import SCENARIOS
@@ -395,3 +396,43 @@ def test_no_draft_ships() -> None:
     ):
         assert text not in shipped.instructions
     assert shipped.propose != agent_text.PROPOSE_EXAMPLES_APP
+
+
+# Store visibility (`MIT-653`), unshipped: `store-line` adds the session's store to the shipped
+# SessionStart line, and `lesson-store` is the eval condition pairing it with
+# `lesson-also-propose`. The hook fills the store in (test_active_store.py).
+def test_the_store_line_draft_changes_only_the_session_start_line() -> None:
+    shipped = agent_text.VARIANTS["baseline"].start_line
+    assert differing("store-line") == {"start_line"}
+    assert agent_text.VARIANTS["store-line"].start_line == f"{shipped} {agent_text.STORE_LINE}"
+    assert "{store}" in agent_text.STORE_LINE
+    assert "`" not in agent_text.STORE_LINE  # it names the store and asks for no call
+
+
+def test_the_lesson_store_condition_pairs_the_lesson_line_with_the_store_line() -> None:
+    condition = agent_text.VARIANTS["lesson-store"]
+    assert differing("lesson-store") == {"instructions", "start_line"}
+    assert condition.instructions == agent_text.VARIANTS["lesson-also-propose"].instructions
+    assert condition.start_line == agent_text.VARIANTS["store-line"].start_line
+    assert agent_text.resolve("lesson-store") == condition  # what `run --variant` checks first
+
+
+def test_the_store_line_does_not_ship() -> None:
+    shipped = agent_text.VARIANTS["baseline"]
+    assert agent_text.variant() == shipped
+    assert shipped.start_line is not None
+    assert agent_text.STORE_LINE not in shipped.start_line
+    assert {texts[0] for texts in agent_text.RELEASED_HOOK_TEXTS} == {agent_text.SESSION_START}
+
+
+def test_an_eval_database_name_gives_nothing_away() -> None:
+    """The store line shows the agent its database's name: no scenario, condition or "eval"."""
+    scenario = SCENARIOS["config-app-overwrites"]
+    names = {
+        runner.database_name(condition, runner.Job(scenario, index))
+        for condition in ("d-lesson-store-sonnet", "d-baseline-sonnet")
+        for index in (1, 2)
+    }
+    assert len(names) == 4
+    for name in names:
+        assert re.fullmatch(r"commons_[0-9a-f]{16}", name), name

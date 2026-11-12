@@ -17,8 +17,15 @@ from commons.domain.errors import (
     NotPermittedError,
     StoreUnavailableError,
 )
+from commons.privacy.redaction import scrub
 from commons.service.hook_install import default_settings_path, is_commons_hook
-from commons.service.identity import config_path, current_reporter, hosted_server, read_config
+from commons.service.identity import (
+    active_store,
+    config_path,
+    current_reporter,
+    hosted_server,
+    read_config,
+)
 from commons.service.local_state import active_sessions, state_dir
 from commons.store.connection import Connection
 from commons.store.migrate import pending_migrations
@@ -42,7 +49,7 @@ Ping = Callable[[str, str], None]
 
 def run_checks(connect: Connect, ping: Ping) -> list[Check]:
     """Run every check; a failure in one doesn't stop the others."""
-    checks = [_config()]
+    checks = [_config(), _store()]
     server = _hosted()
     if server is None:
         checks += _local_database(connect)
@@ -61,6 +68,16 @@ def _config() -> Check:
         return Check("config", "fail", f"none at {path}; run `commons init` or `commons join`")
     mode = "hosted" if "server" in config else "local"
     return Check("config", "ok", f"{path} ({mode} mode)")
+
+
+def _store() -> Check:
+    """Name the store searches, proposals and hooks go to, so a wrong one is plain to see."""
+    store = active_store()
+    if store is None:
+        return Check(
+            "store", "warn", "none until `commons init` (local) or `commons join` (hosted)"
+        )
+    return Check("store", "ok", store)
 
 
 def _hosted() -> tuple[str, str] | None:
@@ -96,8 +113,8 @@ def _server(server: tuple[str, str], ping: Ping) -> Check:
     try:
         ping(url, key)
     except (NotInitializedError, NotPermittedError, httpx2.HTTPError) as error:
-        return Check("server", "fail", f"{url}: {error}")
-    return Check("server", "ok", f"{url} accepts your key")
+        return Check("server", "fail", scrub(f"{url}: {error}"))  # a URL may carry a password
+    return Check("server", "ok", scrub(f"{url} accepts your key"))
 
 
 def _hooks() -> Check:

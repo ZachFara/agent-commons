@@ -13,9 +13,11 @@ Usage:
   uv run python tools/agent_eval.py search [--configs N] [--runs N] [--scenario NAME ...]
   uv run python tools/agent_eval.py arms [--scenario NAME ...] [--arm ARM ...] [--runs N]
                                          [--model MODEL ...] [--condition NAME]
-                                         [--store NAME [--seed-wave]]
+                                         [--store NAME [--seed-wave]] [--smoke]
   uv run python tools/agent_eval.py counterfactuals --condition NAME --store NAME
   uv run python tools/agent_eval.py compare --condition NAME
+  uv run python tools/agent_eval.py review-sheet --store NAME  # pending entries, upstream fixes
+  uv run python tools/agent_eval.py screen --scenario TASK [--runs N]  # after `check` passes
   uv run python tools/agent_eval.py effects [--condition NAME]
   uv run python tools/agent_eval.py flags DIRECTORY        # scan saved GitHub-task transcripts
   uv run python tools/agent_eval.py clear SESSION --reason TEXT  # count a flagged session again
@@ -43,17 +45,19 @@ from typing import TYPE_CHECKING, Any
 import psycopg
 
 from commons.service import agent_text
+from commons.service.reviews import PENDING_LIMIT, pending
 from commons.store.counterfactuals import CounterfactualRun, known_entries, record_run
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
-from tools.eval import container, holdout, leaks, repos, runner  # noqa: E402
+from tools.eval import container, github_tasks, holdout, leaks, repos, runner, screen  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from commons.domain.reviews import PendingEntry
     from tools.eval.model import GitHubTask, Scenario
 
 RESULTS = REPO / ".scratch" / "eval"
@@ -163,9 +167,15 @@ def arms(args: argparse.Namespace) -> int:
     """Run each task under each arm: Commons and Context7, Context7, Commons, and blind.
 
     With `--store NAME` the sessions build on an experiment store: with `--seed-wave` they all
-    write into it, otherwise each runs in its own clone of it.
+    write into it, otherwise each runs in its own clone of it. With `--smoke` they are the
+    smoke-test tasks (`SMOKE_TASKS`) under `SMOKE_CONDITION`, which no verdict reads.
     """
-    names = args.scenario or sorted(SCENARIOS)
+    if args.smoke:
+        if args.scenario:
+            print("--smoke runs the smoke-test tasks: name no --scenario", file=sys.stderr)
+            return 2
+        args = argparse.Namespace(**{**vars(args), "condition": SMOKE_CONDITION})
+    names = (github_tasks.SMOKE_TASKS if args.smoke else args.scenario) or sorted(SCENARIOS)
     chosen = args.arm or list(runner.ARMS)
     models = args.model or ["sonnet"]
     jobs = plan_arms(names, chosen, args.runs, models)
@@ -469,6 +479,7 @@ def append_ledger(results: list[runner.Result]) -> None:
                 "repeat": result.repeat,
                 "grader_version": result.grader_version,
                 "flags": [asdict(flag) for flag in result.flags],
+                "task_ids": result.task_ids,
             }
             ledger.write(json.dumps(line) + "\n")
 
@@ -798,6 +809,12 @@ SECONDARY = (("commons", "none"), ("context7", "none"))
 PASS_MARGIN = 0.10  # continue on a pass rate at least 10 points higher...
 TOKEN_MARGIN = 0.80  # ...or tokens per success at least 20% lower...
 PASS_FLOOR = -0.05  # ...with a pass rate no more than 5 points lower
+# Amended 2026-11-11: a same-task set is measured on entries its own tasks wrote, so its
+# verdict can only kill; only the folds can continue. The smoke test never enters a verdict.
+FOLDS_CONDITION = "github-arms"
+SAME_TASK_CONDITION = "github-arms-same-task"  # the same-task set paired with the folds
+SAME_TASK_CONDITIONS = (SAME_TASK_CONDITION, "github-same10")  # github-same10: seeded on itself
+SMOKE_CONDITION = "github-smoke"
 BOOTSTRAP_SEED = 20261107
 BOOTSTRAP_RESAMPLES = 10_000
 HERD = 2  # failed sessions of one task sharing a wrong patch, at least
@@ -817,11 +834,6 @@ class Comparison:
     ratio_high: float
 
 
-def _tokens(row: Row) -> int:
-    """All of a session's tokens: input, cache creation, cache read, and output."""
-    return int(row.get("tokens_in") or 0) + int(row.get("tokens_out") or 0)
-
-
 def task_totals(rows: list[Row], arm: str) -> dict[str, Totals]:
     """Return each task's (sessions, passes, tokens) in one arm."""
     totals: dict[str, Totals] = {}
@@ -831,7 +843,7 @@ def task_totals(rows: list[Row], arm: str) -> dict[str, Totals]:
             totals[str(row["scenario"])] = (
                 sessions + 1,
                 passes + bool(row["tests_pass"]),
-                tokens + _tokens(row),
+                tokens + screen.session_tokens(row),
             )
     return totals
 
@@ -915,6 +927,54 @@ def verdict(comparison: Comparison) -> str:
     return "kill" if no_pass_margin and no_token_margin else "inconclusive"
 
 
+def same_task_verdict(comparison: Comparison) -> str:
+    """Return kill or not decided: a same-task set can only kill, by the fold verdict's rule.
+
+    Its sessions could find entries their own task's sessions wrote, so a win there is inflated
+    and never continues; a loss even with that help still kills.
+    """
+    return "kill" if verdict(comparison) == "kill" else "not decided"
+
+
+def combined_verdict(folds: str, same_task: str) -> str:
+    """Kill if the folds or the same-task set kill; continue only if the folds continue."""
+    if "kill" in {folds, same_task}:
+        return "kill"
+    return "continue" if folds == "continue" else "inconclusive"
+
+
+def condition_verdict(condition: str, comparison: Comparison | None) -> str:
+    """Return the verdict of one condition's primary comparison, by the condition's kind."""
+    if condition == SMOKE_CONDITION:
+        return "none (the smoke test never enters a verdict)"
+    if condition in SAME_TASK_CONDITIONS:
+        return same_task_verdict(comparison) if comparison else "not decided (nothing to compare)"
+    return verdict(comparison) if comparison else "inconclusive (nothing to compare)"
+
+
+def combined_lines(condition: str) -> list[str]:
+    """Return the combined verdict of the folds and the same-task set, per grader version.
+
+    One line per grader version both conditions have counted rows of, printed under either
+    condition's report; none before both have rows.
+    """
+    if condition not in {FOLDS_CONDITION, SAME_TASK_CONDITION}:
+        return []
+    folds = by_grader(condition_rows(FOLDS_CONDITION))
+    same = by_grader(condition_rows(SAME_TASK_CONDITION))
+    lines = []
+    for version in sorted(folds.keys() & same.keys()):
+        fold = compare_arms(folds[version], *PRIMARY)
+        alone = compare_arms(same[version], *PRIMARY)
+        fold_verdict = verdict(fold) if fold else "inconclusive"
+        same_verdict = same_task_verdict(alone) if alone else "not decided"
+        lines.append(
+            f"combined verdict, grader v{version}: {combined_verdict(fold_verdict, same_verdict)} "
+            f"({FOLDS_CONDITION} {fold_verdict}, {SAME_TASK_CONDITION} {same_verdict})"
+        )
+    return lines
+
+
 def _used(row: Row) -> bool:
     return any(r.get("used") in USED for r in row.get("retrievals") or [])
 
@@ -941,8 +1001,8 @@ def herded(rows: list[Row]) -> int:
 def arm_line(arm: str, model: str, rows: list[Row]) -> str:
     """One arm and model: sessions, pass rate, tokens, wall clock, and the commons counts."""
     passes = sum(bool(row["tests_pass"]) for row in rows)
-    per_success = _per_success(sum(_tokens(row) for row in rows), passes)
-    median_tokens = statistics.median(_tokens(row) for row in rows)
+    per_success = _per_success(sum(screen.session_tokens(row) for row in rows), passes)
+    median_tokens = statistics.median(screen.session_tokens(row) for row in rows)
     median_seconds = statistics.median(float(row.get("wall_clock_seconds") or 0) for row in rows)
     line = (
         f"{arm:<9} {model[:16]:<16} {len(rows):>4} {_with_interval(passes, len(rows)):<18} "
@@ -989,6 +1049,8 @@ def compare(args: argparse.Namespace) -> int:
         )
     for version, graded in groups.items():
         _compare_one(args.condition, version, graded)
+    for line in combined_lines(args.condition):
+        print(line)
     return 0
 
 
@@ -1011,7 +1073,9 @@ def _compare_one(condition: str, version: int, rows: list[Row]) -> None:
     primary = compare_arms(rows, *PRIMARY)
     for line in _comparison_lines(f"primary: {PRIMARY[0]} vs {PRIMARY[1]}", primary):
         print(line)
-    print(f"verdict: {verdict(primary) if primary else 'inconclusive (nothing to compare)'}")
+    if condition in SAME_TASK_CONDITIONS:
+        print("same-task set: its verdict can only be kill or not decided")
+    print(f"verdict: {condition_verdict(condition, primary)}")
     for treated, control in SECONDARY:
         label = f"secondary: {treated} vs {control}"
         for line in _comparison_lines(label, compare_arms(rows, treated, control)):
@@ -1033,6 +1097,81 @@ def herding_lines(rows: list[Row]) -> list[str]:
             f"  {arm:<9} {failed} failed{used if runner.has_commons(arm) else ''}; "
             f"share their task's top wrong patch {herded(mine)}/{failed} ({share:.0%})"
         )
+    return lines
+
+
+# ---------------------------------------------------------------- review sheet (the store review)
+REVIEW_STEP = (
+    "Check each fix against its task's upstream fix: reject a workaround with that reason "
+    "(`commons review`), or edit it."
+)
+
+
+def ledger_tasks() -> dict[str, str]:
+    """Map every task id a ledger line records to that line's task (scenario) name."""
+    return {
+        str(task_id): str(row["scenario"])
+        for row in _ledger_lines()
+        for task_id in row.get("task_ids") or []
+    }
+
+
+def review_sheet(args: argparse.Namespace) -> int:
+    """Print a store's pending entries, each next to the upstream fix of the task that wrote it.
+
+    Read only. An entry's task id is matched against the task ids ledger lines record; an entry
+    no line claims, or a line from before task ids were recorded, prints "task unknown".
+    """
+    try:
+        url = runner.local_url(args.store)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
+    try:
+        with psycopg.connect(url) as conn:
+            conn.set_read_only(True)
+            entries = pending(conn)
+            task_of: dict[uuid.UUID, str | None] = dict(
+                conn.execute(
+                    "SELECT id, task_id::text FROM entries WHERE id = ANY(%s)",
+                    ([entry.entry_id for entry in entries],),
+                ).fetchall()
+            )
+    except psycopg.OperationalError:
+        print(f"no experiment store {args.store} on {runner.ADMIN_URL}", file=sys.stderr)
+        return 2
+    for line in sheet_lines(args.store, entries, task_of, ledger_tasks()):
+        print(line)
+    return 0
+
+
+def sheet_lines(
+    store: str,
+    entries: "list[PendingEntry]",
+    task_of: dict[uuid.UUID, str | None],
+    tasks: dict[str, str],
+) -> list[str]:
+    """Return the review sheet: per pending entry, its text and its task's issue and fix."""
+    limit = f" (the first {PENDING_LIMIT})" if len(entries) == PENDING_LIMIT else ""
+    lines = [f"{len(entries)} pending entries in {store}{limit}. {REVIEW_STEP}"]
+    for entry in entries:
+        name = tasks.get(str(task_of.get(entry.entry_id)))
+        scenario = SCENARIOS.get(name) if name else None
+        lines += [
+            "",
+            f"entry {entry.entry_id}",
+            f"  task     {name or 'task unknown'}",
+            f"  symptom  {entry.symptom}",
+            f"  cause    {entry.cause}",
+            f"  fix      {entry.fix}",
+        ]
+        if scenario is not None and scenario.repo is not None:
+            lines += [
+                f"  upstream fix  {scenario.repo.fix_url}",
+                f"  issue         {scenario.repo.issue_url}",
+            ]
+        elif name:
+            lines.append("  no upstream fix: not a GitHub task")
     return lines
 
 
@@ -1058,6 +1197,74 @@ def arms_options(parser: argparse.ArgumentParser) -> None:
         "--seed-wave",
         action="store_true",
         help="Write every session into the store itself (creating it if needed).",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help=f"Run the smoke-test tasks under condition {SMOKE_CONDITION}, which no verdict reads.",
+    )
+
+
+def arms_report_commands(commands: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    """Add `compare` (the arms report) and `review-sheet` (the store review's sheet)."""
+    commands.add_parser(
+        "compare", help="The arms report: per arm, paired comparisons, verdict, herding."
+    ).add_argument("--condition", required=True)
+    commands.add_parser(
+        "review-sheet", help="A store's pending entries next to their tasks' upstream fixes."
+    ).add_argument("--store", required=True)
+
+
+def screen_task(args: argparse.Namespace) -> int:
+    """Screen a new GitHub task for difficulty, after `check` passes for it.
+
+    Runs the none arm on Sonnet `--runs` times, under a condition no verdict reads, and prints
+    PASS (exit 0), FAIL (exit 1), or REFUSED (exit 2): with fewer than one run or no reference
+    in the ledger it refuses before any session starts, and it refuses a run with an errored
+    or held session.
+    """
+    if args.runs < 1:
+        print(f"REFUSED {args.scenario}: --runs must be at least 1", file=sys.stderr)
+        return 2
+    today = datetime.now(UTC).date().isoformat()
+    reference = screen.reference_median([row for row in _ledger_lines() if counted(row)])
+    if reference is None:
+        for line in screen.report(args.scenario, screen.screen([], reference), today):
+            print(line, file=sys.stderr)
+        return 2
+    before = len(_ledger_lines())
+    jobs = plan_arms([args.scenario], [screen.SCREEN_ARM], args.runs, [screen.SCREEN_MODEL])
+    run_jobs(jobs, args)
+    runs = [
+        row
+        for row in _ledger_lines()[before:]  # the ledger is append-only: this run's lines
+        if row["condition"] == screen.SCREEN_CONDITION and row["scenario"] == args.scenario
+    ]
+    kept = [row for row in runs if counted(row)]
+    if len(kept) < args.runs:
+        print(
+            f"REFUSED {args.scenario}: {len(kept)} of {args.runs} sessions finished and count "
+            "(the others errored or are held as possible leaks); read them, then screen again",
+            file=sys.stderr,
+        )
+        return 2
+    result = screen.screen(kept, reference)
+    for line in screen.report(args.scenario, result, today):
+        print(line)
+    return 0 if result.verdict == "PASS" else 1
+
+
+def screen_options(parser: argparse.ArgumentParser) -> None:
+    """Add the `screen` command's options; the rest of `run_jobs`'s are fixed."""
+    tasks = sorted(name for name, scenario in SCENARIOS.items() if scenario.repo)
+    parser.add_argument("--scenario", required=True, choices=tasks)
+    parser.add_argument("--runs", type=int, default=screen.SCREEN_RUNS)
+    parser.set_defaults(
+        condition=screen.SCREEN_CONDITION,
+        model=screen.SCREEN_MODEL,
+        resume=False,
+        no_hooks=False,
+        concurrency=screen.SCREEN_RUNS,
     )
 
 
@@ -1125,14 +1332,10 @@ def main() -> int:
     )
     counterfactuals_parser.add_argument("--condition", required=True)
     counterfactuals_parser.add_argument("--store", required=True)
-    compare_parser = commands.add_parser(
-        "compare", help="The arms report: per arm, paired comparisons, verdict, herding."
-    )
-    compare_parser.add_argument("--condition", required=True)
+    arms_report_commands(commands)
     effects_parser = commands.add_parser("effects", help="Pool a wording search by option.")
     effects_parser.add_argument("--condition", default="wording")
-    report_parser = commands.add_parser("report")
-    report_parser.add_argument("--condition", action="append")
+    commands.add_parser("report").add_argument("--condition", action="append")
     commands.add_parser(
         "trials", help="Summarize docs/eval/trials.jsonl per variant and text hash."
     )
@@ -1144,6 +1347,11 @@ def main() -> int:
             "clear", help="Count a session flagged as a leak again, after reading its transcript."
         )
     )
+    screen_options(
+        commands.add_parser(
+            "screen", help="Screen a new GitHub task for difficulty, after `check` passes for it."
+        )
+    )
     args = parser.parse_args()
     commands_by_name: dict[str, Callable[[argparse.Namespace], int]] = {
         "check": lambda args: check(on_host=args.on_host),
@@ -1153,10 +1361,12 @@ def main() -> int:
         "arms": arms,
         "counterfactuals": counterfactuals,
         "compare": compare,
+        "review-sheet": review_sheet,
         "effects": effects,
         "report": report,
         "flags": flags,
         "clear": clear,
+        "screen": screen_task,
     }
     return commands_by_name[args.command](args)
 

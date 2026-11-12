@@ -575,6 +575,13 @@ ULTRAPLOT = GitHubTask(
 )
 
 
+# ---------------------------------------------------------------- screened tasks
+# Every task below this line passed the difficulty screen (docs/eval/README.md, "GitHub tasks")
+# after `check`, and its comment ends with the line `agent_eval.py screen` printed: the date, the
+# runs that failed, and the median and reference median tokens. The tasks above came first and
+# are exempt. `test_eval_screen.py` checks the line.
+
+
 def scenario(task: GitHubTask) -> Scenario:
     """Return the scenario that replays a task: its project comes from the repository."""
     return Scenario(
@@ -602,3 +609,22 @@ TASKS: list[GitHubTask] = [
 ]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
+
+# The smoke test (`make eval-smoke`, condition `github-smoke`, never in a verdict): the ten tasks
+# above the screened-tasks line. Sonnet and Haiku pass them with no tools, and no two share an
+# upstream change, so they check the harness end to end but can't measure the commons (2026-11-11).
+SMOKE_TASKS: list[str] = [
+    task.name
+    for task in (
+        PYTEST_BDD,
+        TEKORE,
+        PYDANTIC_SETTINGS,
+        PYDANTIC_SETTINGS_BY_NAME,
+        MLODA,
+        PIP_TOOLS,
+        MARKLASSIAN,
+        MLODA_DUCKDB,
+        TABLE_EXTRACTION,
+        ULTRAPLOT,
+    )
+]

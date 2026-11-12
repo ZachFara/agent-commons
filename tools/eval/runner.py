@@ -214,6 +214,8 @@ class Result:
     grader_version: int = GRADER_VERSION  # which grader judged `proposals`
     # Tool calls that may have reached the fix (GitHub tasks only); a leak isn't counted.
     flags: list[leaks.Flag] = field(default_factory=list)
+    # Every task id of the session (`Activity.ids`): links a store's entry to the session.
+    task_ids: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         """One line describing what the agent did."""
@@ -1023,9 +1025,13 @@ class Job:
 
 
 def database_name(condition: str, job: Job) -> str:
-    """Return a job's database name: unique per condition and index."""
-    # Condition and index first: a long scenario name may be cut at Postgres's 63 characters.
-    return f"commons_eval_{condition}_{job.index}_{job.scenario.name}".replace("-", "_")[:63]
+    """Return a job's database name: unique per condition and index, and opaque.
+
+    The `store-line` variants show the agent its store's database name, so the name must not
+    give away the scenario, the condition, or that the session is an eval.
+    """
+    key = f"{condition}\0{job.index}\0{job.scenario.name}"
+    return f"commons_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
 
 
 def grade(session: Session, events: list[dict[str, Any]]) -> Result:
@@ -1114,6 +1120,7 @@ def grade(session: Session, events: list[dict[str, Any]]) -> Result:
         patch_hash=patch.hash,
         patch_truncated=patch.truncated,
         flags=session_flags(session, calls),
+        task_ids=activity.ids,
     )
 
 
@@ -1130,6 +1137,7 @@ class Activity:
     """What one session left in the store, found by its own task ids."""
 
     task_ids: set[str]  # the tasks its hooks started (by Claude session id)
+    ids: list[str]  # those and every task id it passed to a commons tool, sorted
     proposals: list[tuple[Any, ...]]  # (symptom, cause, fix, environment)
     reported: bool
     seeded_used: str | None  # `used` of the first outcome on a scenario's seeded entry
@@ -1173,6 +1181,7 @@ def session_activity(
     ).fetchone()
     return Activity(
         task_ids=task_ids,
+        ids=ids,
         proposals=proposals,
         reported=bool(reported and reported[0]),
         seeded_used=seeded[0] if seeded else None,

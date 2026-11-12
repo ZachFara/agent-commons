@@ -53,9 +53,11 @@ from commons.service.hook_client import RemoteBackend, remote_client
 from commons.service.hook_install import default_settings_path, install_hooks
 from commons.service.identity import (
     acting_as,
+    active_store,
     hosted_server_or_none,
     init_reporter,
     save_server,
+    store_label,
 )
 from commons.store import insights
 from commons.store.connection import connect
@@ -131,6 +133,12 @@ def _pending(_args: argparse.Namespace) -> int:
 
 
 def _status(_args: argparse.Namespace) -> int:
+    # The store goes first, before the database is reached, so it shows even when that fails.
+    store, local = active_store(), store_label(None)
+    unset = "none configured; run `commons init` (local) or `commons join` (hosted)"
+    sys.stdout.write(f"store: {store or unset}\n")
+    if store != local:  # the statistics are always the local database's
+        sys.stdout.write(f"statistics from: {local}\n")
     with connect() as conn:
         result = status_service.status(conn)
     counts = ", ".join(f"{count} {status}" for status, count in result.entries_by_status.items())
