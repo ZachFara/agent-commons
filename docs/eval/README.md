@@ -858,6 +858,37 @@ two known-entry scenarios (and no duplicate proposal there), searches and propos
 controls, rejected `propose` calls, and fix rate. The bar is decision 0023's. MIT-598 holds the
 go/no-go.
 
+## Drafted variant: the session's store (MIT-653, 2026-11-11)
+
+In two real misses the agent used the wrong store, or wrote the lesson to AGENTS.md instead of
+the commons. Nothing ships: `baseline` and the hook texts are unchanged, and the store line's
+hook version joins `RELEASED_HOOK_TEXTS` only if it ships.
+
+| Variant | Surface | Change |
+|---|---|---|
+| `store-line` | SessionStart line | The shipped line plus "Store for this session: {store}.", the hook filling in `hosted at <host>` or `local database <name> on <host>` (`identity.store_label`: no key, no password) |
+| `lesson-store` | instructions and SessionStart line | `lesson-also-propose` and `store-line` together: the condition to run |
+
+Eval sessions run on a fresh local database each, and the store line shows the agent its name,
+so `runner.database_name` is now an opaque hash (`commons_<16 hex>`): the old name spelled out
+the condition and scenario. A `--store NAME` experiment store is shown under the name you give it.
+
+Not run yet (the owner starts each batch). On the four no-test scenarios and the five genuine
+controls, 3 runs each, on both models: 9 scenarios x 3 runs x 2 conditions x 2 models =
+**108 sessions**.
+
+```
+scenarios=(--scenario config-app-overwrites --scenario config-default-wins
+  --scenario known-config-app-overwrites --scenario known-config-default-wins
+  --scenario control-typo --scenario control-arithmetic --scenario control-clear-error
+  --scenario control-documented-option --scenario control-documented-flag --runs 3)
+for model in sonnet claude-opus-5-5; do
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --condition st-baseline-$model
+  uv run python tools/agent_eval.py run "${scenarios[@]}" --model $model --variant lesson-store --condition st-lesson-store-$model
+done
+uv run python tools/agent_eval.py report --condition st-baseline-sonnet --condition st-lesson-store-sonnet
+```
+
 ## Hold-out change: whenever retired, Polars added (2026-11-08)
 
 **What changed.** `real-whenever-ignore-dst` is out of the measured hold-out set, and
