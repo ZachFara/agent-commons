@@ -5,6 +5,7 @@ directly, as the commons server would make them.
 """
 
 import argparse
+import json
 import subprocess
 import uuid
 from collections.abc import Iterator
@@ -16,6 +17,7 @@ import psycopg
 import pytest
 import tools.agent_eval
 from tools.eval import runner
+from tools.eval.github_tasks import SMOKE_TASKS, TABLE_EXTRACTION
 from tools.eval.scenarios import SCENARIOS
 
 import factories
@@ -174,6 +176,7 @@ def arms_args(**fields: object) -> argparse.Namespace:
         "model": None,
         "store": None,
         "seed_wave": False,
+        "smoke": False,
     }
     return argparse.Namespace(**{**defaults, **fields})
 
@@ -193,3 +196,128 @@ def test_arms_runs_every_job_on_the_named_store_and_needs_one_for_a_seed_wave(
     assert len(planned) == 8
     assert {job.store for job in planned} == {runner.Store(store.name)}
     assert sorted({job.repeat for job in planned}) == [1, 2]
+
+
+def test_arms_smoke_runs_the_ten_smoke_tasks_under_github_smoke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    planned: list[tuple[str, runner.Job]] = []
+
+    def run_jobs(jobs: list[runner.Job], args: argparse.Namespace) -> int:
+        planned.extend((args.condition, job) for job in jobs)
+        return 0
+
+    monkeypatch.setattr(tools.agent_eval, "run_jobs", run_jobs)
+    assert tools.agent_eval.arms(arms_args(smoke=True)) == 2  # with a --scenario too
+    assert planned == []
+    assert tools.agent_eval.arms(arms_args(scenario=None, smoke=True, condition="arms")) == 0
+    assert len(SMOKE_TASKS) == 10
+    assert {job.scenario.name for _condition, job in planned} == set(SMOKE_TASKS)
+    assert {condition for condition, _job in planned} == {"github-smoke"}
+    assert len(planned) == 10 * 4 * 2  # tasks x arms x runs
+
+
+def write_ledger(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+def test_the_review_sheet_shows_each_pending_entry_next_to_its_tasks_upstream_fix(
+    store: runner.Store,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    session_task, orphan_task = uuid.uuid4(), uuid.uuid4()
+    with psycopg.connect(runner.local_url(store.name)) as conn:
+        agent = upsert_reporter(conn, "eval-agent", "entry")
+        linked = factories.entry(
+            conn,
+            agent,
+            symptom="include_metadata reads False when omitted",
+            cause="the form field arrives empty",
+            fix="parse the field as a string and default it to true",
+            task_id=session_task,
+        )
+        unknown = factories.entry(conn, agent, symptom="no line names my task", task_id=orphan_task)
+        factories.entry(
+            conn, agent, symptom="reviewed already", human_reviewed=True, task_id=session_task
+        )
+        before = conn.execute("SELECT count(*) FROM entries").fetchone()
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    task = TABLE_EXTRACTION
+    write_ledger(
+        ledger,
+        [
+            {"condition": "seed", "scenario": TABLE_EXTRACTION.name, "run": 1},  # no task ids
+            {
+                "condition": "seed",
+                "scenario": TABLE_EXTRACTION.name,
+                "run": 2,
+                "task_ids": [str(uuid.uuid4()), str(session_task)],
+            },
+        ],
+    )
+
+    assert tools.agent_eval.review_sheet(argparse.Namespace(store=store.name)) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(f"2 pending entries in {store.name}.")
+    assert "against its task's upstream fix" in out
+    assert "reviewed already" not in out
+    blocks = {block.splitlines()[0]: block for block in out.strip().split("\n\n")[1:]}
+    assert blocks.keys() == {f"entry {linked}", f"entry {unknown}"}
+    linked_block, unknown_block = blocks[f"entry {linked}"], blocks[f"entry {unknown}"]
+    assert linked_block.splitlines() == [
+        f"entry {linked}",
+        f"  task     {TABLE_EXTRACTION.name}",
+        "  symptom  include_metadata reads False when omitted",
+        "  cause    the form field arrives empty",
+        "  fix      parse the field as a string and default it to true",
+        f"  upstream fix  {task.fix_url}",
+        f"  issue         {task.issue_url}",
+    ]
+    assert unknown_block.splitlines()[:3] == [
+        f"entry {unknown}",
+        "  task     task unknown",
+        "  symptom  no line names my task",
+    ]
+    assert "upstream fix" not in unknown_block
+    with psycopg.connect(runner.local_url(store.name)) as conn:  # read only: nothing changed
+        assert conn.execute("SELECT count(*) FROM entries").fetchone() == before
+
+
+def test_a_graded_seed_wave_session_records_its_task_ids_so_the_sheet_links_its_entry(
+    store: runner.Store,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    url = runner.local_url(store.name)
+    with psycopg.connect(url) as conn:  # what the session's hooks and propose call wrote
+        agent = upsert_reporter(conn, "eval-agent", "entry")
+        task = start_task(conn, "wave-session", agent, None)
+        proposed = factories.entry(conn, agent, symptom="a wave's proposal", task_id=task)
+    graded = graded_nothing(url, tmp_path, monkeypatch, "wave-session")
+    assert graded.task_ids == [str(task)]
+    ledger = tmp_path / "trials.jsonl"
+    monkeypatch.setattr(tools.agent_eval, "LEDGER", ledger)
+    tools.agent_eval.append_ledger([replace(graded, error=None)])
+    assert json.loads(ledger.read_text(encoding="utf-8"))["task_ids"] == [str(task)]
+
+    assert tools.agent_eval.review_sheet(argparse.Namespace(store=store.name)) == 0
+    out = capsys.readouterr().out
+    assert f"entry {proposed}\n  task     {TASK.name}\n" in out
+    assert "  no upstream fix: not a GitHub task" in out  # a written scenario has no fix_url
+
+
+def test_the_review_sheet_needs_an_existing_local_store(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(runner, "ADMIN_URL", ADMIN_URL)
+    missing = f"commons_store_{uuid.uuid4().hex[:12]}"
+    assert tools.agent_eval.review_sheet(argparse.Namespace(store=missing)) == 2
+    assert f"no experiment store {missing}" in capsys.readouterr().err
+    assert not exists(missing)
+    monkeypatch.setattr(runner, "ADMIN_URL", "postgresql://commons:commons@db.example.com/commons")
+    assert tools.agent_eval.review_sheet(argparse.Namespace(store=missing)) == 2
+    assert "must be on localhost" in capsys.readouterr().err

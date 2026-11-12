@@ -602,3 +602,22 @@ TASKS: list[GitHubTask] = [
 ]
 
 GITHUB = {task.name: scenario(task) for task in TASKS}
+
+# The smoke test (`make eval-smoke`, condition `github-smoke`, never in a verdict): the ten tasks
+# above, which Sonnet and Haiku pass with no tools and none of which shares an upstream change
+# with another, so they check the harness end to end but can't measure the commons (2026-11-11).
+SMOKE_TASKS: list[str] = [
+    task.name
+    for task in (
+        PYTEST_BDD,
+        TEKORE,
+        PYDANTIC_SETTINGS,
+        PYDANTIC_SETTINGS_BY_NAME,
+        MLODA,
+        PIP_TOOLS,
+        MARKLASSIAN,
+        MLODA_DUCKDB,
+        TABLE_EXTRACTION,
+        ULTRAPLOT,
+    )
+]

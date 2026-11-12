@@ -1,5 +1,5 @@
 .PHONY: setup db observe check fix infra-check search-eval eval-confirm eval-check eval-effects \
-  eval-reliability eval-arms eval-compare
+  eval-reliability eval-arms eval-compare eval-smoke
 
 setup:  ## Install dependencies and git hooks
 	uv sync
@@ -77,3 +77,11 @@ eval-arms:  ## One fold of the GitHub-task arms on its store (asks nothing; cost
 
 eval-compare:  ## The arms report and verdict of EVAL_ARMS_CONDITION (reads the ledger only)
 	uv run python tools/agent_eval.py compare --condition $(EVAL_ARMS_CONDITION)
+
+# The smoke test: the smoke-test GitHub tasks (SMOKE_TASKS in tools/eval/github_tasks.py) under
+# all four arms, EVAL_SMOKE_RUNS times each, each session on a fresh database, under condition
+# github-smoke, which never enters a verdict. 4 arms x 10 tasks x EVAL_SMOKE_RUNS sessions; ask
+# the owner before running (it uses the subscription).
+EVAL_SMOKE_RUNS ?= 1
+eval-smoke:  ## The smoke-test GitHub tasks under all four arms as github-smoke (costs usage)
+	uv run python tools/agent_eval.py arms --smoke --runs $(EVAL_SMOKE_RUNS) $(if $(RESUME),--resume)
