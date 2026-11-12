@@ -575,6 +575,13 @@ ULTRAPLOT = GitHubTask(
 )
 
 
+# ---------------------------------------------------------------- screened tasks
+# Every task below this line passed the difficulty screen (docs/eval/README.md, "GitHub tasks")
+# after `check`, and its comment ends with the line `agent_eval.py screen` printed: the date, the
+# runs that failed, and the median and reference median tokens. The tasks above came first and
+# are exempt. `test_eval_screen.py` checks the line.
+
+
 def scenario(task: GitHubTask) -> Scenario:
     """Return the scenario that replays a task: its project comes from the repository."""
     return Scenario(
