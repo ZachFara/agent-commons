@@ -10,7 +10,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
 from uuid import UUID
@@ -199,14 +199,39 @@ def _tool_use(conn: Connection, body: Body) -> Body:
     hooks.record_tool_use(
         conn,
         _session_id(body),
-        _test_run(body.get("test_run")),
+        _test_run(body.get("test_run"), body.get("test_run_at")),
         _file_change(body.get("file_change")),
         _doc_lookup(body.get("doc_lookup")),
     )
     return {}
 
 
-def _test_run(value: object) -> dict[str, object] | None:
+def _test_run(value: object, at: object) -> dict[str, object] | None:
+    """Return the run to store, with the client's time of it when sent (absent before MIT-680)."""
+    run = _run_shape(value)
+    if run is None or at is None:
+        return run
+    return {**run, "at": _aware_time(at, "test_run_at").isoformat()}
+
+
+def _aware_time(value: object, name: str) -> datetime:
+    """Return the time in UTC, which any offset Python accepts converts to and Postgres reads.
+
+    Postgres can't cast an offset with fractional seconds, and a stored one would break every
+    later Stop for the task.
+    """
+    try:
+        parsed = datetime.fromisoformat(value) if isinstance(value, str) else None
+        utc = None if parsed is None or parsed.tzinfo is None else parsed.astimezone(UTC)
+    except (ValueError, OverflowError):  # OverflowError: a year edge shifted out of range
+        utc = None
+    if utc is None:
+        msg = f"{name} must be an ISO time with a UTC offset."
+        raise InvalidInputError(msg)
+    return utc
+
+
+def _run_shape(value: object) -> dict[str, object] | None:
     if value is None:
         return None
     if not (

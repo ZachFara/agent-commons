@@ -33,11 +33,15 @@ def add_task_event(
 def test_runs(conn: Connection, task_id: UUID) -> list[ObservedRun]:
     """The task's test runs, oldest first."""
     rows = conn.execute(
-        "SELECT data->>'command', (data->>'exit_code')::int, created_at FROM task_events "
+        "SELECT data->>'command', (data->>'exit_code')::int, created_at, "
+        "(data->>'at')::timestamptz FROM task_events "
         "WHERE task_id = %s AND kind = 'test_run' ORDER BY created_at",
         (task_id,),
     ).fetchall()
-    return [ObservedRun(command=command, exit_code=code, at=at) for command, code, at in rows]
+    return [
+        ObservedRun(command=command, exit_code=code, at=at, client_at=client_at)
+        for command, code, at, client_at in rows
+    ]
 
 
 @dataclass(frozen=True)

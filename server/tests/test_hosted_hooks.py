@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 
@@ -16,13 +16,14 @@ import psycopg
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
+from typing_extensions import override
 
 import factories
 from commons.cli.main import main
 from commons.domain.keys import KeyOptions
 from commons.domain.observations import DocLookup, ToolUse
 from commons.domain.search import SearchRequest
-from commons.service import agent_text, hook_client
+from commons.service import agent_text, hook_client, local_state
 from commons.service import search as search_service
 from commons.service.hook_client import RemoteBackend
 from commons.service.identity import acting_as
@@ -103,6 +104,65 @@ def test_a_session_end_to_end_over_http(app: Starlette, db: psycopg.Connection) 
     assert "markupsafe<2.1\npip check" in [r.get("text") for r in read_spool(session)]
 
 
+class ClockAhead(datetime):
+    """This machine's clock, running a minute ahead of the store's."""
+
+    @override
+    @classmethod
+    def now(cls, tz: tzinfo | None = None) -> "ClockAhead":
+        return super().now(tz) + timedelta(minutes=1)
+
+
+@pytest.mark.usefixtures("state")
+def test_a_pass_after_the_fix_counts_when_this_machines_clock_runs_ahead(
+    app: Starlette, db: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pass and the matched edit are timed on one clock, not the store's and this one's.
+
+    Postgres in Docker runs a little behind the Mac, which once dropped the end-to-end
+    test's credit; a hosted server's clock can be off by seconds.
+    """
+    monkeypatch.setattr(local_state, "datetime", ClockAhead)
+    monkeypatch.setattr(hook_client, "datetime", ClockAhead)
+    key = create_key(db, "ahead-dev", admin=False)
+    backend = RemoteBackend(client(app, key))
+    session = str(uuid.uuid4())
+    task_id = hook_client.on_session_start(backend, session, None, HOOK_VERSION)
+    reporter = find_reporter(db, "ahead-dev")
+    assert reporter is not None
+    word = f"ahead{uuid.uuid4().hex[:8]}"
+    factories.entry(db, reporter, symptom=word, fix=FIX)
+    with acting_as(reporter):
+        search_service.search(db, SearchRequest(word, task_id, None, 5), "claude-x")
+
+    hook_client.on_tool_use(backend, edit(session, "markupsafe<2.1\npip check"))
+    hook_client.on_tool_use(backend, bash(session, "pytest -q", 0))
+    hook_client.on_stop(backend, session, None)
+
+    row = db.execute(
+        "SELECT o.used::text, o.outcome::text FROM outcomes o JOIN retrievals r "
+        "ON r.id = o.retrieval_id WHERE r.task_id = %s",
+        (task_id,),
+    ).fetchone()
+    assert row == ("yes", "tests_passed")
+
+
+@pytest.mark.usefixtures("state")
+def test_older_servers_still_accept_the_test_run(app: Starlette, db: psycopg.Connection) -> None:
+    """The run's time travels beside `test_run`, whose keys older servers check exactly."""
+    sent: list[dict[str, Any]] = []
+    http = client(app, create_key(db, "compat-dev", admin=False))
+    http.event_hooks = {"request": [lambda request: sent.append(json.loads(request.content))]}
+    session = str(uuid.uuid4())
+    hook_client.on_session_start(RemoteBackend(http), session, None, HOOK_VERSION)
+
+    hook_client.on_tool_use(RemoteBackend(http), bash(session, "pytest -q", 0))
+
+    body = sent[-1]
+    assert set(body["test_run"]) == {"command", "exit_code"}
+    assert datetime.fromisoformat(body["test_run_at"]).tzinfo is not None
+
+
 def post(app: Starlette, key: str | None, step: str, body: dict[str, Any]) -> httpx2.Response:
     return client(app, key).post(f"/api/hooks/{step}", json=body)
 
@@ -172,6 +232,17 @@ def test_local_privacy_reporters_are_refused(app: Starlette, db: psycopg.Connect
     "body",
     [
         {"session_id": "s", "test_run": {"command": "pytest", "exit_code": 0, "stdout": "code"}},
+        {"session_id": "s", "test_run": {"command": "pytest", "exit_code": 0}, "test_run_at": 5},
+        {
+            "session_id": "s",
+            "test_run": {"command": "pytest", "exit_code": 0},
+            "test_run_at": "2026-11-11T10:00:00",  # no zone: can't be compared
+        },
+        {
+            "session_id": "s",
+            "test_run": {"command": "pytest", "exit_code": 0},
+            "test_run_at": "0001-01-01T00:00:00+01:00",  # out of range in UTC
+        },
         {"session_id": "s", "file_change": {"path_sha256": "x", "content_sha256": "y"}},
         {"session_id": "s", "file_change": {"content": "def secret(): ..."}},
         {
@@ -201,6 +272,28 @@ def test_only_derived_shapes_are_accepted(
     response = post(app, key, "tool-use", body)
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_input"
+
+
+def test_a_run_time_with_any_offset_is_stored_in_utc(
+    app: Starlette, db: psycopg.Connection
+) -> None:
+    """Postgres can't cast a fractional-second offset; stored, it would break every Stop."""
+    key = create_key(db, "offset-dev", admin=False)
+    session = str(uuid.uuid4())
+    started = post(app, key, "session-start", {"session_id": session}).json()
+    body = {
+        "session_id": session,
+        "test_run": {"command": "pytest", "exit_code": 0},
+        "test_run_at": "2026-11-11T10:00:00+05:00:30.5",
+    }
+    assert post(app, key, "tool-use", body).status_code == 200
+
+    (stored,) = db.execute(
+        "SELECT data->>'at' FROM task_events WHERE task_id = %s", (started["task_id"],)
+    ).fetchone() or (None,)
+    assert stored == "2026-11-11T04:59:29.500000+00:00"
+    stop = {"session_id": session, "used": {}, "matched_at": {}}
+    assert post(app, key, "stop", stop).status_code == 200
 
 
 def doc_lookups(db: psycopg.Connection, task_id: uuid.UUID) -> list[tuple[Any, ...]]:
