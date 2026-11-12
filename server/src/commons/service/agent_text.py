@@ -576,6 +576,18 @@ for _name, _edit in _DRAFT_EDITS.items():
 VARIANTS["propose-example"] = _draft([], PROPOSE_EXAMPLES_APP)
 VARIANTS["combined"] = _draft(list(_DRAFT_EDITS.values()), PROPOSE_EXAMPLES_APP)
 
+# Store visibility (MIT-653), not shipped: in two real misses the agent used the wrong store,
+# or wrote the lesson to AGENTS.md instead of the commons. The SessionStart context names the
+# session's store after the shipped start line; the hook fills `{store}` with
+# `identity.store_label` (a hosted server's host, or the local database's name, never a secret).
+# Shipping it changes what installed hooks show, so its hook version joins RELEASED_HOOK_TEXTS
+# only then.
+STORE_LINE = "Store for this session: {store}."
+_STORE_START_LINE = f"{VARIANTS['baseline'].start_line} {STORE_LINE}"
+VARIANTS["store-line"] = replace(VARIANTS["baseline"], start_line=_STORE_START_LINE)
+# The eval condition that pairs it with `lesson-also-propose`: both aim at the AGENTS.md miss.
+VARIANTS["lesson-store"] = replace(VARIANTS["lesson-also-propose"], start_line=_STORE_START_LINE)
+
 
 def _variant_name() -> str:
     return os.environ.get("COMMONS_INSTRUCTIONS_VARIANT", "baseline")

@@ -11,11 +11,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from commons.domain.errors import NotInitializedError, NotPermittedError
 from commons.domain.reporters import PrivacyDefault, validate_pseudonym
-from commons.store.connection import Connection
+from commons.privacy.redaction import scrub
+from commons.store.connection import Connection, database_label
 from commons.store.models import model_id
 from commons.store.reporters import find_reporter, pseudonym_of, upsert_reporter
 
@@ -191,3 +193,24 @@ def hosted_server_or_none() -> tuple[str, str] | None:
         return hosted_server()
     except NotInitializedError:
         return None
+
+
+def store_label(server: str | None) -> str:
+    """Name a store without its secrets: `hosted at <host>` or `local database <name> on <host>`.
+
+    `server` is a hosted server's URL, or None for the local database. Neither the API key nor
+    a password in either URL is shown, and the result goes through `redact` as well.
+    """
+    if server is None:
+        return scrub(f"local database {database_label()}")
+    address = urlsplit(server).netloc.rpartition("@")[2] or server
+    return scrub(f"hosted at {address}")
+
+
+def active_store() -> str | None:
+    """Name the store this machine's commands and new sessions use; None without a config."""
+    try:
+        server = hosted_server()
+    except NotInitializedError:
+        return None
+    return store_label(None if server is None else server[0])
