@@ -197,12 +197,17 @@ under the condition `github-screen`, which no verdict reads. The task passes if 
 least one run (`tests_pass` false), or if its runs' median `tokens_in + tokens_out` is at least
 `SCREEN_TOKEN_FACTOR` (2.0) times the reference median. The reference median is that of the
 counted (`counted()`) `none`-arm Sonnet lines of the smoke-test conditions `github-same10` and
-`github-pilot` in `trials.jsonl`: 246,683 tokens over 7 sessions as of 2026-11-11. The command
-prints PASS (exit 0) or FAIL (exit 1) with the runs, failures, median and reference median, and
-for a pass the line to record. It prints REFUSED (exit 2) instead of guessing: before any session
-when the ledger has no reference line, and after the run when a session errored or is held as a
-possible leak, since a screen on fewer runs than asked is weaker. Its sessions are real ones:
-mind the eval budget.
+`github-pilot` in `trials.jsonl`. As of 2026-11-11 it is 246,683 tokens over 7 sessions of only
+two tasks: `gh-pip-tools-flag-default` (4 sessions) and `gh-table-extraction-bool-form` (3). The
+2.0x bar rests on that small sample and is provisional. The median moves as new counted
+`none`-arm Sonnet lines of those conditions arrive, which is why each screened task records the
+reference median it was decided on.
+
+The command prints PASS (exit 0) or FAIL (exit 1) with the runs, failures, median and reference
+median, and for a pass the line to record. It prints REFUSED (exit 2) instead of guessing: before
+any session when `--runs` is below 1 or the ledger has no reference line, and after the run when
+a session errored or is held as a possible leak, since a screen on fewer runs than asked is
+weaker. Its sessions are real ones: mind the eval budget.
 
 A task added below the "screened tasks" marker in `github_tasks.py` ends its source comment
 with the line the screen printed, for example:

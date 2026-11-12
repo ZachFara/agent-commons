@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 import tools.agent_eval
-from tools.eval import github_tasks, repos, runner
+from tools.eval import github_tasks, leaks, repos, runner
 from tools.eval.screen import (
     SCREEN_RUNS,
     SCREEN_TOKEN_FACTOR,
@@ -121,7 +121,12 @@ REFERENCE = [
 ]
 
 
-def session(job: runner.Job, condition: str, *, tests_pass: bool, tokens: int) -> runner.Result:
+LEAKED = leaks.Flag(leaks.LEAK, "repo", "Bash", "curl https://github.com/jazzband/pip-tools")
+
+
+def session(
+    job: runner.Job, condition: str, *, tests_pass: bool, tokens: int, leaked: bool
+) -> runner.Result:
     return runner.Result(
         scenario=job.scenario.name,
         trigger="version_specific",
@@ -148,13 +153,17 @@ def session(job: runner.Job, condition: str, *, tests_pass: bool, tokens: int) -
         tokens_in=tokens - 1000,
         tokens_out=1000,
         repeat=job.repeat,
+        flags=[LEAKED] if leaked else [],
     )
 
 
 def stub_sessions(
-    monkeypatch: pytest.MonkeyPatch, outcomes: list[tuple[bool, int]]
+    monkeypatch: pytest.MonkeyPatch, outcomes: list[tuple[bool, int]], *, leaked: int = 0
 ) -> list[tuple[list[runner.Job], str]]:
-    """Stand in for real `claude -p` sessions: job i gets outcomes[i]; record what was run."""
+    """Stand in for real `claude -p` sessions: job i gets outcomes[i]; record what was run.
+
+    The job with index `leaked`, if any, carries a leak flag.
+    """
     calls: list[tuple[list[runner.Job], str]] = []
 
     def run_many(
@@ -162,7 +171,7 @@ def stub_sessions(
     ) -> list[runner.Result]:
         calls.append((jobs, condition))
         return [
-            session(job, condition, tests_pass=passed, tokens=tokens)
+            session(job, condition, tests_pass=passed, tokens=tokens, leaked=job.index == leaked)
             for job, (passed, tokens) in zip(jobs, outcomes, strict=False)
         ]
 
@@ -224,6 +233,28 @@ def test_screen_refuses_when_a_session_never_reached_the_ledger(
     stub_sessions(monkeypatch, [(True, 100_000)] * 2)  # the third errored: no result, no line
     assert screen_command(monkeypatch) == 2
     assert f"REFUSED {TASK}: 2 of 3 sessions finished and count" in capsys.readouterr().err
+
+
+def test_screen_refuses_when_a_session_is_held_as_a_possible_leak(
+    ledger: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write(ledger, REFERENCE)
+    stub_sessions(monkeypatch, [(True, 100_000), (False, 100_000), (True, 100_000)], leaked=2)
+    assert screen_command(monkeypatch) == 2
+    screened = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    assert len(screened) == len(REFERENCE) + 3  # the held line is a record, never counted
+    assert f"REFUSED {TASK}: 2 of 3 sessions finished and count" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("runs", ["0", "-1"])
+def test_screen_refuses_fewer_than_one_run_before_any_session(
+    runs: str, ledger: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write(ledger, REFERENCE)
+    calls = stub_sessions(monkeypatch, [(False, 1)] * 3)
+    assert screen_command(monkeypatch, "--runs", runs) == 2
+    assert calls == []
+    assert f"REFUSED {TASK}: --runs must be at least 1" in capsys.readouterr().err
 
 
 # ------------------------------------------------------------- the record in github_tasks.py

@@ -818,11 +818,6 @@ class Comparison:
     ratio_high: float
 
 
-def _tokens(row: Row) -> int:
-    """All of a session's tokens: input, cache creation, cache read, and output."""
-    return int(row.get("tokens_in") or 0) + int(row.get("tokens_out") or 0)
-
-
 def task_totals(rows: list[Row], arm: str) -> dict[str, Totals]:
     """Return each task's (sessions, passes, tokens) in one arm."""
     totals: dict[str, Totals] = {}
@@ -832,7 +827,7 @@ def task_totals(rows: list[Row], arm: str) -> dict[str, Totals]:
             totals[str(row["scenario"])] = (
                 sessions + 1,
                 passes + bool(row["tests_pass"]),
-                tokens + _tokens(row),
+                tokens + screen.session_tokens(row),
             )
     return totals
 
@@ -942,8 +937,8 @@ def herded(rows: list[Row]) -> int:
 def arm_line(arm: str, model: str, rows: list[Row]) -> str:
     """One arm and model: sessions, pass rate, tokens, wall clock, and the commons counts."""
     passes = sum(bool(row["tests_pass"]) for row in rows)
-    per_success = _per_success(sum(_tokens(row) for row in rows), passes)
-    median_tokens = statistics.median(_tokens(row) for row in rows)
+    per_success = _per_success(sum(screen.session_tokens(row) for row in rows), passes)
+    median_tokens = statistics.median(screen.session_tokens(row) for row in rows)
     median_seconds = statistics.median(float(row.get("wall_clock_seconds") or 0) for row in rows)
     line = (
         f"{arm:<9} {model[:16]:<16} {len(rows):>4} {_with_interval(passes, len(rows)):<18} "
@@ -1066,9 +1061,13 @@ def screen_task(args: argparse.Namespace) -> int:
     """Screen a new GitHub task for difficulty, after `check` passes for it.
 
     Runs the none arm on Sonnet `--runs` times, under a condition no verdict reads, and prints
-    PASS (exit 0), FAIL (exit 1), or REFUSED (exit 2): with no reference in the ledger it
-    refuses before any session starts, and it refuses a run with an errored or held session.
+    PASS (exit 0), FAIL (exit 1), or REFUSED (exit 2): with fewer than one run or no reference
+    in the ledger it refuses before any session starts, and it refuses a run with an errored
+    or held session.
     """
+    if args.runs < 1:
+        print(f"REFUSED {args.scenario}: --runs must be at least 1", file=sys.stderr)
+        return 2
     today = datetime.now(UTC).date().isoformat()
     reference = screen.reference_median([row for row in _ledger_lines() if counted(row)])
     if reference is None:
