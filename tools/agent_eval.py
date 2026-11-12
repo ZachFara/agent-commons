@@ -50,8 +50,7 @@ from commons.store.counterfactuals import CounterfactualRun, known_entries, reco
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))  # the eval package lives under tools/, which isn't installed
 
-from tools.eval import container, holdout, leaks, repos, runner  # noqa: E402
-from tools.eval.github_tasks import SMOKE_TASKS  # noqa: E402
+from tools.eval import container, github_tasks, holdout, leaks, repos, runner  # noqa: E402
 from tools.eval.scenarios import SCENARIOS  # noqa: E402
 
 if TYPE_CHECKING:
@@ -175,7 +174,7 @@ def arms(args: argparse.Namespace) -> int:
             print("--smoke runs the smoke-test tasks: name no --scenario", file=sys.stderr)
             return 2
         args = argparse.Namespace(**{**vars(args), "condition": SMOKE_CONDITION})
-    names = (SMOKE_TASKS if args.smoke else args.scenario) or sorted(SCENARIOS)
+    names = (github_tasks.SMOKE_TASKS if args.smoke else args.scenario) or sorted(SCENARIOS)
     chosen = args.arm or list(runner.ARMS)
     models = args.model or ["sonnet"]
     jobs = plan_arms(names, chosen, args.runs, models)
