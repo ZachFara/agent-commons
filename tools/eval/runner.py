@@ -1025,9 +1025,13 @@ class Job:
 
 
 def database_name(condition: str, job: Job) -> str:
-    """Return a job's database name: unique per condition and index."""
-    # Condition and index first: a long scenario name may be cut at Postgres's 63 characters.
-    return f"commons_eval_{condition}_{job.index}_{job.scenario.name}".replace("-", "_")[:63]
+    """Return a job's database name: unique per condition and index, and opaque.
+
+    The `store-line` variants show the agent its store's database name, so the name must not
+    give away the scenario, the condition, or that the session is an eval.
+    """
+    key = f"{condition}\0{job.index}\0{job.scenario.name}"
+    return f"commons_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
 
 
 def grade(session: Session, events: list[dict[str, Any]]) -> Result:

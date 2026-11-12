@@ -14,7 +14,7 @@ from commons.domain.observations import ToolUse, doc_lookup, exit_code_from_erro
 from commons.service import agent_text, hook_client
 from commons.service.hook_client import HookBackend, LocalBackend, RemoteBackend, remote_client
 from commons.service.hooks import StopResult
-from commons.service.identity import hosted_server
+from commons.service.identity import hosted_server, store_label
 from commons.service.local_state import bind_store, bound_store, state_dir
 from commons.store.connection import connect
 
@@ -43,7 +43,7 @@ def _session_start(payload: Payload) -> HookOutput:
     context = agent_text.SESSION_START.format(task_id=task_id)
     start_line = shown.start_line
     if start_line:
-        context = f"{context} {start_line}"
+        context = f"{context} {start_line.format(store=_session_store(session_id))}"
     if feedback := backend.feedback():  # off unless the store turns it on (decision 0035)
         context = f"{context} {feedback}"
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
@@ -61,6 +61,15 @@ def _post_tool_use_failure(payload: Payload) -> HookOutput:
 
 def _observe(use: ToolUse) -> None:
     hook_client.on_tool_use(backend_for(use.session_id), use)
+
+
+def _session_store(session_id: str) -> str:
+    """Name the store this session's hooks use, as `backend_for` picks it, without secrets."""
+    bound = bound_store(session_id)
+    if bound is None:
+        current = _current_server()
+        return store_label(None if current is None else current[0])
+    return store_label(None if bound["store"] == "local" else bound["store"])
 
 
 def _current_server() -> tuple[str, str] | None:
