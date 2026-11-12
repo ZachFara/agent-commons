@@ -17,6 +17,15 @@ def database_url() -> str:
     return os.environ.get("COMMONS_DATABASE_URL", DEFAULT_DATABASE_URL)
 
 
+def database_label() -> str:
+    """Name the configured database as `<name> on <host>`, never with its user or password."""
+    try:
+        params = conninfo_to_dict(database_url())
+    except psycopg.ProgrammingError:
+        return "from an unreadable COMMONS_DATABASE_URL"
+    return f"{params.get('dbname', '?')} on {params.get('host', '?')}"
+
+
 def connect() -> Connection:
     """Open a connection to the configured database, or raise StoreUnavailableError."""
     try:
