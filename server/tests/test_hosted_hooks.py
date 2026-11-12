@@ -186,6 +186,33 @@ def test_a_retried_ci_check_crosses_as_one_flag_and_the_server_nudges(
     assert result.nudge == agent_text.COMMAND_NUDGE.format(task_id=task_id)
 
 
+@pytest.mark.usefixtures("state")
+@pytest.mark.parametrize("setting", [None, "off", "on"])
+def test_outside_the_commands_nudge_nothing_new_is_kept_or_sent(
+    app: Starlette, db: psycopg.Connection, monkeypatch: pytest.MonkeyPatch, setting: str | None
+) -> None:
+    """Exit codes, turn ends and the flag are collected only under `commands` (decision 0016)."""
+    if setting is None:
+        monkeypatch.delenv("COMMONS_TURN_NUDGE", raising=False)
+    else:
+        monkeypatch.setenv("COMMONS_TURN_NUDGE", setting)
+    sent: list[dict[str, Any]] = []
+    http = client(app, create_key(db, f"plain-{setting}", admin=False))
+    http.event_hooks = {"request": [lambda request: sent.append(json.loads(request.content))]}
+    backend = RemoteBackend(http)
+    session = str(uuid.uuid4())
+    hook_client.on_session_start(backend, session, None, HOOK_VERSION)
+    hook_client.on_tool_use(backend, bash(session, "gh pr checks 7", 1))
+    hook_client.on_tool_use(backend, bash(session, "gh pr checks 7 --watch", 0))
+
+    assert hook_client.on_stop(backend, session, None) is not None
+
+    assert "fixed_failing_command" not in sent[-1]
+    spooled = read_spool(session)
+    assert [record["command"] for record in spooled] == ["gh pr checks 7", "gh pr checks 7 --watch"]
+    assert not any("exit_code" in record or "turn_end" in record for record in spooled)
+
+
 def post(app: Starlette, key: str | None, step: str, body: dict[str, Any]) -> httpx2.Response:
     return client(app, key).post(f"/api/hooks/{step}", json=body)
 

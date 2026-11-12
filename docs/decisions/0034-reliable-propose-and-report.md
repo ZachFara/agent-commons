@@ -113,8 +113,11 @@ test signal never fires. `COMMONS_TURN_NUDGE=commands` is an eval condition: the
 when the turn fixed a failing test (as with `on`) or when the Stop hook saw a command fail and
 later work, with its own text (`agent_text.COMMAND_NUDGE`, version label `+command-nudge`).
 Off by default; `on` and the shipped texts are unchanged.
-- The hook spools each Bash call's exit code and marks each turn's end in the spool. At Stop it
-  sends the store one boolean, `fixed_failing_command`; no command leaves the machine.
+- Only when the hook's own environment has `COMMONS_TURN_NUDGE=commands` does it collect and
+  send anything new: it spools each Bash call's exit code, marks each turn's end in the spool,
+  and at Stop sends the store one boolean, `fixed_failing_command`; no command leaves the
+  machine. Under any other setting (the default included) the spool and the Stop body are as
+  before, and the store reads a missing flag as false.
 - Failing: a known non-zero exit code, from a run that names a program and has none of the
   commands that fail with nothing wrong (`grep`, `rg`, `test`, `[`, `false`, `which`, `command`,
   `type`, `ls`, `find`, `diff`, `cmp`, `git diff`, `git grep`), since the code could be theirs.
